@@ -93,6 +93,16 @@ public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStream
 	public IStreamReader Create(OptionsRegistry registry)
 	{
 		var specificOptions = registry.Get(_descriptor.OptionsType);
+
+		// RequiresQuery providers must have a non-empty Query by now: LinearPipelineService's
+		// RequiresQuery auto-build (--table fallback) already had its chance, and InspectCommand/MCP
+		// validate upfront too. A still-empty Query here means neither ran or both failed silently —
+		// fail loudly instead of letting the provider fall back to a default query of its own.
+		if (_descriptor.RequiresQuery && specificOptions is IQueryAwareOptions queryAware && string.IsNullOrWhiteSpace(queryAware.Query))
+		{
+			throw new InvalidOperationException($"A query is required for provider '{ComponentName}'. Use --query \"SELECT ...\" or --table <name>.");
+		}
+
 		var route = registry.Get<ConnectionRoute>();
 
 		// Connection string is set by LinearPipelineService into ConnectionRoute after stripping the

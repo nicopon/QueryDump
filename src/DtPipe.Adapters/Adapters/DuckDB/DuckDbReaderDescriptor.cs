@@ -18,6 +18,6 @@ public class DuckDbReaderDescriptor : IProviderDescriptor<IStreamReader>
     public IStreamReader Create(string connectionString, object options, IServiceProvider serviceProvider)
     {
         var opt = (DuckDbReaderOptions)options;
-        return new DuckDataSourceReader(DuckDbConnectionHelper.GetConnectionString(connectionString), opt.Query ?? "SELECT 1", opt);
+        return new DuckDataSourceReader(DuckDbConnectionHelper.GetConnectionString(connectionString), opt.Query!, opt);
     }
 }

@@ -21,6 +21,6 @@ public class DuckDataSourceReaderDescriptor : IProviderDescriptor<IStreamReader>
         var opt = (DuckDbReaderOptions)options;
         var logger = serviceProvider.GetService<ILogger<DuckDataSourceReader>>();
         var resolver = serviceProvider.GetService<IStringContentResolver>();
-        return new DuckDataSourceReader(connectionString, opt.Query ?? "SELECT 1", opt, logger, resolver: resolver);
+        return new DuckDataSourceReader(connectionString, opt.Query!, opt, logger, resolver: resolver);
     }
 }

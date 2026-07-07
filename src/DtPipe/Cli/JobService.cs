@@ -172,9 +172,26 @@ public class JobService
 		var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
 		registry.BeginScope();
 
+		// BindOptions() below gates flag binding (--query, --table, ...) on factory.CanHandle(job.Input/Output).
+		// An unresolved indirection (e.g. "keyring://alias") fails CanHandle for every provider, silently
+		// skipping the bind — so resolve a throwaway copy just for that check. LinearPipelineService still
+		// does its own resolution later for the actual connection open; that pass is separate, keep it.
+		var resolver = _serviceProvider.GetService<DtPipe.Core.Expressions.IStringContentResolver>();
+		var jobForBinding = job;
+		if (resolver != null)
+		{
+			var resolvedInput = job.Input != null ? await resolver.ResolveAsync(job.Input, ct) : job.Input;
+			var resolvedOutput = job.Output != null ? await resolver.ResolveAsync(job.Output, ct) : job.Output;
+			jobForBinding = job with
+			{
+				Input = resolvedInput ?? job.Input,
+				Output = resolvedOutput ?? job.Output
+			};
+		}
+
 		// Bind options from JobDefinition to the registry (for providers/transformers)
 		var providerConfigService = new DtPipe.Cli.Services.ProviderConfigurationService(_contributors, registry);
-		providerConfigService.BindOptions(job, context, globals);
+		providerConfigService.BindOptions(jobForBinding, context, globals);
 
 		var channelRegistry = _serviceProvider.GetRequiredService<IMemoryChannelRegistry>();
 		var linearPipelineService = new DtPipe.Cli.Services.LinearPipelineService(_contributors, _serviceProvider, channelRegistry, registry, _console);
