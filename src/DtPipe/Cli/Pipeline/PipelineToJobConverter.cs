@@ -124,7 +124,7 @@ public static class PipelineToJobConverter
         // Branch-local values take precedence over global defaults.
         int batchSize = GetInt(branch.Flags, "--batch-size", "-b")
                      ?? GetInt(globals.AllFlags, "--batch-size", "-b")
-                     ?? 50_000;
+                     ?? PipelineOptions.DefaultBatchSize;
         int limit = GetInt(branch.Flags, "--limit")
                  ?? GetInt(globals.AllFlags, "--limit")
                  ?? 0;

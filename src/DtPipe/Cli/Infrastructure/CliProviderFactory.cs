@@ -107,7 +107,13 @@ public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStream
 
 		// Connection string is set by LinearPipelineService into ConnectionRoute after stripping the
 		// component-name prefix. Query is set by FlagBinder (CLI path) or MapProcessorProperties (YAML path).
-		return _descriptor.Create(route?.Input ?? "", specificOptions!, _serviceProvider);
+		var reader = _descriptor.Create(route?.Input ?? "", specificOptions!, _serviceProvider);
+		if (reader is IBatchSizeConfigurable batchConfigurable)
+		{
+			var pipelineOptions = registry.Get<PipelineOptions>();
+			batchConfigurable.BatchSize = pipelineOptions.BatchSize;
+		}
+		return reader;
 	}
 
 	public IEnumerable<Type> GetSupportedOptionTypes()

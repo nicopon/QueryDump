@@ -34,7 +34,7 @@ public class PipelineEngine
         IStreamReader reader,
         IRowDataWriter writer,
         IReadOnlyList<IDataTransformer>? pipeline = null,
-        int batchSize = 50_000,
+        int batchSize = Models.PipelineOptions.DefaultBatchSize,
         int limit = 0,
         double samplingRate = 1.0,
         int? samplingSeed = null,

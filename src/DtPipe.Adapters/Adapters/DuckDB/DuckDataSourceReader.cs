@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DtPipe.Adapters.DuckDB;
 
-public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequiresOptions<DuckDbReaderOptions>
+public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequiresOptions<DuckDbReaderOptions>, IBatchSizeConfigurable
 {
 	private readonly DuckDBConnection _connection;
 	private readonly DuckDBCommand _command;
@@ -26,6 +26,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 
 	public IReadOnlyList<PipeColumnInfo>? Columns { get; private set; }
 	public Schema? Schema => Columns != null ? DtPipe.Core.Infrastructure.Arrow.ArrowSchemaFactory.Create(Columns) : null;
+	public int BatchSize { get; set; } = PipelineOptions.DefaultBatchSize;
 
 	// DDL/DML keywords to reject
 	// Block destructive commands.
@@ -124,7 +125,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 
 			// Using ArrowRowToColumnarBridge to efficiently produce RecordBatches from the DataReader.
 			var bridge = new DtPipe.Core.Infrastructure.Arrow.ArrowRowToColumnarBridge(_logger);
-			await bridge.InitializeAsync(Columns, 1024, ct: ct);
+			await bridge.InitializeAsync(Columns, BatchSize, ct: ct);
 
 			// Yield batches as they are produced by the bridge
 			// Synchronous feeder loop to avoid Task.Run overhead and potential deadlocks in simple scenarios

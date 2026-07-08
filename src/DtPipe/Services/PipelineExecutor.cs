@@ -40,6 +40,12 @@ public sealed class PipelineExecutor
         await foreach (var batch in source.WithCancellation(ct))
         {
             var batchToWriter = batch;
+            if (limit > 0 && rowCount + batch.Length > limit)
+            {
+                int remaining = (int)(limit - rowCount);
+                batchToWriter = batch.Slice(0, remaining);
+            }
+
             progress.ReportRead(batchToWriter.Length);
             await writer.WriteRecordBatchAsync(batchToWriter, ct);
             progress.ReportWrite(batchToWriter.Length);
@@ -166,7 +172,7 @@ public sealed class PipelineExecutor
                     var richSchema = schemaUnchanged ? readerSchema : null;
                     currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, columns, options.BatchSize, ct, richSchema);
                 }
-                await ConsumeColumnarStreamAsync(currentColumnarSource, columnarWriter, progress, ct);
+                await ConsumeColumnarStreamAsync(currentColumnarSource, columnarWriter, options.Limit, progress, ct);
             }
             else if (writer is IRowDataWriter rowWriter)
             {
@@ -370,13 +376,25 @@ public sealed class PipelineExecutor
     private async Task ConsumeColumnarStreamAsync(
         IAsyncEnumerable<RecordBatch> source,
         IColumnarDataWriter writer,
+        int limit,
         IExportProgress progress,
         CancellationToken ct)
     {
+        long rowCount = 0;
         await foreach (var batch in source.WithCancellation(ct))
         {
-            await writer.WriteRecordBatchAsync(batch, ct);
-            progress.ReportWrite(batch.Length);
+            var batchToWriter = batch;
+            if (limit > 0 && rowCount + batch.Length > limit)
+            {
+                int remaining = (int)(limit - rowCount);
+                batchToWriter = batch.Slice(0, remaining);
+            }
+
+            await writer.WriteRecordBatchAsync(batchToWriter, ct);
+            progress.ReportWrite(batchToWriter.Length);
+            rowCount += batchToWriter.Length;
+
+            if (limit > 0 && rowCount >= limit) break;
         }
     }
 

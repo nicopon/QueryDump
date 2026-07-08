@@ -14,8 +14,10 @@ public sealed record PipelineOptions : IOptionSet
 	public static string Prefix => "global";
 	public static string DisplayName => "Global Options";
 
+	public const int DefaultBatchSize = 32_768;
+
 	[ComponentOption("--batch-size", Aliases = new[] { "-b" }, Description = "Batch size for processing")]
-	public int BatchSize { get; init; } = 50_000;
+	public int BatchSize { get; init; } = DefaultBatchSize;
 
 	[ComponentOption("--limit", Description = "Max total rows to process (0 = unlimited)")]
 	public int Limit { get; init; } = 0;

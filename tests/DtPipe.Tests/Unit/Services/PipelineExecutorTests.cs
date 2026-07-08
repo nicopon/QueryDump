@@ -7,6 +7,7 @@ using Apache.Arrow;
 using Apache.Arrow.Types;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
+using DtPipe.Core.Pipelines;
 using DtPipe.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -140,4 +141,76 @@ public class PipelineExecutorTests
         Assert.Equal(0, result[0].Length);
         Assert.Equal(1, result[1].Length);
     }
+
+    [Fact]
+    public async Task DirectColumnarTransferAsync_RespectsLimitAndSlices()
+    {
+        var schema = new Schema.Builder().Field(f => f.Name("Value").DataType(Int32Type.Default)).Build();
+        var array = new Int32Array.Builder().AppendRange(Enumerable.Range(1, 10)).Build();
+        var batch = new RecordBatch(schema, new[] { array }, 10);
+        var batches = new List<RecordBatch> { batch }.ToAsyncEnumerable();
+
+        var mockWriter = new Mock<IColumnarDataWriter>();
+        RecordBatch? writtenBatch = null;
+        mockWriter.Setup(w => w.WriteRecordBatchAsync(It.IsAny<RecordBatch>(), It.IsAny<CancellationToken>()))
+                  .Callback<RecordBatch, CancellationToken>((b, _) => writtenBatch = b)
+                  .Returns(new ValueTask());
+
+        var mockProgress = new Mock<IExportProgress>();
+
+        await PipelineExecutor.DirectColumnarTransferAsync(batches, mockWriter.Object, 3, mockProgress.Object, default);
+
+        Assert.NotNull(writtenBatch);
+        Assert.Equal(3, writtenBatch.Length);
+        var values = (Int32Array)writtenBatch.Column(0);
+        Assert.Equal(1, values.GetValue(0));
+        Assert.Equal(2, values.GetValue(1));
+        Assert.Equal(3, values.GetValue(2));
+    }
+
+    [Fact]
+    public async Task ExecuteSegmentedPipelineAsync_ColumnarPath_RespectsLimitAndSlices()
+    {
+        var schema = new Schema.Builder().Field(f => f.Name("Value").DataType(Int32Type.Default)).Build();
+        var array = new Int32Array.Builder().AppendRange(Enumerable.Range(1, 10)).Build();
+        var batch = new RecordBatch(schema, new[] { array }, 10);
+
+        var mockReader = new Mock<IColumnarStreamReader>();
+        mockReader.As<IStreamReader>();
+        mockReader.Setup(r => r.ReadRecordBatchesAsync(It.IsAny<CancellationToken>()))
+                  .Returns(new[] { batch }.ToAsyncEnumerable());
+        mockReader.SetupGet(r => r.Schema).Returns(schema);
+
+        var mockWriter = new Mock<IColumnarDataWriter>();
+        mockWriter.As<IRowDataWriter>();
+        mockWriter.As<IDataWriter>();
+        RecordBatch? writtenBatch = null;
+        mockWriter.Setup(w => w.WriteRecordBatchAsync(It.IsAny<RecordBatch>(), It.IsAny<CancellationToken>()))
+                  .Callback<RecordBatch, CancellationToken>((b, _) => writtenBatch = b)
+                  .Returns(new ValueTask());
+
+        var segments = new List<PipelineSegment> { new PipelineSegment(true, new List<IDataTransformer>()) };
+        var columns = new List<PipeColumnInfo> { new PipeColumnInfo("Value", typeof(int), true, false) };
+        var options = new PipelineOptions { Limit = 3 };
+        var mockProgress = new Mock<IExportProgress>();
+        using var linkedCts = new CancellationTokenSource();
+
+        await _executor.ExecuteSegmentedPipelineAsync(
+            mockReader.Object, 
+            (IDataWriter)mockWriter.Object, 
+            segments, 
+            columns, 
+            options, 
+            mockProgress.Object, 
+            linkedCts, 
+            default);
+
+        Assert.NotNull(writtenBatch);
+        Assert.Equal(3, writtenBatch.Length);
+        var values = (Int32Array)writtenBatch.Column(0);
+        Assert.Equal(1, values.GetValue(0));
+        Assert.Equal(2, values.GetValue(1));
+        Assert.Equal(3, values.GetValue(2));
+    }
 }
+

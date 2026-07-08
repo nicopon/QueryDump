@@ -75,6 +75,7 @@ public sealed class SqlServerReader : AdoColumnarReader, IRequiresOptions<SqlSer
         Config = new AdoToArrowConfigBuilder()
             .SetTypeResolver(col => ArrowTypeMapper.GetLogicalType(
                 Nullable.GetUnderlyingType(col.DataType ?? typeof(string)) ?? col.DataType ?? typeof(string)))
+            .SetTargetBatchSize(BatchSize)
             .Build();
 
         _consumerFactory = (arrowType, colIdx) =>

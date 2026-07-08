@@ -65,6 +65,7 @@ public sealed class SqliteReader : AdoColumnarReader
         Config = new AdoToArrowConfigBuilder()
             .SetTypeResolver(col => ArrowTypeMapper.GetLogicalType(
                 Nullable.GetUnderlyingType(col.DataType ?? typeof(string)) ?? col.DataType ?? typeof(string)))
+            .SetTargetBatchSize(BatchSize)
             .Build();
     }
 

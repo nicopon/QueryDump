@@ -187,6 +187,7 @@ public class LinearPipelineService
             Cursor       = job.Cursor,
             State        = job.State
         };
+        _optionsRegistry.Register(pipelineOptions);
 
         // 5. Build Pipeline (Transformers)
         // For CLI-originated branches (have raw args), always use TransformerPipelineBuilder

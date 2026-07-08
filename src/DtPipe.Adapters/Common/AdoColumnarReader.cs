@@ -18,12 +18,14 @@ namespace DtPipe.Adapters.Common;
 /// Base class for ADO.NET-based columnar stream readers.
 /// Provides common implementation for row-to-Arrow fallback and query validation.
 /// </summary>
-public abstract partial class AdoColumnarReader : IColumnarStreamReader
+public abstract partial class AdoColumnarReader : IColumnarStreamReader, IBatchSizeConfigurable
 {
     protected DbConnection? Connection;
     protected DbCommand? Command;
     protected DbDataReader? Reader;
     protected AdoToArrowConfig? Config;
+
+    public int BatchSize { get; set; } = PipelineOptions.DefaultBatchSize;
 
     public IReadOnlyList<PipeColumnInfo>? Columns { get; protected set; }
     public Schema? Schema { get; protected set; }
