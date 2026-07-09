@@ -29,11 +29,12 @@ public sealed class PipelineExecutor
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    internal static async Task DirectColumnarTransferAsync(
+    internal static async Task DrainColumnarSourceAsync(
         IAsyncEnumerable<RecordBatch> source,
         IColumnarDataWriter writer,
         int limit,
         IExportProgress progress,
+        bool reportReads,
         CancellationToken ct)
     {
         long rowCount = 0;
@@ -46,13 +47,23 @@ public sealed class PipelineExecutor
                 batchToWriter = batch.Slice(0, remaining);
             }
 
-            progress.ReportRead(batchToWriter.Length);
+            if (reportReads) progress.ReportRead(batchToWriter.Length);
             await writer.WriteRecordBatchAsync(batchToWriter, ct);
             progress.ReportWrite(batchToWriter.Length);
             rowCount += batchToWriter.Length;
 
             if (limit > 0 && rowCount >= limit) break;
         }
+    }
+
+    internal static async Task DirectColumnarTransferAsync(
+        IAsyncEnumerable<RecordBatch> source,
+        IColumnarDataWriter writer,
+        int limit,
+        IExportProgress progress,
+        CancellationToken ct)
+    {
+        await DrainColumnarSourceAsync(source, writer, limit, progress, reportReads: true, ct);
     }
 
     internal async Task ExecuteSegmentedPipelineAsync(
@@ -380,22 +391,7 @@ public sealed class PipelineExecutor
         IExportProgress progress,
         CancellationToken ct)
     {
-        long rowCount = 0;
-        await foreach (var batch in source.WithCancellation(ct))
-        {
-            var batchToWriter = batch;
-            if (limit > 0 && rowCount + batch.Length > limit)
-            {
-                int remaining = (int)(limit - rowCount);
-                batchToWriter = batch.Slice(0, remaining);
-            }
-
-            await writer.WriteRecordBatchAsync(batchToWriter, ct);
-            progress.ReportWrite(batchToWriter.Length);
-            rowCount += batchToWriter.Length;
-
-            if (limit > 0 && rowCount >= limit) break;
-        }
+        await DrainColumnarSourceAsync(source, writer, limit, progress, reportReads: false, ct);
     }
 
     internal async Task ConsumeRowStreamAsync(
