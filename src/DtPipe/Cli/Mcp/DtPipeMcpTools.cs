@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
 using DtPipe.Cli.Pipeline;
+using DtPipe.Cli.Infrastructure;
 using ModelContextProtocol.Server;
 
 namespace DtPipe.Cli.Mcp;
@@ -47,6 +48,125 @@ public class DtPipeMcpTools
             transformers, 
             writers 
         }, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    [McpServerTool(Name = "help")]
+    [System.ComponentModel.Description("Show dtpipe CLI usage syntax, connection string rules, DAG capabilities, YAML job execution, and transformers options.")]
+    public string Help()
+    {
+        using var sw = new StringWriter();
+        sw.WriteLine("dtpipe — Data streaming & anonymization CLI");
+        sw.WriteLine();
+        sw.WriteLine("USAGE & PIPELINE ORDER:");
+        sw.WriteLine("  A dtpipe command line must reflect the flow of data from left to right:");
+        sw.WriteLine("  dtpipe -i <input> [reader-options] [transformers...] -o <output> [writer-options]");
+        sw.WriteLine();
+        sw.WriteLine("  1. INPUT: Define the source database/file (-i) and any reader-specific options first.");
+        sw.WriteLine("  2. TRANSFORMATIONS: Transformers (like --fake, --mask, --filter, --compute) execute in the exact order they are specified on the command line from left to right.");
+        sw.WriteLine("     Consecutive flags of the same type are grouped into one step. Specifying a different type starts a next step.");
+        sw.WriteLine("     Example: '--fake A --fake B --filter C --fake D' executes: Fake(A, B) -> Filter(C) -> Fake(D).");
+        sw.WriteLine("  3. OUTPUT OR ALIAS: Specify where the data goes (-o) or name the current branch output using '--alias <name>' to reference it downstream in a DAG.");
+        sw.WriteLine();
+        sw.WriteLine("  Alternative YAML job syntax: dtpipe --job <file.yaml> [overrides]");
+        sw.WriteLine();
+        sw.WriteLine("CONNECTION STRINGS:");
+        sw.WriteLine("  - Files: use prefix:path (e.g., 'csv:file.csv', 'parquet:file.parquet', 'jsonl:file.jsonl').");
+        sw.WriteLine("    If connection string is '-' or bare prefix (e.g. 'csv'), it reads from STDIN or writes to STDOUT.");
+        sw.WriteLine("  - Databases: use ADO.NET connection string format (semicolon-separated pairs Key=Value;) instead of Python URIs.");
+        sw.WriteLine("    - PostgreSQL: 'pg:Host=host;Port=port;Database=db;Username=user;Password=pass'");
+        sw.WriteLine("    - SQLite: 'sqlite:Data Source=path/to/file.db'");
+        sw.WriteLine("    - SQL Server: 'mssql:Server=host;Database=db;User Id=user;Password=pass;TrustServerCertificate=True'");
+        sw.WriteLine("    - Oracle: 'ora:Data Source=host:port/service;User Id=user;Password=pass'");
+        sw.WriteLine();
+        sw.WriteLine("DAG TOPOLOGIES & ROUTING OPTIONS:");
+        sw.WriteLine("  dtpipe can execute multi-branch pipelines forming a Directed Acyclic Graph (DAG).");
+        sw.WriteLine("  - --alias <name>             Name the current branch for downstream references.");
+        sw.WriteLine("  - --from <aliasA,aliasB>     Read from upstream branch aliases.");
+        sw.WriteLine("  - --ref <alias>              Materialized secondary source for JOIN lookups (fully preloaded in memory).");
+        sw.WriteLine("  - --sql <query>              Execute standard SQL using internal DuckDB engine.");
+        sw.WriteLine("  - --merge                    UNION ALL of all --from streaming inputs.");
+        sw.WriteLine("  Example (Join main & lookup):");
+        sw.WriteLine("    dtpipe -i main.csv --alias m -i lookup.csv --alias l --from m --ref l --sql \"SELECT * FROM m JOIN l ON m.id = l.id\" -o target.csv");
+        sw.WriteLine();
+        sw.WriteLine("YAML JOBS:");
+        sw.WriteLine("  - You can load/run pipelines from a YAML file using the '--job <file>' flag.");
+        sw.WriteLine("  - You can export the pipeline described by a command line to a YAML file using the '--export-job <file>' option.");
+        sw.WriteLine();
+        sw.WriteLine("VALUE RESOLUTION & INLINE INTERPOLATION:");
+        sw.WriteLine("  Values are resolved sequentially prior to execution:");
+        sw.WriteLine("  - @/path/to/file             Loads full content from file.");
+        sw.WriteLine("  - keyring://<alias>          Loads secret value from OS Keyring.");
+        sw.WriteLine("  - ${{ENV_VAR}}               Substitutes environment variable.");
+        sw.WriteLine("  - ${{keyring://<alias>}}     Substitutes inline keyring secret.");
+        sw.WriteLine("  - ${{cursor://path|default}}  Substitutes incremental cursor value from a state file.");
+        sw.WriteLine();
+        sw.WriteLine("INCREMENTAL SYNC:");
+        sw.WriteLine("  - --cursor <column>          Observer cursor column (e.g. updated_at) to track max value.");
+        sw.WriteLine("  - --state <path>             State file path (JSON) to save the tracked cursor.");
+        sw.WriteLine("  - --cursor-from <value>      Override start cursor value.");
+        sw.WriteLine();
+        sw.WriteLine("TRANSFORMERS OPTIONS:");
+        var transformers = _transformerFactories.OfType<ICliContributor>().ToList();
+        foreach (var contributor in transformers)
+        {
+            var flags = contributor.GetFlagDefs().ToList();
+            if (flags.Count == 0) continue;
+            
+            if (contributor is IDataFactory factory)
+            {
+                sw.WriteLine($"  [{factory.ComponentName}]");
+            }
+            
+            foreach (var flag in flags)
+            {
+                var aliases = flag.Aliases.Length > 0 ? $", {string.Join(", ", flag.Aliases)}" : "";
+                var arity = flag.Arity switch
+                {
+                    FlagArity.Boolean    => "",
+                    FlagArity.Scalar     => " <value>",
+                    FlagArity.Repeatable => " <value...>",
+                    _                    => ""
+                };
+                var desc = flag.Description ?? "";
+                sw.WriteLine($"    {flag.Name}{aliases}{arity} : {desc}");
+            }
+        }
+        
+        return sw.ToString();
+    }
+
+    [McpServerTool(Name = "get-anonymization-help")]
+    [System.ComponentModel.Description("Show detailed help on data faking (anonymization) via Bogus, including available datasets, methods, and options.")]
+    public string GetAnonymizationHelp()
+    {
+        using var sw = new StringWriter();
+        sw.WriteLine("ANONYMIZATION VIA FAKERS:");
+        sw.WriteLine("  dtpipe uses the 'Bogus' library for generating fake data.");
+        sw.WriteLine("  Syntax: --fake <column>:<dataset>.<method>");
+        sw.WriteLine("  Example: --fake Email:internet.email --fake Name:name.fullName");
+        sw.WriteLine();
+        sw.WriteLine("AVAILABLE DATASETS & METHODS (DYNAMICALLY RESOLVED):");
+
+        var fakerRegistry = new DtPipe.Transformers.Arrow.Fake.FakerRegistry();
+        foreach (var group in fakerRegistry.ListAll())
+        {
+            sw.WriteLine($"  - {group.Dataset.ToLowerInvariant()}");
+            foreach (var method in group.Methods)
+            {
+                var paddedMethod = method.Method.PadRight(25);
+                var desc = string.IsNullOrEmpty(method.Description) ? "" : $" {method.Description}";
+                sw.WriteLine($"    - {paddedMethod}{desc}");
+            }
+        }
+
+        sw.WriteLine();
+        sw.WriteLine("ANONYMIZATION OPTIONS:");
+        sw.WriteLine("  - --fake-locale <locale>    Locale for fakers (e.g. 'fr', 'en', 'de', 'es').");
+        sw.WriteLine("  - --fake-seed <int>         Global seed for reproducible faking.");
+        sw.WriteLine("  - --fake-seed-column <cols> Column(s) used as a composite seed for faking (ensures same source cell always generates same fake value).");
+        sw.WriteLine("  - --fake-seed-row           Row-index based deterministic faking (row N always gets same fakes).");
+        sw.WriteLine("  - --skip-null               Do not anonymize NULL cell values (remains NULL).");
+        return sw.ToString();
     }
 
     [McpServerTool(Name = "inspect")]
@@ -92,7 +212,11 @@ public class DtPipeMcpTools
     }
 
     [McpServerTool(Name = "validate-pipeline")]
-    [System.ComponentModel.Description("Validate a dtpipe command line or job configuration. E.g. 'dtpipe -i source.csv -o target.parquet' or 'dtpipe --job config.yaml'")]
+    [System.ComponentModel.Description(
+        "Validate a dtpipe command line. " +
+        "Syntax: 'dtpipe -i <input> [transformers] -o <output>'. " +
+        "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
+        "Call the 'help' tool first to see all available transformers, options, and flags.")]
     public string ValidatePipeline(
         [System.ComponentModel.Description("The full dtpipe command line string to validate")] string command)
     {
@@ -157,7 +281,11 @@ public class DtPipeMcpTools
     }
 
     [McpServerTool(Name = "execute-pipeline")]
-    [System.ComponentModel.Description("Execute a dtpipe pipeline. This will READ from the source and WRITE to the destination. Always validate with 'validate-pipeline' first. Example: 'dtpipe -i source.csv -o target.parquet'")]
+    [System.ComponentModel.Description(
+        "Execute a dtpipe pipeline. This will READ from the source, apply transformations, and WRITE to the destination. " +
+        "Syntax: 'dtpipe -i <input> [transformers] -o <output>'. " +
+        "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
+        "Call the 'help' tool first to see all available transformers, options, and flags.")]
     public async Task<string> ExecutePipeline(
         [System.ComponentModel.Description("The full dtpipe command line string to execute")] string command,
         CancellationToken ct = default)
