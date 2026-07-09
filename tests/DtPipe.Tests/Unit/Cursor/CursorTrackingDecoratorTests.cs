@@ -6,6 +6,9 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
 using DtPipe.Core.Cursor;
 using Xunit;
+using Moq;
+using Apache.Arrow;
+using Apache.Arrow.Types;
 
 namespace DtPipe.Tests.Unit.Cursor;
 
@@ -262,5 +265,46 @@ public class CursorTrackingDecoratorTests
         var decorator = new CursorTrackingRowDecorator(inner, "id");
 
         Assert.Null(decorator.TrackedMaxValue);
+    }
+
+    [Fact]
+    public async Task ColumnarDecorator_TracksMaxFromArrowArray_WithoutRowMaterialization()
+    {
+        var schema = new Schema.Builder()
+            .Field(f => f.Name("id").DataType(Int32Type.Default))
+            .Field(f => f.Name("updated_at").DataType(new TimestampType(TimeUnit.Microsecond, "UTC")))
+            .Build();
+
+        var ids = new Int32Array.Builder().AppendRange(new[] { 1, 2, 3, 4, 5 }).Build();
+        var dates = new TimestampArray.Builder(new TimestampType(TimeUnit.Microsecond, "UTC"))
+            .Append(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .Append(new DateTime(2026, 7, 9, 0, 0, 0, DateTimeKind.Utc))
+            .Append(new DateTime(2026, 3, 15, 0, 0, 0, DateTimeKind.Utc))
+            .Append(new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc))
+            .AppendNull()
+            .Build();
+
+        var batch = new RecordBatch(schema, new IArrowArray[] { ids, dates }, 5);
+
+        var mockInner = new Mock<IColumnarDataWriter>();
+        mockInner.Setup(w => w.WriteRecordBatchAsync(It.IsAny<RecordBatch>(), It.IsAny<CancellationToken>()))
+                 .Returns(new ValueTask());
+
+        var columns = new List<PipeColumnInfo>
+        {
+            new("id", typeof(int), false),
+            new("updated_at", typeof(DateTime), true)
+        };
+
+        var decorator = new CursorTrackingColumnarDecorator(mockInner.Object, "updated_at");
+        await decorator.InitializeAsync(columns);
+        await decorator.WriteRecordBatchAsync(batch);
+
+        var tracked = decorator.TrackedMaxValue;
+        Assert.NotNull(tracked);
+        Assert.Equal("updated_at", tracked.Column);
+        Assert.Contains("2026-07-09", tracked.Value);
+
+        mockInner.Verify(w => w.WriteRecordBatchAsync(batch, default), Times.Once);
     }
 }

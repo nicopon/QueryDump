@@ -198,13 +198,18 @@ public class CursorTrackingColumnarDecorator : CursorTrackingRowDecorator, IColu
 
     public async ValueTask WriteRecordBatchAsync(RecordBatch batch, CancellationToken ct = default)
     {
-        for (int i = 0; i < batch.Length; i++)
+        if (CursorColumnIndex >= 0 && CursorColumnIndex < batch.Schema.FieldsList.Count)
         {
-            var row = DtPipe.Core.Infrastructure.Arrow.ArrowRowConverter.ToRow(batch, i);
-            if (row.Length > CursorColumnIndex)
+            var cursorArray = batch.Column(CursorColumnIndex);
+            var cursorField = batch.Schema.FieldsList[CursorColumnIndex];
+            for (int i = 0; i < batch.Length; i++)
             {
-                var val = row[CursorColumnIndex];
-                ProcessTrackedValue(val);
+                if (!cursorArray.IsNull(i))
+                {
+                    var val = DtPipe.Core.Infrastructure.Arrow.ArrowTypeMapper.GetValueForField(
+                        cursorArray, cursorField, i);
+                    ProcessTrackedValue(val);
+                }
             }
         }
         await _columnarInner.WriteRecordBatchAsync(batch, ct);
