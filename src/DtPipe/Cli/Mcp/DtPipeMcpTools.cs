@@ -53,86 +53,23 @@ public class DtPipeMcpTools
     [System.ComponentModel.Description("Inspect the schema of a data source. Example input: 'pg:Host=localhost;Database=prod;Username=postgres' or 'csv:file.csv'")]
     public async Task<string> Inspect(
         [System.ComponentModel.Description("Connection string or file path with provider prefix")] string input, 
-        [System.ComponentModel.Description("Optional SQL query for database sources")] string? query = null)
+        [System.ComponentModel.Description("Optional SQL query for database sources")] string? query = null,
+        CancellationToken ct = default)
     {
-        var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
-        var readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
-
-        string effectiveConnectionString = input;
-        IStreamReaderFactory? factory = null;
-        
-        foreach (var f in readerFactories)
-        {
-            if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
-            {
-                effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
-                var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                if (optionsType != null)
-                {
-                    var instance = registry.Get(optionsType);
-                    optionsType.GetProperty("Input")?.SetValue(instance, effectiveConnectionString);
-                    registry.RegisterByType(optionsType, instance);
-                }
-                factory = f;
-                break;
-            }
-        }
-        
-        if (factory == null)
-        {
-            foreach (var f in readerFactories)
-            {
-                if (f.CanHandle(input))
-                {
-                    var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                    if (optionsType != null)
-                    {
-                        var instance = registry.Get(optionsType);
-                        optionsType.GetProperty("Input")?.SetValue(instance, input);
-                        registry.RegisterByType(optionsType, instance);
-                    }
-                    factory = f;
-                    break;
-                }
-            }
-        }
-        
-        if (factory == null)
-            return JsonSerializer.Serialize(new { error = "No provider found for the given input." });
-
-        // Perform path safety validation
         try
         {
-            ValidatePathSafety(effectiveConnectionString);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message });
-        }
+            var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
+            var readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
 
-        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty));
-        var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
-        if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
-            readerOpts.Query = query;
+            var result = TryResolveReader(registry, readerFactories, input, query);
+            if (result == null)
+                return JsonSerializer.Serialize(new { error = "No provider found for the given input." });
 
-        if (factory.RequiresQuery && string.IsNullOrWhiteSpace(query))
-            return JsonSerializer.Serialize(new { error = $"A query is required for provider '{factory.ComponentName}'." });
+            if (result.Factory.RequiresQuery && string.IsNullOrWhiteSpace(query))
+                return JsonSerializer.Serialize(new { error = $"A query is required for provider '{result.Factory.ComponentName}'." });
 
-        if (!string.IsNullOrEmpty(query))
-        {
-            var optionsType = factory.GetSupportedOptionTypes().FirstOrDefault();
-            if (optionsType != null)
-            {
-                var instance = registry.Get(optionsType);
-                optionsType.GetProperty("Query")?.SetValue(instance, query);
-                registry.RegisterByType(optionsType, instance);
-            }
-        }
-
-        try
-        {
-            await using var reader = factory.Create(registry);
-            await reader.OpenAsync(CancellationToken.None);
+            await using var reader = result.Factory.Create(registry);
+            await reader.OpenAsync(ct);
 
             if (reader.Columns == null || reader.Columns.Count == 0)
                 return JsonSerializer.Serialize(new { warning = "No columns returned." });
@@ -143,6 +80,10 @@ public class DtPipeMcpTools
                     c.IsNullable
                 }),
                 new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -215,91 +156,92 @@ public class DtPipeMcpTools
         }
     }
 
+    [McpServerTool(Name = "execute-pipeline")]
+    [System.ComponentModel.Description("Execute a dtpipe pipeline. This will READ from the source and WRITE to the destination. Always validate with 'validate-pipeline' first. Example: 'dtpipe -i source.csv -o target.parquet'")]
+    public async Task<string> ExecutePipeline(
+        [System.ComponentModel.Description("The full dtpipe command line string to execute")] string command,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            string cmdLine = command.Trim();
+            if (cmdLine.StartsWith("dtpipe ", StringComparison.OrdinalIgnoreCase))
+                cmdLine = cmdLine.Substring(7).Trim();
+
+            var args = SplitArguments(cmdLine);
+
+            var registry = FlagRegistryFactory.Build(_serviceProvider);
+            var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
+            var lexer = new PipelineLexer(registry);
+            var parsedPipeline = lexer.Parse(args);
+
+            var secretsManager = _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>();
+            var (jobs, dag, contexts) = PipelineToJobConverter.Convert(parsedPipeline, streamTransformerFactories, secretsManager);
+
+            var errors = PipelineValidator.Validate(dag, jobs, streamTransformerFactories);
+            if (errors.Count > 0)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    stage = "validation",
+                    errors
+                }, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            var jobService = _serviceProvider.GetRequiredService<DtPipe.Cli.JobService>();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            var exitCode = await jobService.ExecutePipelineAsync(jobs, dag, contexts, parsedPipeline.Globals, ct);
+
+            sw.Stop();
+
+            return JsonSerializer.Serialize(new
+            {
+                success = exitCode == 0,
+                exitCode,
+                durationMs = sw.ElapsedMilliseconds,
+                branches = dag.Branches.Select(b => new
+                {
+                    b.Alias,
+                    Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
+                    Output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Output)
+                }).ToList()
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                stage = "execution",
+                errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
     [McpServerTool(Name = "preview-data")]
     [System.ComponentModel.Description("Preview data from a source (up to 10 rows, with automatic masking of sensitive columns). Example input: 'csv:file.csv' or 'pg:Host=localhost;Database=prod;Username=postgres'")]
     public async Task<string> PreviewData(
         [System.ComponentModel.Description("Connection string or file path with provider prefix")] string input,
         [System.ComponentModel.Description("Optional SQL query for database sources")] string? query = null,
-        [System.ComponentModel.Description("Number of rows to return (max 10)")] int? limit = 5)
+        [System.ComponentModel.Description("Number of rows to return (max 10)")] int? limit = 5,
+        CancellationToken ct = default)
     {
-        var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
-        var readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
-
-        string effectiveConnectionString = input;
-        IStreamReaderFactory? factory = null;
-
-        foreach (var f in readerFactories)
-        {
-            if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
-            {
-                effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
-                var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                if (optionsType != null)
-                {
-                    var instance = registry.Get(optionsType);
-                    optionsType.GetProperty("Input")?.SetValue(instance, effectiveConnectionString);
-                    registry.RegisterByType(optionsType, instance);
-                }
-                factory = f;
-                break;
-            }
-        }
-
-        if (factory == null)
-        {
-            foreach (var f in readerFactories)
-            {
-                if (f.CanHandle(input))
-                {
-                    var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                    if (optionsType != null)
-                    {
-                        var instance = registry.Get(optionsType);
-                        optionsType.GetProperty("Input")?.SetValue(instance, input);
-                        registry.RegisterByType(optionsType, instance);
-                    }
-                    factory = f;
-                    break;
-                }
-            }
-        }
-
-        if (factory == null)
-            return JsonSerializer.Serialize(new { error = "No provider found for the given input." });
-
-        // Perform path safety validation
         try
         {
-            ValidatePathSafety(effectiveConnectionString);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message });
-        }
+            var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
+            var readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
 
-        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty));
-        var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
-        if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
-            readerOpts.Query = query;
+            var result = TryResolveReader(registry, readerFactories, input, query);
+            if (result == null)
+                return JsonSerializer.Serialize(new { error = "No provider found for the given input." });
 
-        if (factory.RequiresQuery && string.IsNullOrWhiteSpace(query))
-            return JsonSerializer.Serialize(new { error = $"A query is required for provider '{factory.ComponentName}'." });
+            if (result.Factory.RequiresQuery && string.IsNullOrWhiteSpace(query))
+                return JsonSerializer.Serialize(new { error = $"A query is required for provider '{result.Factory.ComponentName}'." });
 
-        if (!string.IsNullOrEmpty(query))
-        {
-            var optionsType = factory.GetSupportedOptionTypes().FirstOrDefault();
-            if (optionsType != null)
-            {
-                var instance = registry.Get(optionsType);
-                optionsType.GetProperty("Query")?.SetValue(instance, query);
-                registry.RegisterByType(optionsType, instance);
-            }
-        }
-
-        try
-        {
-            await using var reader = factory.Create(registry);
-            await reader.OpenAsync(CancellationToken.None);
+            await using var reader = result.Factory.Create(registry);
+            await reader.OpenAsync(ct);
 
             if (reader.Columns == null || reader.Columns.Count == 0)
                 return JsonSerializer.Serialize(new { warning = "No columns returned." });
@@ -308,7 +250,7 @@ public class DtPipeMcpTools
             var rowsList = new List<Dictionary<string, object?>>();
             var columns = reader.Columns;
 
-            await foreach (var batch in reader.ReadBatchesAsync(effectiveLimit, CancellationToken.None))
+            await foreach (var batch in reader.ReadBatchesAsync(effectiveLimit, ct))
             {
                 var span = batch.Span;
                 for (int i = 0; i < span.Length; i++)
@@ -333,6 +275,10 @@ public class DtPipeMcpTools
             }
 
             return JsonSerializer.Serialize(rowsList, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -434,5 +380,77 @@ public class DtPipeMcpTools
         }
         
         return args.ToArray();
+    }
+
+    private record ReaderResolutionResult(
+        IStreamReaderFactory Factory,
+        string EffectiveConnectionString);
+
+    private ReaderResolutionResult? TryResolveReader(
+        OptionsRegistry registry,
+        List<IStreamReaderFactory> readerFactories,
+        string input,
+        string? query)
+    {
+        string effectiveConnectionString = input;
+        IStreamReaderFactory? factory = null;
+
+        foreach (var f in readerFactories)
+        {
+            if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
+            {
+                effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
+                var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
+                if (optionsType != null)
+                {
+                    var instance = registry.Get(optionsType);
+                    optionsType.GetProperty("Input")?.SetValue(instance, effectiveConnectionString);
+                    registry.RegisterByType(optionsType, instance);
+                }
+                factory = f;
+                break;
+            }
+        }
+
+        if (factory == null)
+        {
+            foreach (var f in readerFactories)
+            {
+                if (f.CanHandle(input))
+                {
+                    var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
+                    if (optionsType != null)
+                    {
+                        var instance = registry.Get(optionsType);
+                        optionsType.GetProperty("Input")?.SetValue(instance, input);
+                        registry.RegisterByType(optionsType, instance);
+                    }
+                    factory = f;
+                    break;
+                }
+            }
+        }
+
+        if (factory == null) return null;
+
+        ValidatePathSafety(effectiveConnectionString);
+
+        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty));
+        var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
+        if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
+            readerOpts.Query = query;
+
+        if (!string.IsNullOrEmpty(query))
+        {
+            var optionsType = factory.GetSupportedOptionTypes().FirstOrDefault();
+            if (optionsType != null)
+            {
+                var instance = registry.Get(optionsType);
+                optionsType.GetProperty("Query")?.SetValue(instance, query);
+                registry.RegisterByType(optionsType, instance);
+            }
+        }
+
+        return new ReaderResolutionResult(factory, effectiveConnectionString);
     }
 }

@@ -16,23 +16,33 @@ public class McpCommand : Command
             // Set security context for MCP
             DtPipe.Core.Security.McpSecurityContext.IsMcpSession = true;
 
-            // MCP requires full control over stdout
-            // dtpipe already sets Spectre.Console to Console.Error in Program.cs.
-            // We just need to start the host or the MCP server on stdio.
-            
+            // Resolve all hosted services and start them in registration order.
+            // This avoids fragile string-based type resolution.
             var hostedServices = serviceProvider.GetServices<IHostedService>();
-            var mcpHostedService = hostedServices.FirstOrDefault(s => s.GetType().Name.Contains("McpServerHostedService"));
-            if (mcpHostedService == null)
-            {
-                Console.Error.WriteLine("[MCP] Server is not registered properly.");
-                return;
-            }
-            
             Console.Error.WriteLine("[MCP] Server starting on STDIO...");
-            await mcpHostedService.StartAsync(ct);
+
+            foreach (var service in hostedServices)
+            {
+                await service.StartAsync(ct);
+            }
 
             // Wait indefinitely until cancellation
-            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                // Graceful shutdown
+            }
+            finally
+            {
+                foreach (var service in hostedServices)
+                {
+                    try { await service.StopAsync(default); }
+                    catch { /* Best effort cleanup */ }
+                }
+            }
         });
     }
 }
