@@ -19,8 +19,10 @@ namespace DtPipe.Adapters.PostgreSQL;
 /// from PostgreSQL binary COPY TO STDOUT stream (no boxing, direct binary copying).
 /// Implements both IStreamReader (row-mode fallback) and IColumnarStreamReader (Arrow mode).
 /// </summary>
-public sealed partial class PostgreSqlReader : IColumnarStreamReader
+public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSizeConfigurable
 {
+    public int BatchSize { get; set; } = DtPipe.Core.Models.PipelineOptions.DefaultBatchSize;
+
     private readonly string _connectionString;
     private readonly string _query;
     private readonly int _timeout;
@@ -95,7 +97,7 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader
         var copySql = $"COPY ({_query}) TO STDOUT (FORMAT BINARY)";
         await using var exporter = await _connection.BeginBinaryExportAsync(copySql, ct);
 
-        const int targetBatchSize = 4096;
+        int targetBatchSize = BatchSize;
 
         while (true)
         {
