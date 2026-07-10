@@ -69,6 +69,9 @@ public class DtPipeMcpTools
         sw.WriteLine();
         sw.WriteLine("  Alternative YAML job syntax: dtpipe --job <file.yaml> [overrides]");
         sw.WriteLine();
+        sw.WriteLine("  QUOTING ARGUMENTS:");
+        sw.WriteLine("    Any arguments containing spaces (such as connection strings with spaces, e.g., 'sqlite:Data Source=path/to/db', or compute/filter scripts with spaces) MUST be wrapped in double quotes (or single quotes) when invoking the command to prevent the parser from splitting the arguments.");
+        sw.WriteLine();
         sw.WriteLine("CONNECTION STRINGS:");
         sw.WriteLine("  - Files: use prefix:path (e.g., 'csv:file.csv', 'parquet:file.parquet', 'jsonl:file.jsonl').");
         sw.WriteLine("    If connection string is '-' or bare prefix (e.g. 'csv'), it reads from STDIN or writes to STDOUT.");
@@ -218,7 +221,7 @@ public class DtPipeMcpTools
         "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
         "Call the 'help' tool first to see all available transformers, options, and flags.")]
     public string ValidatePipeline(
-        [System.ComponentModel.Description("The full dtpipe command line string to validate")] string command)
+        [System.ComponentModel.Description("The full dtpipe command line string to validate. IMPORTANT: Arguments containing spaces or special characters (such as JS compute expressions or strings with spaces) MUST be enclosed in double quotes, e.g.: --compute \"total:parseFloat(row.amount) * (1 + parseFloat(row.tax_rate))\" --filter \"row.total > 100\"")] string command)
     {
         try
         {
@@ -287,7 +290,7 @@ public class DtPipeMcpTools
         "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
         "Call the 'help' tool first to see all available transformers, options, and flags.")]
     public async Task<string> ExecutePipeline(
-        [System.ComponentModel.Description("The full dtpipe command line string to execute")] string command,
+        [System.ComponentModel.Description("The full dtpipe command line string to execute. IMPORTANT: Any arguments containing spaces (including connection strings with spaces, e.g. \"sqlite:Data Source=path/to/db\", or compute/filter scripts with spaces, e.g. --compute \"total:parseFloat(row.amount)\") MUST be wrapped in double quotes to prevent the command parser from splitting the arguments.")] string command,
         CancellationToken ct = default)
     {
         try
@@ -479,16 +482,27 @@ public class DtPipeMcpTools
     {
         var args = new List<string>();
         var current = new System.Text.StringBuilder();
-        bool inQuotes = false;
+        bool inDoubleQuotes = false;
+        bool inSingleQuotes = false;
         
         for (int i = 0; i < commandLine.Length; i++)
         {
             char c = commandLine[i];
-            if (c == '"')
+            
+            if (c == '\\' && i + 1 < commandLine.Length && commandLine[i + 1] == '"')
             {
-                inQuotes = !inQuotes;
+                current.Append('"');
+                i++;
             }
-            else if (char.IsWhiteSpace(c) && !inQuotes)
+            else if (c == '"' && !inSingleQuotes)
+            {
+                inDoubleQuotes = !inDoubleQuotes;
+            }
+            else if (c == '\'' && !inDoubleQuotes)
+            {
+                inSingleQuotes = !inSingleQuotes;
+            }
+            else if (char.IsWhiteSpace(c) && !inDoubleQuotes && !inSingleQuotes)
             {
                 if (current.Length > 0)
                 {
