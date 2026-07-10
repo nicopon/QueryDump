@@ -158,7 +158,7 @@ public class PipelineExecutorTests
 
         var mockProgress = new Mock<IExportProgress>();
 
-        await PipelineExecutor.DirectColumnarTransferAsync(batches, mockWriter.Object, 3, mockProgress.Object, default);
+        await _executor.DirectColumnarTransferAsync(batches, mockWriter.Object, 3, mockProgress.Object, default);
 
         Assert.NotNull(writtenBatch);
         Assert.Equal(3, writtenBatch.Length);

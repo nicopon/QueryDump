@@ -22,4 +22,5 @@ public interface IMemoryChannelRegistry
 
     // --- Common ---
     bool ContainsChannel(string branchAlias);
+    void Clear();
 }

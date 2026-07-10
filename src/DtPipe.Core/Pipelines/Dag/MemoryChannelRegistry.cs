@@ -107,4 +107,10 @@ public class MemoryChannelRegistry : IMemoryChannelRegistry
         }
         throw new InvalidOperationException($"An Arrow channel with the alias '{branchAlias}' is not registered.");
     }
+
+    public void Clear()
+    {
+        _arrowChannels.Clear();
+        _arrowSchemaTcs.Clear();
+    }
 }

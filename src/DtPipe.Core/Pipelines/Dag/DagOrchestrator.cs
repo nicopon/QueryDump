@@ -60,6 +60,9 @@ public class DagOrchestrator : IDagOrchestrator
             return 1;
         }
 
+        // Systematically clear channels to prevent any state leakage between runs (e.g. in MCP or embedded library modes)
+        _channelRegistry.Clear();
+
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var effectiveCt = linkedCts.Token;
 

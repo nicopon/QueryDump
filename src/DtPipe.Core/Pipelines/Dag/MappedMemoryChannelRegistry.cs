@@ -44,4 +44,6 @@ public class MappedMemoryChannelRegistry : IMemoryChannelRegistry
 
     public Task<Schema> WaitForArrowChannelSchemaAsync(string branchAlias, CancellationToken ct = default)
         => _inner.WaitForArrowChannelSchemaAsync(Resolve(branchAlias), ct);
+
+    public void Clear() => _inner.Clear();
 }

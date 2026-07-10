@@ -29,7 +29,7 @@ public sealed class PipelineExecutor
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    internal static async Task DrainColumnarSourceAsync(
+    internal async Task DrainColumnarSourceAsync(
         IAsyncEnumerable<RecordBatch> source,
         IColumnarDataWriter writer,
         int limit,
@@ -56,7 +56,7 @@ public sealed class PipelineExecutor
         }
     }
 
-    internal static async Task DirectColumnarTransferAsync(
+    internal async Task DirectColumnarTransferAsync(
         IAsyncEnumerable<RecordBatch> source,
         IColumnarDataWriter writer,
         int limit,
