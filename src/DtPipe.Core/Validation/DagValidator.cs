@@ -65,10 +65,14 @@ public static class DagValidator
                         errors.Add($"Stream-transformer branch '{branch.Alias}' references unknown secondary alias '{refAlias}'.");
                 }
 
-                // 4. Processor capability validation (if factories provided)
+                // 4. Processor capability validation (if factories provided).
+                //    CLI branches carry raw args (match via IsApplicable); YAML branches carry
+                //    empty args but a populated ProcessorName — match by ComponentName in that case.
                 if (factories != null)
                 {
-                    var factory = factories.FirstOrDefault(f => f.IsApplicable(branch.Arguments));
+                    var factory = branch.ProcessorName != null
+                        ? factories.FirstOrDefault(f => f.ComponentName.Equals(branch.ProcessorName, StringComparison.OrdinalIgnoreCase))
+                        : factories.FirstOrDefault(f => f.IsApplicable(branch.Arguments));
                     if (factory != null)
                     {
                         int streams = branch.StreamingAliases.Count;

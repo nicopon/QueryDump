@@ -70,3 +70,6 @@ experiments/*
 .claude/
 tests/DtPipe.Tests/TestResults/*
 nuget-packages/*
+
+# Agentic E2E tests
+tests/agentic/artifacts/

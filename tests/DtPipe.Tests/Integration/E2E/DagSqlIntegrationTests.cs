@@ -152,4 +152,67 @@ public class DagSqlIntegrationTests : IAsyncLifetime
         lines[1].Should().Be("1200.5");
         lines[2].Should().Be("25.5");
     }
+
+    // ── YAML (--job) execution: SQL/Merge stream processors via provider-options ──
+
+    private async Task<string> WriteTempJobAsync(string yaml)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"dag_yaml_test_{Guid.NewGuid()}.yaml");
+        _cleanupPaths.Add(path);
+        await File.WriteAllTextAsync(path, yaml);
+        return path;
+    }
+
+    [Fact]
+    public async Task YamlJob_SqlJoin_ViaJobFile_ProducesJoinedOutput()
+    {
+        var outputPath = GetTempPath();
+        var yaml = string.Join("\n",
+            "g1:",
+            "  input: \"generate:10\"",
+            "g2:",
+            "  input: \"generate:10\"",
+            "joined:",
+            "  from: g1",
+            "  ref: [\"g2\"]",
+            "  provider-options:",
+            "    sql:",
+            "      query: SELECT g1.GenerateIndex FROM g1 JOIN g2 ON g1.GenerateIndex = g2.GenerateIndex WHERE g1.GenerateIndex < 5 ORDER BY g1.GenerateIndex",
+            $"  output: \"csv:{outputPath}\"");
+        var jobPath = await WriteTempJobAsync(yaml);
+
+        var exitCode = await DtPipe.Program.Main(new[] { "--job", jobPath });
+
+        exitCode.Should().Be(0, "a SQL stream processor declared via provider-options.sql should run through --job");
+        var lines = await File.ReadAllLinesAsync(outputPath);
+        lines.Should().HaveCount(6, "the JOIN + WHERE < 5 should keep indices 0..4");
+        lines[0].Should().Be("GenerateIndex");
+        lines[1].Should().Be("0");
+        lines[5].Should().Be("4");
+    }
+
+    [Fact]
+    public async Task YamlJob_Merge_ViaJobFile_CombinesSources()
+    {
+        // Regression repro: before the YAML-native processor path, a comma-separated `from`
+        // was passed as a single unsplit alias and rejected by PipelineValidator.
+        var outputPath = GetTempPath();
+        var yaml = string.Join("\n",
+            "b1:",
+            "  input: \"generate:10\"",
+            "b2:",
+            "  input: \"generate:5\"",
+            "merged:",
+            "  from: \"b1,b2\"",
+            "  provider-options:",
+            "    merge: {}",
+            $"  output: \"csv:{outputPath}\"");
+        var jobPath = await WriteTempJobAsync(yaml);
+
+        var exitCode = await DtPipe.Program.Main(new[] { "--job", jobPath });
+
+        exitCode.Should().Be(0, "a merge stream processor declared via provider-options.merge should run through --job");
+        var lines = await File.ReadAllLinesAsync(outputPath);
+        lines.Should().HaveCount(16, "10 from b1 + 5 from b2 + 1 header");
+    }
 }

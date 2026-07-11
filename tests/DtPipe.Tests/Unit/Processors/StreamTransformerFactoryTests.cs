@@ -1,6 +1,10 @@
+using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
+using DtPipe.Core.Pipelines.Dag;
 using DtPipe.Processors;
 using DtPipe.Processors.DuckDB;
 using DtPipe.Processors.Merge;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Processors;
@@ -21,6 +25,37 @@ public class SqlTransformerFactoryTests
     {
         var args = new[] { "--from", "src", "--merge" };
         Assert.False(_factory.IsApplicable(args));
+    }
+
+    // ── YAML (JobDefinition) surface ──
+
+    [Fact]
+    public void IsApplicable_Job_WithSqlProviderOptions_ReturnsTrue()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition
+        {
+            From = "src",
+            ProviderOptions = new() { ["sql"] = new() { ["query"] = "SELECT 1" } }
+        };
+        Assert.True(f.IsApplicable(job));
+    }
+
+    [Fact]
+    public void IsApplicable_Job_WithoutSql_ReturnsFalse()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition { ProviderOptions = new() { ["merge"] = new() } };
+        Assert.False(f.IsApplicable(job));
+    }
+
+    [Fact]
+    public void CreateFromJob_Sql_MissingQuery_Throws()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition { From = "src", ProviderOptions = new() { ["sql"] = new() } };
+        Assert.Throws<ArgumentException>(() =>
+            f.CreateFromJob(job, new BranchChannelContext(), new ServiceCollection().BuildServiceProvider()));
     }
 }
 
@@ -47,6 +82,33 @@ public class MergeTransformerFactoryTests
     {
         var args = new[] { "--from", "a,b", "--MERGE" };
         Assert.True(_factory.IsApplicable(args));
+    }
+
+    // ── YAML (JobDefinition) surface ──
+
+    [Fact]
+    public void IsApplicable_Job_WithMergeProviderOptions_ReturnsTrue()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition { From = "a,b", ProviderOptions = new() { ["merge"] = new() } };
+        Assert.True(f.IsApplicable(job));
+    }
+
+    [Fact]
+    public void IsApplicable_Job_WithoutMerge_ReturnsFalse()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition { ProviderOptions = new() { ["sql"] = new() { ["query"] = "SELECT 1" } } };
+        Assert.False(f.IsApplicable(job));
+    }
+
+    [Fact]
+    public void CreateFromJob_Merge_SingleSource_Throws()
+    {
+        IStreamTransformerFactory f = _factory;
+        var job = new JobDefinition { From = "only", ProviderOptions = new() { ["merge"] = new() } };
+        Assert.Throws<ArgumentException>(() =>
+            f.CreateFromJob(job, new BranchChannelContext(), new ServiceCollection().BuildServiceProvider()));
     }
 }
 

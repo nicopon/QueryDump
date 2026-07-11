@@ -66,8 +66,8 @@ validate_data() {
         fi
     done < "$TARGET_FILE"
 
-    # Clean up artifacts directory
-    rm -rf "tests/agentic/artifacts"
+    # Clean up artifacts
+    rm -f "tests/agentic/artifacts/invoices.jsonl" "tests/agentic/artifacts/high_invoices.jsonl"
 
     if [ "$COMPUTES_OK" = true ]; then
         return 0
@@ -78,7 +78,7 @@ validate_data() {
 
 run_mission \
     "Fuzzy Compute and Filter" \
-    "We have an invoices file at 'jsonl:tests/agentic/artifacts/invoices.jsonl'. Your tasks are: 1. Inspect its schema to identify the fields representing the subtotal and the tax multiplier. 2. Compute a new column 'gross_total' using JavaScript, calculating the subtotal multiplied by (1 + tax_multiplier). Hint: make sure to parse them as floats. 3. Filter the results to keep only the invoices where the gross total is strictly greater than 100. 4. Save the filtered result to 'jsonl:tests/agentic/artifacts/high_invoices.jsonl'." \
+    "We have an invoices file at 'jsonl:tests/agentic/artifacts/invoices.jsonl'. Your tasks are: 1. Inspect its schema to identify the fields representing the subtotal and the tax multiplier. 2. Compute a new column 'gross_total' using JavaScript, calculating the subtotal multiplied by (1 + tax_multiplier). Hint: make sure to parse them as floats. 3. Filter the results to keep only the invoices where the gross total is strictly greater than 100. 4. Configure a YAML job block to perform these tasks (using 'compute' and 'filter' transformers) and save the result to 'jsonl:tests/agentic/artifacts/high_invoices.jsonl'. Execute the pipeline by calling the 'execute-yaml-job' tool." \
     setup_data \
     validate_data \
     "$1"

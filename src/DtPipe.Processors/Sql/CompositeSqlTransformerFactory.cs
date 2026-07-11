@@ -1,6 +1,7 @@
 namespace DtPipe.Processors.Sql;
 
 using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
 using DtPipe.Core.Pipelines.Dag;
 
 /// <summary>
@@ -26,6 +27,11 @@ public class CompositeSqlTransformerFactory : IStreamTransformerFactory
     public IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider sp)
     {
         return new DuckDB.DuckDBSqlTransformerFactory().Create(branchArgs, ctx, sp);
+    }
+
+    public IStreamTransformer CreateFromJob(JobDefinition job, BranchChannelContext ctx, IServiceProvider sp)
+    {
+        return new DuckDB.DuckDBSqlTransformerFactory().CreateFromJob(job, ctx, sp);
     }
 
     /// <summary>

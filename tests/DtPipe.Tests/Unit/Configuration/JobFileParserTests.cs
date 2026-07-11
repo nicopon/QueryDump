@@ -252,5 +252,33 @@ joined:
 			if (File.Exists(tempFile)) File.Delete(tempFile);
 		}
 	}
+
+	[Fact]
+	public void Parse_ShouldSucceed_WhenUsingMemoryMappedFile()
+	{
+		// Arrange
+		var yaml = @"main:
+  input: memory-dummy.csv
+  output: memory-dummy.parquet
+";
+		var jobName = "test-job-" + Guid.NewGuid().ToString("N");
+		var tempPath = Path.Combine(Path.GetTempPath(), "dtpipe-job-" + jobName + ".yaml");
+		File.WriteAllText(tempPath, yaml);
+
+		try
+		{
+			// Act
+			var jobs = JobFileParser.Parse($"memory://{jobName}");
+			var job = jobs["main"];
+
+			// Assert
+			job.Input.Should().Be("memory-dummy.csv");
+			job.Output.Should().Be("memory-dummy.parquet");
+		}
+		finally
+		{
+			if (File.Exists(tempPath)) File.Delete(tempPath);
+		}
+	}
 }
 

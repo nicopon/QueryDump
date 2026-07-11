@@ -1,5 +1,6 @@
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Abstractions.Dag;
+using DtPipe.Core.Models;
 using DtPipe.Core.Pipelines.Dag;
 using DtPipe.Core.Expressions;
 using DtPipe.Core.Security;
@@ -38,19 +39,42 @@ public class DuckDBSqlTransformerFactory : IStreamTransformerFactory
             ?? throw new ArgumentException("--sql <query> or a positional SQL query is required for DuckDBSqlTransformer");
 
         var mainAlias = BranchArgParser.ExtractValue(branchArgs, "--from") ?? "";
-        var mainChannelAlias = ctx.AliasMap.GetValueOrDefault(mainAlias, mainAlias);
 
         var refAliases = BranchArgParser.ExtractAllValues(branchArgs, "--ref")
             .SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToArray();
+
+        var initSql = BranchArgParser.ExtractValue(branchArgs, "--duck-init");
+
+        return CreateFromOptions(query, mainAlias, refAliases, initSql, ctx, serviceProvider);
+    }
+
+    public IStreamTransformer CreateFromJob(JobDefinition job, BranchChannelContext ctx, IServiceProvider serviceProvider)
+    {
+        var sqlOpts = job.ProviderOptions?.GetValueOrDefault(ComponentName);
+        var query = sqlOpts?.GetValueOrDefault("query") as string;
+        if (string.IsNullOrEmpty(query))
+            throw new ArgumentException("provider-options.sql.query is required for the SQL stream processor.");
+
+        var mainAlias = job.From ?? "";
+        var refAliases = job.Ref;
+        var initSql = sqlOpts?.GetValueOrDefault("duck-init") as string;
+
+        return CreateFromOptions(query, mainAlias, refAliases, initSql, ctx, serviceProvider);
+    }
+
+    // Shared convergence point for the CLI (Create) and YAML (CreateFromJob) surfaces.
+    private static IStreamTransformer CreateFromOptions(
+        string query, string mainAlias, string[] refAliases, string? initSql,
+        BranchChannelContext ctx, IServiceProvider serviceProvider)
+    {
+        var mainChannelAlias = ctx.AliasMap.GetValueOrDefault(mainAlias, mainAlias);
         var refChannelAliases = refAliases
             .Select(a => ctx.AliasMap.GetValueOrDefault(a, a))
             .ToArray();
 
         var registry = serviceProvider.GetRequiredService<IMemoryChannelRegistry>();
         var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-
-        var initSql = BranchArgParser.ExtractValue(branchArgs, "--duck-init");
         var resolver = serviceProvider.GetService<IStringContentResolver>();
 
         var processor = new DuckDBSqlProcessor(

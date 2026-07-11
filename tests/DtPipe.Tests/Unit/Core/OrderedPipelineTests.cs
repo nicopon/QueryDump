@@ -5,6 +5,8 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
 using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
+using DtPipe.Core.Pipelines.Dag;
+using DtPipe.Services;
 using Apache.Arrow;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -220,6 +222,101 @@ public class OrderedPipelineTests
 		rows[0].Should().Equal(1L, "A");
 		rows[1].Should().Equal(2L, "B");
 		rows[2].Should().Equal(3L, null);
+	}
+
+	// LinearPipelineService dispatch (CLAUDE.md engine-change obligation): a YAML branch with no
+	// raw args must be routed through the CreateFromJob surface, never the CLI string[] surface.
+	[Fact]
+	public async Task ExecuteAsync_YamlBranch_NoRawArgs_UsesCreateFromJobSurface()
+	{
+		// Minimal DI graph (mirrors E2EIntegrationTests) so LinearPipelineService constructs
+		// and ExecuteAsync reaches the stream-transformer dispatch.
+		var registry = new OptionsRegistry();
+		registry.Register(new DtPipe.Adapters.Generate.GenerateReaderOptions());
+		registry.Register(new DtPipe.Adapters.Null.NullDataWriterOptions());
+
+		var services = new ServiceCollection();
+		services.AddLogging();
+		services.AddSingleton(registry);
+		services.AddSingleton<IStreamReaderFactory>(sp => new CliStreamReaderFactory(
+			new DtPipe.Adapters.Generate.GenerateReaderDescriptor(), sp.GetRequiredService<OptionsRegistry>(), sp));
+		services.AddSingleton<IDataWriterFactory>(sp => new CliDataWriterFactory(
+			new DtPipe.Adapters.Null.NullDataWriterFactory(), sp.GetRequiredService<OptionsRegistry>(), sp));
+		services.AddSingleton<IRowToColumnarBridgeFactory, DtPipe.Adapters.Infrastructure.Arrow.ArrowRowToColumnarBridgeFactory>();
+		services.AddSingleton<IColumnarToRowBridgeFactory, DtPipe.Adapters.Infrastructure.Arrow.ArrowColumnarToRowBridgeFactory>();
+		services.AddSingleton<ExportService>();
+		services.AddSingleton<HookExecutor>();
+		services.AddSingleton<MetricsService>();
+		services.AddSingleton<SchemaValidationService>();
+		services.AddSingleton<PipelineExecutor>();
+		services.AddSingleton<DtPipe.Core.Abstractions.Dag.IMemoryChannelRegistry, DtPipe.Core.Pipelines.Dag.MemoryChannelRegistry>();
+
+		var mockProgress = new Mock<IExportProgress>();
+		mockProgress.Setup(p => p.GetMetrics()).Returns(new ExportMetrics(DateTime.UtcNow, DateTime.UtcNow, 0, 0, 0, 0, new Dictionary<string, long>()));
+		var mockObserver = new Mock<IExportObserver>();
+		mockObserver.Setup(o => o.CreateProgressReporter(It.IsAny<bool>(), It.IsAny<IReadOnlyList<(string Name, bool IsColumnar)>>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<bool>()))
+			.Returns(mockProgress.Object);
+		services.AddSingleton(mockObserver.Object);
+
+		// Seam under test: a concrete fake so the REAL default interface method IsApplicable(JobDefinition)
+		// runs (ProviderOptions.ContainsKey("merge")); its YAML surface throws a sentinel we can detect.
+		var sentinel = new InvalidOperationException("dispatch-reached-CreateFromJob");
+		var fakeFactory = new ThrowingStreamTransformerFactory(sentinel);
+		services.AddSingleton<IStreamTransformerFactory>(fakeFactory);
+
+		var serviceProvider = services.BuildServiceProvider();
+
+		var pipelineService = new LinearPipelineService(
+			new List<ICliContributor>(),
+			serviceProvider,
+			serviceProvider.GetRequiredService<DtPipe.Core.Abstractions.Dag.IMemoryChannelRegistry>(),
+			registry,
+			Spectre.Console.AnsiConsole.Console);
+
+		var job = new JobDefinition { Output = "null:", ProviderOptions = new() { ["merge"] = new() } };
+
+		// The stream-transformer dispatch runs before ExecuteAsync's try/catch, so the sentinel propagates.
+		var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			pipelineService.ExecuteAsync(job, context: null, token: default));
+
+		thrown.Should().BeSameAs(sentinel);
+		fakeFactory.CreateFromJobCalls.Should().Be(1, "a YAML branch must use the CreateFromJob surface");
+		fakeFactory.CliCreateCalls.Should().Be(0, "the CLI string[] surface must not be used for a YAML branch");
+	}
+
+	// Concrete fake exercising the real IsApplicable(JobDefinition) default interface method.
+	private sealed class ThrowingStreamTransformerFactory : IStreamTransformerFactory
+	{
+		private readonly System.Exception _sentinel;
+		public int CreateFromJobCalls { get; private set; }
+		public int CliCreateCalls { get; private set; }
+
+		public ThrowingStreamTransformerFactory(System.Exception sentinel) => _sentinel = sentinel;
+
+		public string ComponentName => "merge";
+		public string Category => "Stream Processors";
+		public bool RequiresArrowChannels => true;
+		public int MinStreams => 2;
+		public int MaxStreams => -1;
+		public int MinLookups => 0;
+		public int MaxLookups => 0;
+		public IReadOnlyList<(string Flag, bool IsBoolean)> CliTriggerFlags => new[] { ("--merge", true) };
+
+		public bool IsApplicable(string[] branchArgs) => false;
+
+		public IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider sp)
+		{
+			CliCreateCalls++;
+			throw _sentinel;
+		}
+
+		// IsApplicable(JobDefinition) intentionally NOT overridden — the interface default runs.
+
+		public IStreamTransformer CreateFromJob(JobDefinition job, BranchChannelContext ctx, IServiceProvider sp)
+		{
+			CreateFromJobCalls++;
+			throw _sentinel;
+		}
 	}
 
 	private static async IAsyncEnumerable<T> HelperAsyncEnumerable<T>(params T[] items)

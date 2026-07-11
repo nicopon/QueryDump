@@ -50,8 +50,8 @@ validate_data() {
         fi
     done < "$TARGET_FILE"
 
-    # Clean up artifacts directory
-    rm -rf "tests/agentic/artifacts"
+    # Clean up artifacts
+    rm -f "tests/agentic/artifacts/users_raw.jsonl" "tests/agentic/artifacts/users_clean.jsonl"
 
     if [ "$EMAILS_OK" = true ]; then
         return 0
@@ -63,7 +63,7 @@ validate_data() {
 # Run the mission with a fuzzy description
 run_mission \
     "Fuzzy Email Anonymization" \
-    "There is a JSONL file at 'jsonl:tests/agentic/artifacts/users_raw.jsonl' containing registered user accounts. Your task is to: 1. Inspect the file to find the column containing the user's email address. 2. Anonymize that column using the 'internet.email' Bogus faker. 3. Save the anonymized data to 'jsonl:tests/agentic/artifacts/users_clean.jsonl'." \
+    "There is a JSONL file at 'jsonl:tests/agentic/artifacts/users_raw.jsonl' containing registered user accounts. Your task is to: 1. Inspect the file to find the column containing the user's email address. 2. Configure a YAML job block to anonymize that column using the 'internet.email' Bogus faker and save the result to 'jsonl:tests/agentic/artifacts/users_clean.jsonl'. 3. Execute the pipeline by calling the 'execute-yaml-job' tool." \
     setup_data \
     validate_data \
     "$1"

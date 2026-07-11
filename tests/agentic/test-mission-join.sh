@@ -77,8 +77,8 @@ validate_data() {
         JOINS_OK=false
     fi
 
-    # Clean up artifacts directory
-    rm -rf "tests/agentic/artifacts"
+    # Clean up artifacts
+    rm -f "tests/agentic/artifacts/business.db" "tests/agentic/artifacts/sales.parquet" "tests/agentic/artifacts/sales_report.csv"
 
     if [ "$JOINS_OK" = true ]; then
         return 0
@@ -89,7 +89,7 @@ validate_data() {
 
 run_mission \
     "Fuzzy Join SQLite and Parquet" \
-    "We want to perform a sales analysis. We have two data sources: 1. A sales Parquet file at 'parquet:tests/agentic/artifacts/sales.parquet' containing transactions. 2. An SQLite database at 'sqlite:tests/agentic/artifacts/business.db'. Your tasks are: 1. Find out which table in the SQLite database holds the customer details (such as names) and inspect its schema (Tip: use a query like \"SELECT name FROM sqlite_master WHERE type='table'\" to list tables). 2. Join the sales transactions with the customer table (hint: link the client reference from the sales transactions to the customer identifier in the SQLite table) to produce a combined output showing order ID, customer name, product name, and amount. You must specify the query for the SQLite reader using the '--query \"SELECT * FROM company_clients\"' option. 3. Save the result to 'csv:tests/agentic/artifacts/sales_report.csv'." \
+    "We want to perform a sales analysis. We have two data sources: 1. A sales Parquet file at 'parquet:tests/agentic/artifacts/sales.parquet' containing transactions. 2. An SQLite database at 'sqlite:tests/agentic/artifacts/business.db'. Your tasks are: 1. Find out which table in the SQLite database holds the customer details (such as names) and inspect its schema (Tip: use inspect tool with a query like \"SELECT name FROM sqlite_master WHERE type='table'\" to list tables). 2. Join the sales transactions with the customer table (hint: link the client reference from the sales transactions to the customer identifier in the SQLite table) to produce a combined output showing order ID, customer name, product name, and amount. 3. Configure a multi-branch YAML job DAG (using 'from', 'ref', 'sql' query under 'provider-options') and specify the SQLite reader query under 'provider-options -> sqlite -> query: \"SELECT * FROM company_clients\"'. Save the result to 'csv:tests/agentic/artifacts/sales_report.csv' and execute it using the 'execute-yaml-job' tool." \
     setup_data \
     validate_data \
     "$1"

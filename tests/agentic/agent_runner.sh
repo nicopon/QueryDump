@@ -33,8 +33,9 @@ run_mission() {
 
     # Start MCP Server via FIFOs
     local FIFO_NAME_SAFE="${MISSION_NAME// /_}"
-    local FIFO_IN="tests/agentic/mcp_in_${FIFO_NAME_SAFE}"
-    local FIFO_OUT="tests/agentic/mcp_out_${FIFO_NAME_SAFE}"
+    local FIFO_IN="tests/agentic/artifacts/mcp_in_${FIFO_NAME_SAFE}"
+    local FIFO_OUT="tests/agentic/artifacts/mcp_out_${FIFO_NAME_SAFE}"
+    mkdir -p "tests/agentic/artifacts"
     rm -f "$FIFO_IN" "$FIFO_OUT"
     mkfifo "$FIFO_IN" "$FIFO_OUT"
 
@@ -86,6 +87,7 @@ run_mission() {
     local ITERATION=1
     local MAX_ITERATIONS=25
     local SUCCESS=false
+    local TOOL_COUNTS_JSON="{}"
 
     while [ $ITERATION -le $MAX_ITERATIONS ]; do
         echo "--- Iteration $ITERATION ---"
@@ -121,6 +123,8 @@ run_mission() {
         local TOOL_CALL=$(echo "$TOOL_CALLS" | jq '.[0]')
         local TOOL_NAME=$(echo "$TOOL_CALL" | jq -r '.function.name')
         local TOOL_ARGS=$(echo "$TOOL_CALL" | jq -c '.function.arguments | if type == "string" then fromjson else . end')
+
+        TOOL_COUNTS_JSON=$(echo "$TOOL_COUNTS_JSON" | jq --arg name "$TOOL_NAME" '.[$name] = (.[$name] // 0) + 1')
 
         echo "Agent calls tool: $TOOL_NAME with args: $TOOL_ARGS"
 
@@ -158,7 +162,36 @@ run_mission() {
 
     # Run validation
     echo "Validating target data..."
+    local VALIDATION_SUCCESS=false
     if $VALIDATE_FUNC; then
+        VALIDATION_SUCCESS=true
+    fi
+
+    # Persist benchmark stats
+    local STATS_FILE="tests/agentic/artifacts/benchmark_results.jsonl"
+    mkdir -p "$(dirname "$STATS_FILE")"
+
+    local TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+
+    local ENTRY_JSON=$(jq -n \
+      --arg ts "$TS" \
+      --arg model "$MODEL" \
+      --arg mission "$MISSION_NAME" \
+      --argjson success "$VALIDATION_SUCCESS" \
+      --argjson iter "$ITERATION" \
+      --argjson tools "$TOOL_COUNTS_JSON" \
+      '{timestamp: $ts, model: $model, mission: $mission, success: $success, iterations: $iter, tool_calls: $tools}')
+
+    echo "$ENTRY_JSON" >> "$STATS_FILE"
+
+    echo "📊 Execution Stats:"
+    echo "  - Model: $MODEL"
+    echo "  - Success: $VALIDATION_SUCCESS"
+    echo "  - Iterations: $ITERATION"
+    echo "  - Tool Calls: $(echo "$TOOL_COUNTS_JSON" | jq -c '.')"
+    echo
+
+    if [ "$VALIDATION_SUCCESS" = "true" ]; then
         echo "🎉 MISSION SUCCESS: $MISSION_NAME completed successfully!"
         echo "=================================================="
         echo

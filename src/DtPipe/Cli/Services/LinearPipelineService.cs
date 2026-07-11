@@ -90,14 +90,28 @@ public class LinearPipelineService
         // 1. Resolve Reader (strips "componentName:" prefix, e.g. "arrow-memory:src" → "src")
         var (readerFactory, cleanedInput) = ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
 
-        // 2. Resolve Stream Transformer (SQL/Merge) if any
+        // 2. Resolve Stream Transformer (SQL / Merge / …): CLI args when present, else the YAML JobDefinition.
+        //    Each factory owns both surfaces (Create for CLI tokens, CreateFromJob for provider-options);
+        //    this dispatcher stays free of any processor-specific knowledge.
         var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
-        var applicableFactory = streamTransformerFactories.FirstOrDefault(f => f.IsApplicable(currentRawArgs));
 
-        if (applicableFactory != null)
+        IStreamTransformer? streamTransformer = null;
+        if (currentRawArgs.Length > 0)
         {
-            var transformer = applicableFactory.Create(currentRawArgs, ctx ?? new BranchChannelContext(), _serviceProvider);
-            readerFactory = new StreamTransformerReaderAdapter(transformer);
+            var cliFactory = streamTransformerFactories.FirstOrDefault(f => f.IsApplicable(currentRawArgs));
+            if (cliFactory != null)
+                streamTransformer = cliFactory.Create(currentRawArgs, ctx ?? new BranchChannelContext(), _serviceProvider);
+        }
+        else
+        {
+            var yamlFactory = streamTransformerFactories.FirstOrDefault(f => f.IsApplicable(job));
+            if (yamlFactory != null)
+                streamTransformer = yamlFactory.CreateFromJob(job, ctx ?? new BranchChannelContext(), _serviceProvider);
+        }
+
+        if (streamTransformer != null)
+        {
+            readerFactory = new StreamTransformerReaderAdapter(streamTransformer);
             cleanedInput = "";
         }
 

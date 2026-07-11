@@ -1,18 +1,42 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-MODEL="${1:-${OLLAMA_MODEL:-gemma4:12b-mlx}}"
+# Read model arguments, default to OLLAMA_MODEL or gemma4:12b-mlx if none provided
+MODELS=("$@")
+if [ ${#MODELS[@]} -eq 0 ]; then
+    MODELS=("${OLLAMA_MODEL:-gemma4:12b-mlx}")
+fi
 
-echo "=================================================="
-echo "Starting Agentic E2E Test Suite"
-echo "Model: $MODEL"
-echo "=================================================="
-echo
+FAILED=false
 
-"$SCRIPT_DIR/test-mission-anonymisation.sh" "$MODEL"
-"$SCRIPT_DIR/test-mission-join.sh" "$MODEL"
-"$SCRIPT_DIR/test-mission-aggregation.sh" "$MODEL"
+for MODEL in "${MODELS[@]}"; do
+    echo "=================================================="
+    echo "Starting Agentic E2E Test Suite"
+    echo "Model: $MODEL"
+    echo "=================================================="
+    echo
 
-echo "🎉 ALL AGENTIC E2E MISSIONS SUCCEEDED!"
+    "$SCRIPT_DIR/test-mission-anonymisation.sh" "$MODEL" || FAILED=true
+    "$SCRIPT_DIR/test-mission-join.sh" "$MODEL" || FAILED=true
+    "$SCRIPT_DIR/test-mission-aggregation.sh" "$MODEL" || FAILED=true
+    "$SCRIPT_DIR/test-mission-yaml.sh" "$MODEL" || FAILED=true
+
+    echo "🔌 Unloading model: $MODEL from Ollama memory..."
+    curl -s -X POST http://localhost:11434/api/generate -d "{\"model\": \"$MODEL\", \"keep_alive\": 0}" > /dev/null
+    
+    echo "💤 Sleeping 5 seconds..."
+    sleep 5
+    echo
+done
+
+# Print final comparative report
+"$SCRIPT_DIR/print-benchmark.sh"
+
+if [ "$FAILED" = "true" ]; then
+    echo "❌ SOME AGENTIC E2E MISSIONS FAILED!"
+    exit 1
+else
+    echo "🎉 ALL AGENTIC E2E MISSIONS SUCCEEDED!"
+fi

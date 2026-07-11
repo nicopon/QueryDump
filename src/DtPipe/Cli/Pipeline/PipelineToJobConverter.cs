@@ -107,11 +107,13 @@ public static class PipelineToJobConverter
             Alias = kv.Key,
             Input = kv.Value.Input,
             Output = kv.Value.Output,
-            StreamingAliases = kv.Value.From != null ? new[] { kv.Value.From } : Array.Empty<string>(),
+            StreamingAliases = kv.Value.From != null
+                ? kv.Value.From.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : Array.Empty<string>(),
             RefAliases = kv.Value.Ref ?? Array.Empty<string>(),
             Arguments = Array.Empty<string>(),
             ProcessorName = streamTransformerFactories?
-                .FirstOrDefault(f => kv.Value.ProviderOptions?.ContainsKey(f.ComponentName) == true)
+                .FirstOrDefault(f => f.IsApplicable(kv.Value))
                 ?.ComponentName
         }).ToList();
 

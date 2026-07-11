@@ -20,18 +20,47 @@ public static partial class JobFileParser
 	/// Parses a YAML job file into a dictionary of JobDefinitions (DAG).
 	/// Single-job files are automatically wrapped in a dictionary with key "main".
 	/// </summary>
-	/// <param name="filePath">Path to the YAML file.</param>
+	/// <param name="filePath">Path to the YAML file or a memory:// job URL.</param>
 	/// <param name="secretsManager">Optional secrets manager to resolve keyring:// references.</param>
 	/// <returns>Dictionary of JobDefinitions keyed by branch alias.</returns>
 	public static Dictionary<string, DtPipe.Core.Models.JobDefinition> Parse(string filePath, DtPipe.Cli.Security.ISecretsManager? secretsManager = null)
 	{
-		if (!File.Exists(filePath))
+		string content;
+
+		if (filePath.StartsWith("memory://", StringComparison.OrdinalIgnoreCase))
 		{
-			throw new FileNotFoundException($"Job file not found: {filePath}");
+			var name = filePath.Substring("memory://".Length).Trim();
+			var tempPath = Path.Combine(Path.GetTempPath(), "dtpipe-job-" + name + ".yaml");
+			try
+			{
+				if (!File.Exists(tempPath))
+				{
+					throw new FileNotFoundException($"Memory job file not found at: {tempPath}");
+				}
+				content = File.ReadAllText(tempPath);
+			}
+			catch (Exception ex)
+			{
+				throw new FileNotFoundException($"Failed to read memory job '{name}': {ex.Message}", ex);
+			}
+		}
+		else
+		{
+			if (!File.Exists(filePath))
+			{
+				throw new FileNotFoundException($"Job file not found: {filePath}");
+			}
+			content = File.ReadAllText(filePath);
 		}
 
-		var content = File.ReadAllText(filePath);
+		return ParseContent(content, secretsManager);
+	}
 
+	/// <summary>
+	/// Parses a YAML job content string into a dictionary of JobDefinitions (DAG).
+	/// </summary>
+	public static Dictionary<string, DtPipe.Core.Models.JobDefinition> ParseContent(string content, DtPipe.Cli.Security.ISecretsManager? secretsManager = null)
+	{
 		var deserializer = new DeserializerBuilder()
 			.WithNamingConvention(HyphenatedNamingConvention.Instance)
 			.IgnoreUnmatchedProperties()

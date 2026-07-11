@@ -1,8 +1,16 @@
+using System.ComponentModel;
+using DtPipe.Core.Attributes;
 using DtPipe.Adapters.Common;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.Sqlite;
 
+[Description("Reads data from an SQLite database.")]
+[ComponentHelp(
+	usageNotes: "Connection string format: 'sqlite:Data Source=path/to/db.db'. In YAML, use 'provider-options' -> 'sqlite' to specify reader configurations like query or table.",
+	examples: new[] {
+		"main:\n  input: \"sqlite:Data Source=business.db\"\n  provider-options:\n    sqlite:\n      query: \"SELECT * FROM company_clients\"\n  output: \"csv:output.csv\""
+	})]
 public class SqliteReaderOptions : QueryableReaderOptions, IProviderOptions
 {
 	public static string Prefix => "sqlite";

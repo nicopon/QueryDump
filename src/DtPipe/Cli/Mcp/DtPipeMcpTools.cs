@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -9,6 +11,10 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
+using DtPipe.Core.Attributes;
+using DtPipe.Core.Models;
+using DtPipe.Core.Pipelines.Dag;
+using DtPipe.Configuration;
 using DtPipe.Cli.Pipeline;
 using DtPipe.Cli.Infrastructure;
 using ModelContextProtocol.Server;
@@ -50,27 +56,76 @@ public class DtPipeMcpTools
         }, new JsonSerializerOptions { WriteIndented = true });
     }
 
+    [McpServerTool(Name = "register-yaml-job")]
+    [System.ComponentModel.Description(
+        "Register a YAML job configuration in memory. Returns a virtual memory:// URI that can be used with '--job' option in execute-pipeline or validate-pipeline. " +
+        "To discover valid adapter connection string prefixes (e.g. 'csv', 'sqlite') and transformer types (e.g. 'fake', 'compute'), call the 'list-providers' tool. " +
+        "YAML Job Schema Example:\n" +
+        "main:\n" +
+        "  input: \"<adapter>:<source_path>\"\n" +
+        "  transformers:\n" +
+        "    - type: <transformer_type>\n" +
+        "      mappings:\n" +
+        "        <target_column>: <expression_or_format>\n" +
+        "  output: \"<adapter>:<destination_path>\"")]
+    public string RegisterYamlJob(
+        [System.ComponentModel.Description("Unique name for the job (alphanumeric and hyphens only, e.g. 'my-sales-analysis')")] string name,
+        [System.ComponentModel.Description("The complete YAML job configuration string")] string yamlContent)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return JsonSerializer.Serialize(new { success = false, error = "Job name cannot be empty." });
+
+            if (string.IsNullOrWhiteSpace(yamlContent))
+                return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
+
+            if (!Regex.IsMatch(name, "^[a-zA-Z0-9_-]+$"))
+                return JsonSerializer.Serialize(new { success = false, error = "Job name must contain only alphanumeric characters, underscores, or hyphens." });
+
+            var tempPath = Path.Combine(Path.GetTempPath(), "dtpipe-job-" + name + ".yaml");
+            File.WriteAllText(tempPath, yamlContent);
+
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                message = "YAML job registered successfully in memory.",
+                uri = $"memory://{name}"
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
     [McpServerTool(Name = "help")]
-    [System.ComponentModel.Description("Show dtpipe CLI usage syntax, connection string rules, DAG capabilities, YAML job execution, and transformers options.")]
+    [System.ComponentModel.Description("Show general usage guidelines, YAML job structures, connection string rules, DAG capabilities, and list available adapters and transformers.")]
     public string Help()
     {
         using var sw = new StringWriter();
-        sw.WriteLine("dtpipe — Data streaming & anonymization CLI");
+        sw.WriteLine("dtpipe — Data streaming & anonymization engine");
         sw.WriteLine();
-        sw.WriteLine("USAGE & PIPELINE ORDER:");
-        sw.WriteLine("  A dtpipe command line must reflect the flow of data from left to right:");
-        sw.WriteLine("  dtpipe -i <input> [reader-options] [transformers...] -o <output> [writer-options]");
+        sw.WriteLine("YAML JOB USAGE (RECOMMENDED FOR AGENTS):");
+        sw.WriteLine("  To run pipelines, execute a YAML job configuration using the 'execute-yaml-job' tool.");
+        sw.WriteLine("  This is highly structured and completely avoids command-line quoting or shell escaping issues.");
         sw.WriteLine();
-        sw.WriteLine("  1. INPUT: Define the source database/file (-i) and any reader-specific options first.");
-        sw.WriteLine("  2. TRANSFORMATIONS: Transformers (like --fake, --mask, --filter, --compute) execute in the exact order they are specified on the command line from left to right.");
-        sw.WriteLine("     Consecutive flags of the same type are grouped into one step. Specifying a different type starts a next step.");
-        sw.WriteLine("     Example: '--fake A --fake B --filter C --fake D' executes: Fake(A, B) -> Filter(C) -> Fake(D).");
-        sw.WriteLine("  3. OUTPUT OR ALIAS: Specify where the data goes (-o) or name the current branch output using '--alias <name>' to reference it downstream in a DAG.");
-        sw.WriteLine();
-        sw.WriteLine("  Alternative YAML job syntax: dtpipe --job <file.yaml> [overrides]");
-        sw.WriteLine();
-        sw.WriteLine("  QUOTING ARGUMENTS:");
-        sw.WriteLine("    Any arguments containing spaces (such as connection strings with spaces, e.g., 'sqlite:Data Source=path/to/db', or compute/filter scripts with spaces) MUST be wrapped in double quotes (or single quotes) when invoking the command to prevent the parser from splitting the arguments.");
+        sw.WriteLine("YAML JOB STRUCTURE:");
+        sw.WriteLine("  A YAML job configuration is defined by named branches (typically 'main' for simple pipelines):");
+        sw.WriteLine("  main:");
+        sw.WriteLine("    input: \"<input-connection-string>\"");
+        sw.WriteLine("    output: \"<output-connection-string>\"");
+        sw.WriteLine("    provider-options:           # Optional: adapter-specific settings");
+        sw.WriteLine("      <adapter-name>-reader:");
+        sw.WriteLine("        <option-name>: <option-value>");
+        sw.WriteLine("      <adapter-name>-writer:");
+        sw.WriteLine("        <option-name>: <option-value>");
+        sw.WriteLine("    transformers:               # Optional: list of transformers");
+        sw.WriteLine("      - type: <transformer-name>");
+        sw.WriteLine("        mappings:               # Column-level transformations");
+        sw.WriteLine("          <column-name>: <expression_or_faker>");
+        sw.WriteLine("        options:                # Transformer-level options");
+        sw.WriteLine("          <option-name>: <option-value>");
         sw.WriteLine();
         sw.WriteLine("CONNECTION STRINGS:");
         sw.WriteLine("  - Files: use prefix:path (e.g., 'csv:file.csv', 'parquet:file.parquet', 'jsonl:file.jsonl').");
@@ -81,19 +136,19 @@ public class DtPipeMcpTools
         sw.WriteLine("    - SQL Server: 'mssql:Server=host;Database=db;User Id=user;Password=pass;TrustServerCertificate=True'");
         sw.WriteLine("    - Oracle: 'ora:Data Source=host:port/service;User Id=user;Password=pass'");
         sw.WriteLine();
-        sw.WriteLine("DAG TOPOLOGIES & ROUTING OPTIONS:");
-        sw.WriteLine("  dtpipe can execute multi-branch pipelines forming a Directed Acyclic Graph (DAG).");
-        sw.WriteLine("  - --alias <name>             Name the current branch for downstream references.");
-        sw.WriteLine("  - --from <aliasA,aliasB>     Read from upstream branch aliases.");
-        sw.WriteLine("  - --ref <alias>              Materialized secondary source for JOIN lookups (fully preloaded in memory).");
-        sw.WriteLine("  - --sql <query>              Execute standard SQL using internal DuckDB engine.");
-        sw.WriteLine("  - --merge                    UNION ALL of all --from streaming inputs.");
-        sw.WriteLine("  Example (Join main & lookup):");
-        sw.WriteLine("    dtpipe -i main.csv --alias m -i lookup.csv --alias l --from m --ref l --sql \"SELECT * FROM m JOIN l ON m.id = l.id\" -o target.csv");
-        sw.WriteLine();
-        sw.WriteLine("YAML JOBS:");
-        sw.WriteLine("  - You can load/run pipelines from a YAML file using the '--job <file>' flag.");
-        sw.WriteLine("  - You can export the pipeline described by a command line to a YAML file using the '--export-job <file>' option.");
+        sw.WriteLine("DAG TOPOLOGIES & ROUTING IN YAML:");
+        sw.WriteLine("  dtpipe can execute multi-branch pipelines forming a Directed Acyclic Graph (DAG) by defining multiple named branches:");
+        sw.WriteLine("  branch1:");
+        sw.WriteLine("    input: \"csv:main.csv\"");
+        sw.WriteLine("  branch2:");
+        sw.WriteLine("    input: \"csv:lookup.csv\"");
+        sw.WriteLine("  main:");
+        sw.WriteLine("    from: \"branch1\"            # Streaming alias source");
+        sw.WriteLine("    ref: [ \"branch2\" ]         # Preloaded lookup references");
+        sw.WriteLine("    provider-options:");
+        sw.WriteLine("      sql:");
+        sw.WriteLine("        query: \"SELECT * FROM branch1 JOIN branch2 ON branch1.id = branch2.id\"");
+        sw.WriteLine("    output: \"csv:target.csv\"");
         sw.WriteLine();
         sw.WriteLine("VALUE RESOLUTION & INLINE INTERPOLATION:");
         sw.WriteLine("  Values are resolved sequentially prior to execution:");
@@ -104,49 +159,241 @@ public class DtPipeMcpTools
         sw.WriteLine("  - ${{cursor://path|default}}  Substitutes incremental cursor value from a state file.");
         sw.WriteLine();
         sw.WriteLine("INCREMENTAL SYNC:");
-        sw.WriteLine("  - --cursor <column>          Observer cursor column (e.g. updated_at) to track max value.");
-        sw.WriteLine("  - --state <path>             State file path (JSON) to save the tracked cursor.");
-        sw.WriteLine("  - --cursor-from <value>      Override start cursor value.");
+        sw.WriteLine("  Define these keys directly in the branch root:");
+        sw.WriteLine("  - cursor: <column_name>");
+        sw.WriteLine("  - state: <path_to_state_file>");
         sw.WriteLine();
-        sw.WriteLine("TRANSFORMERS OPTIONS:");
-        var transformers = _transformerFactories.OfType<ICliContributor>().ToList();
-        foreach (var contributor in transformers)
+
+        var readerAdapters = _readerFactories.Select(f => f.ComponentName.ToLowerInvariant());
+        var writerAdapters = _writerFactories.Select(f => f.ComponentName.ToLowerInvariant());
+        var allAdapters = readerAdapters.Union(writerAdapters).OrderBy(x => x).ToList();
+        var adaptersStr = string.Join(", ", allAdapters);
+        sw.WriteLine("ADAPTERS:");
+        sw.WriteLine($"  Available adapters: {adaptersStr}");
+        sw.WriteLine("  To see YAML schema options and guidelines for a specific adapter, call the 'get-adapter-help' tool.");
+        sw.WriteLine("  Example: get-adapter-help sqlite");
+        sw.WriteLine();
+
+        var allTransformers = _transformerFactories.Select(f => f.ComponentName.ToLowerInvariant()).OrderBy(x => x).ToList();
+        var transformersStr = string.Join(", ", allTransformers);
+        sw.WriteLine("TRANSFORMERS:");
+        sw.WriteLine($"  Available transformers: {transformersStr}");
+        sw.WriteLine("  To see YAML schema mappings, options, and examples for a specific transformer, call the 'get-transformer-help' tool.");
+        sw.WriteLine("  Example: get-transformer-help compute");
+        sw.WriteLine();
+
+        return sw.ToString();
+    }
+
+    [McpServerTool(Name = "get-adapter-help")]
+    [System.ComponentModel.Description("Show detailed help on a specific data adapter, including its usage as a reader or writer, and its specific options/flags in YAML.")]
+    public string GetAdapterHelp(
+        [System.ComponentModel.Description("Name of the adapter (e.g. 'csv', 'sqlite'). Call the 'list-providers' tool to discover all available reader/writer adapter names.")] string adapterName)
+    {
+        if (string.IsNullOrWhiteSpace(adapterName))
+            return JsonSerializer.Serialize(new { error = "Adapter name cannot be empty." });
+
+        var normalized = adapterName.Trim().ToLowerInvariant();
+        var readers = _readerFactories.Where(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+        var writers = _writerFactories.Where(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (readers.Count == 0 && writers.Count == 0)
+            return JsonSerializer.Serialize(new { error = $"Unknown adapter '{adapterName}'." });
+
+        using var sw = new StringWriter();
+        sw.WriteLine($"ADAPTER: {normalized}");
+        sw.WriteLine(new string('=', normalized.Length + 9));
+        sw.WriteLine();
+
+        var optionType = readers.FirstOrDefault()?.OptionsType ?? writers.FirstOrDefault()?.OptionsType;
+        if (optionType != null)
         {
-            var flags = contributor.GetFlagDefs().ToList();
-            if (flags.Count == 0) continue;
-            
-            if (contributor is IDataFactory factory)
+            var descAttr = optionType.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
+            if (descAttr != null)
             {
-                sw.WriteLine($"  [{factory.ComponentName}]");
-            }
-            
-            foreach (var flag in flags)
-            {
-                var aliases = flag.Aliases.Length > 0 ? $", {string.Join(", ", flag.Aliases)}" : "";
-                var arity = flag.Arity switch
-                {
-                    FlagArity.Boolean    => "",
-                    FlagArity.Scalar     => " <value>",
-                    FlagArity.Repeatable => " <value...>",
-                    _                    => ""
-                };
-                var desc = flag.Description ?? "";
-                sw.WriteLine($"    {flag.Name}{aliases}{arity} : {desc}");
+                sw.WriteLine(descAttr.Description);
+                sw.WriteLine();
             }
         }
-        
+
+        sw.WriteLine("YAML Provider Options Configuration:");
+        sw.WriteLine($"  Place these under 'provider-options' -> '{normalized}' (or specific role suffix '{normalized}-reader' / '{normalized}-writer'):");
+
+        if (readers.Count > 0)
+        {
+            sw.WriteLine("  Role: Reader (Data Source)");
+            foreach (var r in readers)
+            {
+                var props = r.OptionsType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanWrite)
+                    .ToList();
+                foreach (var prop in props)
+                {
+                    var kebabName = prop.Name.ToKebabCase();
+                    var cliOptionAttr = prop.GetCustomAttribute<ComponentOptionAttribute>();
+                    var descriptionAttr = prop.GetCustomAttribute<DescriptionAttribute>();
+                    var desc = cliOptionAttr?.Description ?? descriptionAttr?.Description ?? string.Empty;
+
+                    sw.WriteLine($"    {kebabName}: <value>");
+                    if (!string.IsNullOrEmpty(desc))
+                    {
+                        sw.WriteLine($"      # {desc}");
+                    }
+                }
+            }
+            sw.WriteLine();
+        }
+
+        if (writers.Count > 0)
+        {
+            sw.WriteLine("  Role: Writer (Data Destination)");
+            foreach (var w in writers)
+            {
+                var props = w.OptionsType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.CanWrite)
+                    .ToList();
+                foreach (var prop in props)
+                {
+                    var kebabName = prop.Name.ToKebabCase();
+                    var cliOptionAttr = prop.GetCustomAttribute<ComponentOptionAttribute>();
+                    var descriptionAttr = prop.GetCustomAttribute<DescriptionAttribute>();
+                    var desc = cliOptionAttr?.Description ?? descriptionAttr?.Description ?? string.Empty;
+
+                    sw.WriteLine($"    {kebabName}: <value>");
+                    if (!string.IsNullOrEmpty(desc))
+                    {
+                        sw.WriteLine($"      # {desc}");
+                    }
+                }
+            }
+            sw.WriteLine();
+        }
+
+        if (optionType != null)
+        {
+            var helpAttr = optionType.GetCustomAttribute<DtPipe.Core.Attributes.ComponentHelpAttribute>();
+            if (helpAttr != null)
+            {
+                if (!string.IsNullOrEmpty(helpAttr.UsageNotes))
+                {
+                    sw.WriteLine("YAML Usage & Notes:");
+                    sw.WriteLine($"  {helpAttr.UsageNotes}");
+                    sw.WriteLine();
+                }
+
+                if (helpAttr.Examples != null && helpAttr.Examples.Length > 0)
+                {
+                    sw.WriteLine("YAML Example Configuration:");
+                    foreach (var ex in helpAttr.Examples)
+                    {
+                        sw.WriteLine(ex);
+                    }
+                    sw.WriteLine();
+                }
+            }
+        }
+
+        return sw.ToString();
+    }
+
+    [McpServerTool(Name = "get-transformer-help")]
+    [System.ComponentModel.Description("Show detailed help on a specific transformer, including its YAML options and examples.")]
+    public string GetTransformerHelp(
+        [System.ComponentModel.Description("Name of the transformer (e.g. 'compute', 'fake'). Call the 'list-providers' tool to discover all available transformer names.")] string transformerName)
+    {
+        if (string.IsNullOrWhiteSpace(transformerName))
+            return JsonSerializer.Serialize(new { error = "Transformer name cannot be empty." });
+
+        var normalized = transformerName.Trim().ToLowerInvariant();
+
+        var factory = _transformerFactories.FirstOrDefault(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (factory == null)
+            return JsonSerializer.Serialize(new { error = $"Unknown transformer '{transformerName}'." });
+
+        using var sw = new StringWriter();
+        sw.WriteLine($"TRANSFORMER: {normalized}");
+        sw.WriteLine(new string('=', normalized.Length + 13));
+        sw.WriteLine();
+
+        var descAttr = factory.OptionsType.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>();
+        if (descAttr != null)
+        {
+            sw.WriteLine(descAttr.Description);
+            sw.WriteLine();
+        }
+
+        var properties = factory.OptionsType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
+            .ToList();
+
+        if (properties.Count > 0)
+        {
+            sw.WriteLine("YAML Options Configuration:");
+            sw.WriteLine("  Place these options under the 'options' block of the transformer:");
+            foreach (var prop in properties)
+            {
+                var kebabName = prop.Name.ToKebabCase();
+                if (kebabName == normalized || kebabName == "filters" || kebabName == "mask" || kebabName == "fake")
+                    continue;
+
+                var cliOptionAttr = prop.GetCustomAttribute<ComponentOptionAttribute>();
+                var descriptionAttr = prop.GetCustomAttribute<DescriptionAttribute>();
+                var desc = cliOptionAttr?.Description ?? descriptionAttr?.Description ?? string.Empty;
+
+                sw.WriteLine($"  {kebabName}: <value>");
+                if (!string.IsNullOrEmpty(desc))
+                {
+                    sw.WriteLine($"    # {desc}");
+                }
+            }
+            sw.WriteLine();
+        }
+
+        var helpAttr = factory.OptionsType.GetCustomAttribute<DtPipe.Core.Attributes.ComponentHelpAttribute>();
+        if (helpAttr != null)
+        {
+            if (!string.IsNullOrEmpty(helpAttr.UsageNotes))
+            {
+                sw.WriteLine("YAML Usage & Notes:");
+                sw.WriteLine($"  {helpAttr.UsageNotes}");
+                sw.WriteLine();
+            }
+
+            if (helpAttr.Examples != null && helpAttr.Examples.Length > 0)
+            {
+                sw.WriteLine("YAML Example Configuration:");
+                foreach (var ex in helpAttr.Examples)
+                {
+                    sw.WriteLine(ex);
+                }
+                sw.WriteLine();
+            }
+        }
+
+        if (normalized == "fake")
+        {
+            sw.WriteLine(GetAnonymizationHelp());
+        }
+
         return sw.ToString();
     }
 
     [McpServerTool(Name = "get-anonymization-help")]
-    [System.ComponentModel.Description("Show detailed help on data faking (anonymization) via Bogus, including available datasets, methods, and options.")]
+    [System.ComponentModel.Description("Show detailed help on data faking (anonymization) via Bogus, including available datasets, methods, and options for the YAML job schema.")]
     public string GetAnonymizationHelp()
     {
         using var sw = new StringWriter();
-        sw.WriteLine("ANONYMIZATION VIA FAKERS:");
+        sw.WriteLine("ANONYMIZATION VIA FAKERS (YAML SCHEMA):");
         sw.WriteLine("  dtpipe uses the 'Bogus' library for generating fake data.");
-        sw.WriteLine("  Syntax: --fake <column>:<dataset>.<method>");
-        sw.WriteLine("  Example: --fake Email:internet.email --fake Name:name.fullName");
+        sw.WriteLine("  Specify column-level fakers in the 'mappings' section of the 'fake' transformer.");
+        sw.WriteLine("  Syntax (under mappings):");
+        sw.WriteLine("    <column_name>: <dataset>.<method>");
+        sw.WriteLine("  Example YAML:");
+        sw.WriteLine("    transformers:");
+        sw.WriteLine("      - type: fake");
+        sw.WriteLine("        mappings:");
+        sw.WriteLine("          Email: internet.email");
+        sw.WriteLine("          Name: name.fullName");
         sw.WriteLine();
         sw.WriteLine("AVAILABLE DATASETS & METHODS (DYNAMICALLY RESOLVED):");
 
@@ -163,12 +410,12 @@ public class DtPipeMcpTools
         }
 
         sw.WriteLine();
-        sw.WriteLine("ANONYMIZATION OPTIONS:");
-        sw.WriteLine("  - --fake-locale <locale>    Locale for fakers (e.g. 'fr', 'en', 'de', 'es').");
-        sw.WriteLine("  - --fake-seed <int>         Global seed for reproducible faking.");
-        sw.WriteLine("  - --fake-seed-column <cols> Column(s) used as a composite seed for faking (ensures same source cell always generates same fake value).");
-        sw.WriteLine("  - --fake-seed-row           Row-index based deterministic faking (row N always gets same fakes).");
-        sw.WriteLine("  - --skip-null               Do not anonymize NULL cell values (remains NULL).");
+        sw.WriteLine("ANONYMIZATION OPTIONS (place these under 'options' block):");
+        sw.WriteLine("  - fake-locale: <string>     Locale for fakers (e.g. 'fr', 'en', 'de', 'es').");
+        sw.WriteLine("  - fake-seed: <int>          Global seed for reproducible faking.");
+        sw.WriteLine("  - fake-seed-column: [cols]  Column(s) used as a composite seed (YAML array).");
+        sw.WriteLine("  - fake-seed-row: <bool>     Row-index based deterministic faking.");
+        sw.WriteLine("  - skip-null: <bool>         Do not anonymize NULL cell values (remains NULL).");
         return sw.ToString();
     }
 
@@ -214,35 +461,36 @@ public class DtPipeMcpTools
         }
     }
 
-    [McpServerTool(Name = "validate-pipeline")]
-    [System.ComponentModel.Description(
-        "Validate a dtpipe command line. " +
-        "Syntax: 'dtpipe -i <input> [transformers] -o <output>'. " +
-        "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
-        "Call the 'help' tool first to see all available transformers, options, and flags.")]
-    public string ValidatePipeline(
-        [System.ComponentModel.Description("The full dtpipe command line string to validate. IMPORTANT: Arguments containing spaces or special characters (such as JS compute expressions or strings with spaces) MUST be enclosed in double quotes, e.g.: --compute \"total:parseFloat(row.amount) * (1 + parseFloat(row.tax_rate))\" --filter \"row.total > 100\"")] string command)
+    [McpServerTool(Name = "validate-yaml-job")]
+    [System.ComponentModel.Description("Validate a pipeline configuration specified directly as YAML. Checks for syntax errors and schema validation issues without executing.")]
+    public string ValidateYamlJob(
+        [System.ComponentModel.Description("The complete YAML configuration string representing the pipeline")] string yamlContent)
     {
+        if (string.IsNullOrWhiteSpace(yamlContent))
+            return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
+
         try
         {
-            // Clean up command prefix if present
-            string cmdLine = command.Trim();
-            if (cmdLine.StartsWith("dtpipe ", StringComparison.OrdinalIgnoreCase))
-            {
-                cmdLine = cmdLine.Substring(7).Trim();
-            }
+            var secretsManager = _serviceProvider.GetService<DtPipe.Cli.Security.ISecretsManager>();
+            var jobs = JobFileParser.ParseContent(yamlContent, secretsManager);
 
-            var args = SplitArguments(cmdLine);
-
-            var registry = FlagRegistryFactory.Build(_serviceProvider);
             var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
+            var branches = jobs.Select(kv => new BranchDefinition
+            {
+                Alias = kv.Key,
+                Input = kv.Value.Input,
+                Output = kv.Value.Output,
+                StreamingAliases = kv.Value.From != null
+                    ? kv.Value.From.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    : Array.Empty<string>(),
+                RefAliases = kv.Value.Ref ?? Array.Empty<string>(),
+                Arguments = Array.Empty<string>(),
+                ProcessorName = streamTransformerFactories
+                    .FirstOrDefault(f => f.IsApplicable(kv.Value))
+                    ?.ComponentName
+            }).ToList();
 
-            var lexer = new PipelineLexer(registry);
-            var parsedPipeline = lexer.Parse(args);
-            
-            var secretsManager = _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>();
-            var (jobs, dag, _) = PipelineToJobConverter.Convert(parsedPipeline, streamTransformerFactories, secretsManager);
-
+            var dag = new JobDagDefinition { Branches = branches };
             var errors = PipelineValidator.Validate(dag, jobs, streamTransformerFactories);
 
             if (errors.Count > 0)
@@ -254,23 +502,10 @@ public class DtPipeMcpTools
                 }, new JsonSerializerOptions { WriteIndented = true });
             }
 
-            // Return success with DAG metadata
-            var branches = dag.Branches.Select(b => new
-            {
-                b.Alias,
-                StreamingFrom = b.StreamingAliases,
-                Referencing = b.RefAliases,
-                Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
-                Output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Output),
-                Processor = b.ProcessorName ?? "none",
-                TransformersCount = jobs.TryGetValue(b.Alias, out var j) ? j.Transformers?.Count ?? 0 : 0
-            }).ToList();
-
             return JsonSerializer.Serialize(new
             {
                 success = true,
-                message = "Pipeline syntax and topology are valid.",
-                branches
+                message = "YAML job configuration and topology are valid."
             }, new JsonSerializerOptions { WriteIndented = true });
         }
         catch (Exception ex)
@@ -283,15 +518,40 @@ public class DtPipeMcpTools
         }
     }
 
-    [McpServerTool(Name = "execute-pipeline")]
-    [System.ComponentModel.Description(
-        "Execute a dtpipe pipeline. This will READ from the source, apply transformations, and WRITE to the destination. " +
-        "Syntax: 'dtpipe -i <input> [transformers] -o <output>'. " +
-        "Inputs/outputs format: 'provider:path' (e.g., 'csv:source.csv', 'parquet:target.parquet'). " +
-        "Call the 'help' tool first to see all available transformers, options, and flags.")]
-    public async Task<string> ExecutePipeline(
-        [System.ComponentModel.Description("The full dtpipe command line string to execute. IMPORTANT: Any arguments containing spaces (including connection strings with spaces, e.g. \"sqlite:Data Source=path/to/db\", or compute/filter scripts with spaces, e.g. --compute \"total:parseFloat(row.amount)\") MUST be wrapped in double quotes to prevent the command parser from splitting the arguments.")] string command,
+    [McpServerTool(Name = "execute-yaml-job")]
+    [System.ComponentModel.Description("Execute a pipeline configuration specified directly as YAML. This is the only way to run pipelines and avoids command-line quoting/escaping issues.")]
+    public async Task<string> ExecuteYamlJob(
+        [System.ComponentModel.Description("The complete YAML configuration string representing the pipeline")] string yamlContent,
         CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(yamlContent))
+            return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
+
+        var name = "job-" + Guid.NewGuid().ToString("N");
+        var tempPath = Path.Combine(Path.GetTempPath(), "dtpipe-job-" + name + ".yaml");
+
+        try
+        {
+            File.WriteAllText(tempPath, yamlContent);
+            return await ExecutePipelineInternal($"dtpipe --job memory://{name}", ct);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
+    }
+
+    private async Task<string> ExecutePipelineInternal(string command, CancellationToken ct = default)
     {
         try
         {

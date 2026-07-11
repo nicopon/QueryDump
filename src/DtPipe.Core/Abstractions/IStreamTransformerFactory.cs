@@ -1,3 +1,4 @@
+using DtPipe.Core.Models;
 using DtPipe.Core.Pipelines.Dag;
 
 namespace DtPipe.Core.Abstractions;
@@ -34,6 +35,22 @@ public interface IStreamTransformerFactory
     /// for registry lookup without needing to know the internal <c>__fan_N</c> convention.
     /// </summary>
     IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider serviceProvider);
+
+    /// <summary>
+    /// Returns <c>true</c> if the given YAML-hydrated job selects this transformer.
+    /// By convention the factory's <see cref="ComponentName"/> is the <c>provider-options</c>
+    /// key (e.g. <c>sql</c>, <c>merge</c>), so the default implementation matches on that.
+    /// Override only if a factory's YAML activation differs from that convention.
+    /// </summary>
+    bool IsApplicable(JobDefinition job) => job.ProviderOptions?.ContainsKey(ComponentName) == true;
+
+    /// <summary>
+    /// Creates the transformer from a YAML-hydrated <see cref="JobDefinition"/> — the structured
+    /// counterpart of <see cref="Create(string[], BranchChannelContext, IServiceProvider)"/>.
+    /// Reads <c>From</c>/<c>Ref</c> and <c>ProviderOptions[ComponentName]</c> directly instead of
+    /// parsing CLI tokens. <paramref name="ctx"/> supplies the same logical→physical alias map.
+    /// </summary>
+    IStreamTransformer CreateFromJob(JobDefinition job, BranchChannelContext ctx, IServiceProvider serviceProvider);
 
     /// <summary>Minimum number of streaming sources required (declared via <c>--from</c>).</summary>
     int MinStreams { get; }
