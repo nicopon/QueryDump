@@ -359,6 +359,20 @@ dtpipe \
   -o combined.parquet
 ```
 
+### YAML job (merge)
+
+```yaml
+a:
+  input: "archive_2023.parquet"
+b:
+  input: "archive_2024.parquet"
+combined:
+  from: "a,b"
+  provider-options:
+    merge: {}
+  output: "combined.parquet"
+```
+
 ---
 
 ## DuckDB Extensions and Cloud Storage
@@ -454,14 +468,15 @@ dtpipe \
 ### YAML job with duck-init
 
 ```yaml
-enrich:
+ev:
   input: "events.parquet"
+enrich:
   from: "ev"
-  sql: "SELECT * FROM ev JOIN read_parquet('s3://bucket/ref.parquet') r ON ev.id = r.id"
-  output: "result.parquet"
   provider-options:
-    duck:                         # applies to --sql processor
+    sql:                          # applies to the --sql stream processor
+      query: "SELECT * FROM ev JOIN read_parquet('s3://bucket/ref.parquet') r ON ev.id = r.id"
       duck-init: "keyring://s3-init"
+  output: "result.parquet"
 ```
 
 > `--duck-init` is scoped to a single DuckDB connection. In a DAG with both a DuckDB reader/writer and a `--sql` branch, each uses its own connection — specify `--duck-init` on each branch that needs it.

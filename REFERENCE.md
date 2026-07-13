@@ -421,6 +421,20 @@ dtpipe -i events.parquet --alias ev \
   -o result.parquet
 ```
 
+In a YAML job, the same branch nests both under `provider-options.sql` (not `provider-options.duck` — that key belongs to the reader/writer):
+
+```yaml
+ev:
+  input: "events.parquet"
+enrich:
+  from: "ev"
+  provider-options:
+    sql:
+      query: "SELECT * FROM ev JOIN read_parquet('s3://bucket/ref.parquet') r ON ev.id = r.id"
+      duck-init: "LOAD httpfs; SET s3_region='${{keyring://s3-region}}';"
+  output: "result.parquet"
+```
+
 ## Incremental Loading
 
 DtPipe supports cursor-driven incremental loading to transfer only new or updated records since the last successful run.

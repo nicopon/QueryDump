@@ -58,10 +58,8 @@ run_mission() {
     local INIT_RESPONSE=$(call_mcp '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"tester","version":"1.0.0"}}}')
     local TOOLS_RESPONSE=$(call_mcp '{"jsonrpc":"2.0","method":"tools/list","id":2}')
 
-    # Filter out validate-pipeline and list-providers
     local TOOLS_JSON=$(echo "$TOOLS_RESPONSE" | jq '
-      .result.tools | 
-      map(select(.name != "validate-pipeline" and .name != "list-providers")) |
+      .result.tools |
       map({
         type: "function",
         function: {
