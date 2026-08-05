@@ -1,9 +1,16 @@
+using System.ComponentModel;
 using DtPipe.Adapters.Common;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.Oracle;
 
+[Description("Writes data to an Oracle database.")]
+[ComponentHelp(
+	usageNotes: "Connection string format: 'ora:Data Source=host:port/service_name;User Id=user;Password=pass'. In YAML, use 'provider-options' -> 'ora' (or 'ora-writer' when the same job also reads from Oracle) to set table and write strategy.",
+	examples: new[] {
+		"main:\n  input: \"orders.parquet\"\n  output: \"ora:Data Source=PROD:1521/orcl;User Id=scott;Password=tiger\"\n  provider-options:\n    ora-writer:\n      table: \"sales.orders\"\n      strategy: \"Upsert\"\n      key: \"order_id\""
+	})]
 public class OracleWriterOptions : DbWriterOptions, IProviderOptions
 {
 	public static string Prefix => OracleConstants.ProviderName;

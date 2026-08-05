@@ -348,6 +348,7 @@ class Program
 		services.AddSingleton<IColumnarToRowBridgeFactory, DtPipe.Adapters.Infrastructure.Arrow.ArrowColumnarToRowBridgeFactory>();
 
 		// MCP Server integration
+		services.AddSingleton<DtPipe.Cli.Mcp.IMcpHelpService, DtPipe.Cli.Mcp.McpHelpService>();
 		services.AddSingleton<DtPipe.Cli.Mcp.DtPipeMcpTools>();
 		services.AddMcpServer()
 		        .WithStdioServerTransport()

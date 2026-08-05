@@ -1,8 +1,15 @@
 using System.ComponentModel;
+using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.Csv;
 
+[Description("Writes data to a CSV file.")]
+[ComponentHelp(
+	usageNotes: "Connection string is a file path ending in '.csv' (or the 'csv:' prefix; '-'/bare 'csv' for stdout). In YAML, use 'provider-options' -> 'csv-writer' (suffixed, since the reader shares the same 'csv' prefix) to set the separator, quote character, null representation, or date/timestamp formats.",
+	examples: new[] {
+		"main:\n  input: \"data.parquet\"\n  provider-options:\n    csv-writer:\n      separator: \";\"\n      quote: \"'\"\n      null-value: \"NULL\"\n  output: \"data.csv\""
+	})]
 public record CsvWriterOptions : IWriterOptions
 {
 	public static string Prefix => CsvConstants.ProviderName;

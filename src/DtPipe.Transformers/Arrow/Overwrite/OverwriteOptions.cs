@@ -1,8 +1,15 @@
+using System.ComponentModel;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Transformers.Arrow.Overwrite;
 
+[Description("Overwrites specified columns with a fixed static value for every row.")]
+[ComponentHelp(
+	usageNotes: "In YAML, use the 'mappings' section where the key is the column name and the value is the static replacement (the overwritten column is emitted as a string); use the 'options' block for 'skip-null' to leave null source values untouched.",
+	examples: new[] {
+		"transformers:\n  - type: overwrite\n    mappings:\n      status: Active\n      region: EU\n    options:\n      skip-null: true"
+	})]
 public class OverwriteOptions : ITransformerOptions
 {
 	public static string Prefix => "overwrite";

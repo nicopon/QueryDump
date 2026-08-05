@@ -1,9 +1,16 @@
+using System.ComponentModel;
 using DtPipe.Adapters.Common;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.DuckDB;
 
+[Description("Reads data from a DuckDB database file or in-memory instance.")]
+[ComponentHelp(
+	usageNotes: "Connection string format: 'duck:path/to/file.duckdb' (or 'duck:memory' for an ephemeral in-memory database). In YAML, use 'provider-options' -> 'duck' for query/table, and 'duck-init' to run SQL once the connection opens and before the query executes (e.g. 'LOAD httpfs' or setting cloud storage credentials).",
+	examples: new[] {
+		"main:\n  input: \"duck:warehouse.duckdb\"\n  provider-options:\n    duck:\n      query: \"SELECT * FROM sales\"\n      duck-init: \"LOAD httpfs; SET s3_region='eu-west-1';\"\n  output: \"parquet:sales.parquet\""
+	})]
 public class DuckDbReaderOptions : QueryableReaderOptions, IProviderOptions
 {
 	public static string Prefix => DuckDbConstants.ProviderName;

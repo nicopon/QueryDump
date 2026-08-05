@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using DtPipe.Cli.Mcp;
 using DtPipe.Core.Security;
+using DtPipe.Core.Abstractions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Cli;
@@ -12,24 +14,32 @@ public class McpToolsTests
 {
     private readonly ServiceProvider _serviceProvider;
     private readonly DtPipeMcpTools _tools;
+    private readonly IMcpHelpService _helpService;
 
     public McpToolsTests()
     {
         var services = new ServiceCollection();
         services.AddSingleton<DtPipe.Core.Options.OptionsRegistry>();
+        services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(Array.Empty<IStreamTransformerFactory>());
         _serviceProvider = services.BuildServiceProvider();
 
+        _helpService = new McpHelpService(
+            Array.Empty<IStreamReaderFactory>(),
+            Array.Empty<IDataTransformerFactory>(),
+            Array.Empty<IDataWriterFactory>());
+
         _tools = new DtPipeMcpTools(
-            Array.Empty<DtPipe.Core.Abstractions.IStreamReaderFactory>(),
-            Array.Empty<DtPipe.Core.Abstractions.IDataTransformerFactory>(),
-            Array.Empty<DtPipe.Core.Abstractions.IDataWriterFactory>(),
+            Array.Empty<IStreamReaderFactory>(),
+            Array.Empty<IDataTransformerFactory>(),
+            Array.Empty<IDataWriterFactory>(),
+            _helpService,
             _serviceProvider);
     }
 
     private void InvokeValidatePathSafety(string path)
     {
         var method = typeof(DtPipeMcpTools).GetMethod("ValidatePathSafety", 
-            BindingFlags.NonPublic | BindingFlags.Static);
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
         Assert.NotNull(method);
         try
         {
@@ -44,7 +54,7 @@ public class McpToolsTests
     private string[] InvokeSplitArguments(string commandLine)
     {
         var method = typeof(DtPipeMcpTools).GetMethod("SplitArguments", 
-            BindingFlags.NonPublic | BindingFlags.Static);
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
         Assert.NotNull(method);
         return (string[])method.Invoke(null, new object[] { commandLine })!;
     }
@@ -86,7 +96,6 @@ public class McpToolsTests
         InvokeValidatePathSafety(path);
     }
 
-
     [Fact]
     public void SplitArguments_SimpleAndQuotes_ParsedCorrectly()
     {
@@ -107,5 +116,56 @@ public class McpToolsTests
         
         McpSecurityContext.IsMcpSession = false;
         Assert.False(McpSecurityContext.IsMcpSession);
+    }
+
+    [Fact]
+    public void Help_ReturnsGeneralHelpContent()
+    {
+        var result = _tools.Help();
+        Assert.Contains("dtpipe — Data streaming & anonymization engine", result);
+        Assert.Contains("YAML JOB USAGE", result);
+        Assert.Contains("ADAPTERS:", result);
+    }
+
+    [Fact]
+    public void ValidateYamlJob_EmptyYaml_ReturnsError()
+    {
+        var json = _tools.ValidateYamlJob("");
+        Assert.Contains("YAML job content cannot be empty", json);
+    }
+
+    [Fact]
+    public void ValidateYamlJob_ValidYaml_ReturnsSuccess()
+    {
+        var yaml = @"
+main:
+  input: ""csv:input.csv""
+  output: ""csv:output.csv""
+";
+        var json = _tools.ValidateYamlJob(yaml);
+        Assert.Contains("\"success\": true", json);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task ExecuteYamlJob_EmptyYaml_ReturnsError()
+    {
+        var json = await _tools.ExecuteYamlJob("");
+        Assert.Contains("YAML job content cannot be empty", json);
+    }
+
+    [Fact]
+    public void GetAdapterHelp_UnknownAdapter_ReturnsError()
+    {
+        var json = _tools.GetAdapterHelp("nonexistent_adapter");
+        Assert.Contains("Unknown adapter", json);
+        Assert.Contains("nonexistent_adapter", json);
+    }
+
+    [Fact]
+    public void GetTransformerHelp_UnknownTransformer_ReturnsError()
+    {
+        var json = _tools.GetTransformerHelp("nonexistent_transformer");
+        Assert.Contains("Unknown transformer", json);
+        Assert.Contains("nonexistent_transformer", json);
     }
 }

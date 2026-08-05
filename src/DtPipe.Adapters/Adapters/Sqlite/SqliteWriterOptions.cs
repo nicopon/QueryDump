@@ -1,9 +1,16 @@
+using System.ComponentModel;
 using DtPipe.Adapters.Common;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.Sqlite;
 
+[Description("Writes data to an SQLite database.")]
+[ComponentHelp(
+	usageNotes: "Connection string format: 'sqlite:Data Source=path/to/db.db'. In YAML, use 'provider-options' -> 'sqlite' (or 'sqlite-writer' when the same job also reads from SQLite) to set table and write strategy.",
+	examples: new[] {
+		"main:\n  input: \"orders.parquet\"\n  output: \"sqlite:Data Source=business.db\"\n  provider-options:\n    sqlite-writer:\n      table: \"orders\"\n      strategy: \"Upsert\"\n      key: \"id\""
+	})]
 public class SqliteWriterOptions : DbWriterOptions, IOptionSet
 {
 	public static string Prefix => "sqlite";

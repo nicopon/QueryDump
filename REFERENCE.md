@@ -484,4 +484,31 @@ dtpipe completion --install   # installs for bash, zsh, or PowerShell
 ```
 
 Restart your terminal (or `source ~/.zshrc`) to activate. Completion suggests providers
-(`pg:`, `csv:`…), strategies (`Append`, `Upsert`…), and flag names based on cursor position.
+(`pg:`, `csv:`…) strategies (`Append`, `Upsert`…), and flag names based on cursor position.
+
+---
+
+## Model Context Protocol (MCP) Server
+
+`dtpipe mcp` starts a native Model Context Protocol (MCP) server over STDIO. This allows AI coding agents and assistants (Cursor, Claude Desktop, Antigravity, VS Code MCP) to interact with `dtpipe` directly.
+
+### Usage
+
+```bash
+dtpipe mcp
+```
+
+### Exposed MCP Tools
+
+| Tool Name | Parameters | Description |
+|:---|:---|:---|
+| `list-providers` | *(none)* | List all registered data readers, transformers, and writers |
+| `inspect` | `input`, `query?` | Inspect data source schema or auto-discover database tables if query is omitted |
+| `preview-data` | `input`, `limit?`, `query?` | Preview sample data rows (default: 5 rows) |
+| `validate-yaml-job` | `yamlContent` | Validate YAML job topology and syntax without running |
+| `execute-yaml-job` | `yamlContent` | Execute a complete YAML job pipeline directly in-memory |
+| `help` | *(none)* | General usage guidelines, YAML job structures, and DAG topology rules |
+| `get-adapter-help` | `adapterName` | Inspect connection string format, reader/writer options, and YAML examples for an adapter |
+| `get-transformer-help` | `transformerName` | Inspect options, mapping syntax, and YAML examples for a transformer |
+| `get-anonymization-help` | *(none)* | Inspect Bogus faker datasets, methods, and options for anonymization |
+| `register-yaml-job` | `name`, `yamlContent` | Register a YAML job configuration in memory to obtain a virtual `memory://` URI |

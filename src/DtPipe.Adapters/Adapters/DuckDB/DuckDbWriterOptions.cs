@@ -1,9 +1,16 @@
+using System.ComponentModel;
 using DtPipe.Adapters.Common;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.DuckDB;
 
+[Description("Writes data to a DuckDB database file.")]
+[ComponentHelp(
+	usageNotes: "Connection string format: 'duck:path/to/file.duckdb'. In YAML, use 'provider-options' -> 'duck' (or 'duck-writer' when the same job also reads from DuckDB) to set table, strategy, and 'duck-init' — SQL run once after connection open, before schema initialization (e.g. to load extensions or set cloud storage credentials).",
+	examples: new[] {
+		"main:\n  input: \"sales.parquet\"\n  output: \"duck:warehouse.duckdb\"\n  provider-options:\n    duck-writer:\n      table: \"sales\"\n      strategy: \"Append\"\n      duck-init: \"LOAD azure; SET azure_storage_connection_string='${{keyring://azure-init}}';\""
+	})]
 public class DuckDbWriterOptions : DbWriterOptions, IProviderOptions
 {
 	public static string Prefix => DuckDbConstants.ProviderName;

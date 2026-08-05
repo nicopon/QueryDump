@@ -1,8 +1,15 @@
 using System.ComponentModel;
+using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 
 namespace DtPipe.Adapters.Arrow;
 
+[Description("Writes data to an Apache Arrow IPC file or stream.")]
+[ComponentHelp(
+	usageNotes: "Connection string is a file path ending in '.arrow' or '.arrowfile' (or the 'arrow:' prefix; '-' for stdout), which selects the seekable IPC file writer; any other extension, including stdout, uses the sequential IPC stream writer instead.",
+	examples: new[] {
+		"main:\n  input: \"data.parquet\"\n  output: \"data.arrow\""
+	})]
 public class ArrowWriterOptions : IOptionSet
 {
 	public static string Prefix => ArrowConstants.ProviderName;

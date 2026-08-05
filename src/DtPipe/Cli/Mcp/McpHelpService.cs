@@ -1,0 +1,295 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using DtPipe.Core.Abstractions;
+using DtPipe.Core.Attributes;
+using DtPipe.Cli.Infrastructure;
+using DtPipe.Cli.Pipeline;
+
+namespace DtPipe.Cli.Mcp;
+
+public class McpHelpService : IMcpHelpService
+{
+    private readonly IEnumerable<IStreamReaderFactory> _readerFactories;
+    private readonly IEnumerable<IDataTransformerFactory> _transformerFactories;
+    private readonly IEnumerable<IDataWriterFactory> _writerFactories;
+
+    public McpHelpService(
+        IEnumerable<IStreamReaderFactory> readerFactories,
+        IEnumerable<IDataTransformerFactory> transformerFactories,
+        IEnumerable<IDataWriterFactory> writerFactories)
+    {
+        _readerFactories = readerFactories;
+        _transformerFactories = transformerFactories;
+        _writerFactories = writerFactories;
+    }
+
+    public string GetGeneralHelp()
+    {
+        using var sw = new StringWriter();
+        sw.WriteLine("dtpipe — Data streaming & anonymization engine");
+        sw.WriteLine();
+        sw.WriteLine("YAML JOB USAGE (RECOMMENDED FOR AGENTS):");
+        sw.WriteLine("  To run pipelines, execute a YAML job configuration using the 'execute-yaml-job' tool.");
+        sw.WriteLine("  This is highly structured and completely avoids command-line quoting or shell escaping issues.");
+        sw.WriteLine();
+        sw.WriteLine("YAML JOB STRUCTURE:");
+        sw.WriteLine("  A YAML job configuration is defined by named branches (typically 'main' for simple pipelines):");
+        sw.WriteLine("  main:");
+        sw.WriteLine("    input: \"<adapter-prefix>:<connection-string-or-file>\"");
+        sw.WriteLine("    output: \"<adapter-prefix>:<connection-string-or-file>\"");
+        sw.WriteLine("    provider-options:           # Optional: adapter-specific settings");
+        sw.WriteLine("      <adapter-name>-reader:");
+        sw.WriteLine("        <option-name>: <option-value>");
+        sw.WriteLine("      <adapter-name>-writer:");
+        sw.WriteLine("        <option-name>: <option-value>");
+        sw.WriteLine("    transformers:               # Optional: list of transformers");
+        sw.WriteLine("      - type: <transformer-name>");
+        sw.WriteLine("        mappings:               # Column-level transformations");
+        sw.WriteLine("          <column-name>: <expression_or_faker>");
+        sw.WriteLine("        options:                # Transformer-level options");
+        sw.WriteLine("          <option-name>: <option-value>");
+        sw.WriteLine();
+        sw.WriteLine("CONNECTION STRINGS:");
+        sw.WriteLine("  - Connection strings follow the format '<provider-prefix>:<path-or-connection-string>'.");
+        sw.WriteLine("  - File providers read/write file paths or '-' for STDIN/STDOUT.");
+        sw.WriteLine("  - Database providers use ADO.NET connection strings (semicolon-separated Key=Value; pairs).");
+        sw.WriteLine("  - Call 'get-adapter-help <adapter-name>' to inspect the exact connection string syntax and options for any adapter.");
+        sw.WriteLine();
+        sw.WriteLine("DAG TOPOLOGIES & ROUTING IN YAML:");
+        sw.WriteLine("  dtpipe can execute multi-branch pipelines forming a Directed Acyclic Graph (DAG) by defining multiple named branches.");
+        sw.WriteLine("  Note: Branch aliases are used as table names in SQL queries. Prefer simple alphanumeric alias names without hyphens (e.g. 'branch1', 'sales') or enclose hyphenated names in double quotes in SQL (e.g. \"sales-branch\").");
+        sw.WriteLine("  branch1:");
+        sw.WriteLine("    input: \"<adapter1>:<source1>\"");
+        sw.WriteLine("  branch2:");
+        sw.WriteLine("    input: \"<adapter2>:<source2>\"");
+        sw.WriteLine("  main:");
+        sw.WriteLine("    from: \"branch1\"            # Streaming alias source");
+        sw.WriteLine("    ref: [ \"branch2\" ]         # Preloaded lookup references");
+        sw.WriteLine("    provider-options:");
+        sw.WriteLine("      sql:");
+        sw.WriteLine("        query: \"SELECT * FROM branch1 JOIN branch2 ON branch1.id = branch2.id\"");
+        sw.WriteLine("    output: \"<adapter3>:<target>\"");
+        sw.WriteLine();
+        sw.WriteLine("VALUE RESOLUTION & INLINE INTERPOLATION:");
+        sw.WriteLine("  Values are resolved sequentially prior to execution:");
+        sw.WriteLine("  - @/path/to/file             Loads full content from file.");
+        sw.WriteLine("  - keyring://<alias>          Loads secret value from OS Keyring.");
+        sw.WriteLine("  - ${{ENV_VAR}}               Substitutes environment variable.");
+        sw.WriteLine("  - ${{keyring://<alias>}}     Substitutes inline keyring secret.");
+        sw.WriteLine("  - ${{cursor://path|default}}  Substitutes incremental cursor value from a state file.");
+        sw.WriteLine();
+        sw.WriteLine("INCREMENTAL SYNC:");
+        sw.WriteLine("  Define these keys directly in the branch root:");
+        sw.WriteLine("  - cursor: <column_name>");
+        sw.WriteLine("  - state: <path_to_state_file>");
+        sw.WriteLine();
+
+        var readerAdapters = _readerFactories.Select(f => f.ComponentName.ToLowerInvariant());
+        var writerAdapters = _writerFactories.Select(f => f.ComponentName.ToLowerInvariant());
+        var allAdapters = readerAdapters.Union(writerAdapters).OrderBy(x => x).ToList();
+        sw.WriteLine("ADAPTERS:");
+        sw.WriteLine($"  Available adapters: {string.Join(", ", allAdapters)}");
+        sw.WriteLine("  To see connection string rules, YAML schema options, and examples for a specific adapter, call 'get-adapter-help <adapter-name>'.");
+        sw.WriteLine();
+
+        var allTransformers = _transformerFactories.Select(f => f.ComponentName.ToLowerInvariant()).OrderBy(x => x).ToList();
+        sw.WriteLine("TRANSFORMERS:");
+        sw.WriteLine($"  Available transformers: {string.Join(", ", allTransformers)}");
+        sw.WriteLine("  To see YAML schema mappings, options, and examples for a specific transformer, call 'get-transformer-help <transformer-name>'.");
+        sw.WriteLine();
+
+        return sw.ToString();
+    }
+
+    public string GetAdapterHelp(string adapterName)
+    {
+        if (string.IsNullOrWhiteSpace(adapterName))
+            return JsonSerializer.Serialize(new { error = "Adapter name cannot be empty." });
+
+        var normalized = adapterName.Trim().ToLowerInvariant();
+        var readers = _readerFactories.Where(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+        var writers = _writerFactories.Where(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (readers.Count == 0 && writers.Count == 0)
+            return JsonSerializer.Serialize(new { error = $"Unknown adapter '{adapterName}'." });
+
+        using var sw = new StringWriter();
+        sw.WriteLine($"ADAPTER: {normalized}");
+        sw.WriteLine(new string('=', normalized.Length + 9));
+        sw.WriteLine();
+
+        var optionType = readers.FirstOrDefault()?.OptionsType ?? writers.FirstOrDefault()?.OptionsType;
+        if (optionType != null)
+        {
+            var descAttr = optionType.GetCustomAttribute<DescriptionAttribute>();
+            if (descAttr != null)
+            {
+                sw.WriteLine(descAttr.Description);
+                sw.WriteLine();
+            }
+        }
+
+        sw.WriteLine("YAML Provider Options Configuration:");
+        sw.WriteLine($"  Place these under 'provider-options' -> '{normalized}' (or specific role suffix '{normalized}-reader' / '{normalized}-writer'):");
+
+        if (readers.Count > 0)
+        {
+            sw.WriteLine("  Role: Reader (Data Source)");
+            foreach (var r in readers)
+            {
+                FormatOptionProperties(sw, r.OptionsType, "    ");
+            }
+            sw.WriteLine();
+        }
+
+        if (writers.Count > 0)
+        {
+            sw.WriteLine("  Role: Writer (Data Destination)");
+            foreach (var w in writers)
+            {
+                FormatOptionProperties(sw, w.OptionsType, "    ");
+            }
+            sw.WriteLine();
+        }
+
+        if (optionType != null)
+        {
+            FormatComponentHelp(sw, optionType);
+        }
+
+        return sw.ToString();
+    }
+
+    public string GetTransformerHelp(string transformerName)
+    {
+        if (string.IsNullOrWhiteSpace(transformerName))
+            return JsonSerializer.Serialize(new { error = "Transformer name cannot be empty." });
+
+        var normalized = transformerName.Trim().ToLowerInvariant();
+        var factory = _transformerFactories.FirstOrDefault(f => f.ComponentName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (factory == null)
+            return JsonSerializer.Serialize(new { error = $"Unknown transformer '{transformerName}'." });
+
+        using var sw = new StringWriter();
+        sw.WriteLine($"TRANSFORMER: {normalized}");
+        sw.WriteLine(new string('=', normalized.Length + 13));
+        sw.WriteLine();
+
+        var descAttr = factory.OptionsType.GetCustomAttribute<DescriptionAttribute>();
+        if (descAttr != null)
+        {
+            sw.WriteLine(descAttr.Description);
+            sw.WriteLine();
+        }
+
+        var skipNames = new[] { normalized, "filters", "mask", "fake" };
+        var properties = factory.OptionsType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
+            .ToList();
+
+        if (properties.Count > 0)
+        {
+            sw.WriteLine("YAML Options Configuration:");
+            sw.WriteLine("  Place these options under the 'options' block of the transformer:");
+            FormatOptionProperties(sw, factory.OptionsType, "  ", skipNames);
+            sw.WriteLine();
+        }
+
+        FormatComponentHelp(sw, factory.OptionsType);
+
+        if (normalized == "fake")
+        {
+            sw.WriteLine(GetAnonymizationHelp());
+        }
+
+        return sw.ToString();
+    }
+
+    public string GetAnonymizationHelp()
+    {
+        using var sw = new StringWriter();
+        sw.WriteLine("ANONYMIZATION VIA FAKERS (YAML SCHEMA):");
+        sw.WriteLine("  dtpipe uses the 'Bogus' library for generating fake data.");
+        sw.WriteLine("  Specify column-level fakers in the 'mappings' section of the 'fake' transformer.");
+        sw.WriteLine("  Syntax (under mappings):");
+        sw.WriteLine("    <column_name>: <dataset>.<method>");
+        sw.WriteLine("  Example YAML:");
+        sw.WriteLine("    transformers:");
+        sw.WriteLine("      - type: fake");
+        sw.WriteLine("        mappings:");
+        sw.WriteLine("          Email: internet.email");
+        sw.WriteLine("          Name: name.fullName");
+        sw.WriteLine();
+        sw.WriteLine("AVAILABLE DATASETS & METHODS (DYNAMICALLY RESOLVED):");
+
+        var fakerRegistry = new DtPipe.Transformers.Arrow.Fake.FakerRegistry();
+        foreach (var group in fakerRegistry.ListAll())
+        {
+            sw.WriteLine($"  - {group.Dataset.ToLowerInvariant()}");
+            foreach (var method in group.Methods)
+            {
+                var paddedMethod = method.Method.PadRight(25);
+                var desc = string.IsNullOrEmpty(method.Description) ? "" : $" {method.Description}";
+                sw.WriteLine($"    - {paddedMethod}{desc}");
+            }
+        }
+
+        sw.WriteLine();
+        sw.WriteLine("ANONYMIZATION OPTIONS (DYNAMICALLY RESOLVED FROM COMPONENT OPTIONS):");
+        FormatOptionProperties(sw, typeof(DtPipe.Transformers.Arrow.Fake.FakeOptions), "  ", new[] { "fake" });
+        return sw.ToString();
+    }
+
+    private static void FormatOptionProperties(TextWriter writer, Type optionsType, string indent, IEnumerable<string>? skipNames = null)
+    {
+        var skipSet = skipNames != null ? new HashSet<string>(skipNames, StringComparer.OrdinalIgnoreCase) : null;
+        var properties = optionsType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
+            .ToList();
+
+        foreach (var prop in properties)
+        {
+            var kebabName = prop.Name.ToKebabCase();
+            if (skipSet != null && skipSet.Contains(kebabName))
+                continue;
+
+            var cliOptionAttr = prop.GetCustomAttribute<ComponentOptionAttribute>();
+            var descriptionAttr = prop.GetCustomAttribute<DescriptionAttribute>();
+            var desc = CliOptionBuilder.ResolveDescription(cliOptionAttr, descriptionAttr);
+
+            writer.WriteLine($"{indent}{kebabName}: <value>");
+            if (!string.IsNullOrEmpty(desc))
+            {
+                writer.WriteLine($"{indent}  # {desc}");
+            }
+        }
+    }
+
+    private static void FormatComponentHelp(TextWriter writer, Type optionsType)
+    {
+        var helpAttr = optionsType.GetCustomAttribute<ComponentHelpAttribute>();
+        if (helpAttr == null) return;
+
+        if (!string.IsNullOrWhiteSpace(helpAttr.UsageNotes))
+        {
+            writer.WriteLine("YAML Usage & Notes:");
+            writer.WriteLine($"  {helpAttr.UsageNotes}");
+            writer.WriteLine();
+        }
+
+        if (helpAttr.Examples != null && helpAttr.Examples.Length > 0)
+        {
+            writer.WriteLine("YAML Example Configuration:");
+            foreach (var ex in helpAttr.Examples)
+            {
+                writer.WriteLine(ex);
+            }
+            writer.WriteLine();
+        }
+    }
+}

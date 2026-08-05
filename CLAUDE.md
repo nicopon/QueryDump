@@ -221,3 +221,36 @@ Key APIs:
 - `GetClrType(IArrowType)` / `GetValue(array, i)` — storage-only, no metadata
 
 UUID canonical representation: `FixedSizeBinaryType(16)` + Field metadata `ARROW:extension:name = arrow.uuid`, RFC 4122 big-endian. Use `ArrowTypeMapper.ToArrowUuidBytes` / `FromArrowUuidBytes`.
+
+---
+
+## MCP Server Subsystem & Agentic Integration
+
+`dtpipe` embeds a native **Model Context Protocol (MCP)** server (`dtpipe mcp`) allowing AI assistants (Cursor, Claude Desktop, Antigravity, VS Code MCP) to discover capabilities, inspect schemas, validate, and execute pipelines autonomously.
+
+### Core Architecture
+
+- `src/DtPipe/Cli/Commands/McpCommand.cs` — Registers `dtpipe mcp` command and starts `McpServerTool` loop on STDIO.
+- `src/DtPipe/Cli/Mcp/DtPipeMcpTools.cs` — Exposes tools: `list-providers`, `inspect`, `preview-data`, `validate-yaml-job`, `execute-yaml-job`, `help`, `get-adapter-help`, `get-transformer-help`, `register-yaml-job`.
+- `src/DtPipe/Cli/Mcp/IMcpHelpService.cs` & `McpHelpService.cs` — Dynamic reflection-based help generator.
+
+### Mandatory Directives for MCP Development (Hard Rules)
+
+1. **Strictly Generic Help (SOLID / DRY)**:
+   - MCP help **must never** contain hardcoded connection strings, provider-specific connection examples, or hardcoded option lists in the service.
+   - All component descriptions, connection string formats, options, and YAML examples are owned by the components themselves via reflection on `[Description]`, `[ComponentHelp]`, and option properties across reader, writer, and transformer factories.
+
+2. **Direct In-Memory Execution (KISS)**:
+   - MCP job execution tools (`execute-yaml-job`, `validate-yaml-job`) must parse and execute YAML content directly in-memory via `JobFileParser` and `JobService.ExecutePipelineAsync()`.
+   - Never generate temporary YAML files on disk or invoke shell CLI command string proxies.
+
+3. **Auto-Exploration & Actionable Hints**:
+   - `inspect` on database providers without a query must perform automatic table/view discovery (`TryBuildTableDiscoveryQuery`) instead of throwing errors.
+   - Validation errors (e.g. invalid transformer names or missing DAG stream processors) must return actionable hints explaining the correct component name or YAML configuration pattern.
+
+### Agentic Benchmark & Trace E2E Suite (`tests/agentic/`)
+
+- `tests/agentic/run-all.sh [models...]` — Runs E2E mission benchmarks across multiple Ollama LLM models.
+- `tests/agentic/agent_runner.sh` — Drives single model evaluation with Chain-of-Thought reasoning prompt and generates Markdown trajectory traces under `tests/agentic/artifacts/traces/<model>/<mission>.md`.
+- `tests/agentic/analyze-traces.sh` — Automated diagnostic script to parse trace files and extract MCP errors, warnings, and top tool calls.
+- `tests/agentic/print-benchmark.sh` — Renders formatted benchmark comparison table.

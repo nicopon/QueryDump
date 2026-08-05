@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using DtPipe.Core.Abstractions;
+using DtPipe.Core.Attributes;
 using DtPipe.Core.Models;
 using DtPipe.Core.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +24,12 @@ public class NullDataWriterFactory : IProviderDescriptor<IDataWriter>
     }
 }
 
+[Description("Discards all rows without writing anything, useful for benchmarking reader and transformer throughput.")]
+[ComponentHelp(
+    usageNotes: "Connection string is simply 'null:' (or the bare 'null' component name) — no configuration needed. Use it as the output target to measure source and transform performance without the overhead of a real destination.",
+    examples: new[] {
+        "main:\n  input: \"generate:5m\"\n  output: \"null:\""
+    })]
 public class NullDataWriterOptions : IWriterOptions
 {
     public static string Prefix => "null";

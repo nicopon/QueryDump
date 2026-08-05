@@ -118,7 +118,7 @@ public class LinearPipelineService
         if (readerFactory == null)
         {
             if (string.IsNullOrEmpty(cleanedInput))
-                throw new InvalidOperationException("No input source specified and no stream transformer detected.");
+                throw new InvalidOperationException("No input source specified and no stream transformer detected. When combining multiple branches ('from'/'ref'), specify a stream transformer query under 'provider-options -> sql -> query: \"SELECT ... FROM branch1 JOIN branch2 ON ...\"'.");
             throw new InvalidOperationException($"No reader factory resolved for input '{job.Input}'");
         }
 

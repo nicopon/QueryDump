@@ -107,6 +107,13 @@ dtpipe \
   --state "state.json"
 ```
 
+### Start AI Agent MCP Server (Model Context Protocol)
+
+```bash
+# Launch native MCP server over STDIO for AI assistants (Cursor, Claude Desktop, Antigravity)
+dtpipe mcp
+```
+
 ---
 
 

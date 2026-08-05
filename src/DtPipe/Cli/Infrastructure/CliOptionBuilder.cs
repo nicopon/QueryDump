@@ -45,7 +45,7 @@ public static class CliOptionBuilder
 					: (string.IsNullOrEmpty(prefix) ? $"--{kebabProp}" : $"--{prefix.ToLowerInvariant()}-{kebabProp}");
 			}
 
-			var description = cliOptionAttr?.Description ?? descriptionAttr?.Description ?? string.Empty;
+			var description = ResolveDescription(cliOptionAttr, descriptionAttr);
 			var propType = property.PropertyType;
 			var isList = propType != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(propType);
 
@@ -63,4 +63,7 @@ public static class CliOptionBuilder
 		return Nullable.GetUnderlyingType(type) ?? type;
 	}
 
+	/// <summary>Resolves a property's help description, preferring the CLI-specific override over the general one.</summary>
+	public static string ResolveDescription(ComponentOptionAttribute? cliOptionAttr, DescriptionAttribute? descriptionAttr)
+		=> cliOptionAttr?.Description ?? descriptionAttr?.Description ?? string.Empty;
 }
