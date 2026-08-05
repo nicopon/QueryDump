@@ -84,6 +84,7 @@ dotnet build DtPipe.sln -c Release
 
 echo ""
 echo -e "${YELLOW}Building Release (single-file)...${NC}"
+dotnet restore src/DtPipe/DtPipe.csproj -r "$RID"
 dotnet publish src/DtPipe/DtPipe.csproj -c Release \
     -r "$RID" \
     --self-contained true \

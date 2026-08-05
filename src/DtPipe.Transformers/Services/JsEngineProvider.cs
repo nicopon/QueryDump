@@ -21,7 +21,7 @@ public class JsEngineProvider : IJsEngineProvider
 		// Shared configuration for all JS execution in DtPipe
 		return new Engine(cfg => cfg
 			.Strict(true)
-			.LimitMemory(50_000_000) // 50MB limit
+			.LimitMemory(256_000_000) // 256MB memory limit for streaming JS pipelines
 			.TimeoutInterval(TimeSpan.FromSeconds(5))
 		);
 	}

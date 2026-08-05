@@ -256,9 +256,6 @@ public sealed class DuckDBSqlProcessor : IColumnarStreamReader, IDisposable
             cmd.CommandText = $"EXPLAIN (FORMAT JSON) {_query}";
 
             using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (!await reader.ReadAsync(ct)) return;
-
-            var json = reader.GetString(1); // col 0 = explain_key, col 1 = explain_value
 
             // Parse projections as an ORDERED list. The EXPLAIN JSON lists ARROW_SCAN projections
             // in the same order as DuckDB's internal column_ids vector, which determines the
@@ -266,12 +263,23 @@ public sealed class DuckDBSqlProcessor : IColumnarStreamReader, IDisposable
             // hardcoded). Losing this order (e.g. by using a HashSet) would map children[idx]
             // to the wrong column for any multi-column projection where query order ≠ schema order.
             var projectedColumnsOrdered = new List<string>();
-            ParseProjectionsFromJson(json, projectedColumnsOrdered);
+
+            while (await reader.ReadAsync(ct))
+            {
+                if (reader.FieldCount < 2 || reader.IsDBNull(1)) continue;
+
+                var json = reader.GetValue(1)?.ToString();
+                if (string.IsNullOrEmpty(json)) continue;
+
+                ParseProjectionsFromJson(json, projectedColumnsOrdered);
+            }
 
             foreach (var kvp in _streamProjections)
             {
                 var alias = kvp.Key;
                 var stream = kvp.Value;
+
+                if (stream?.Schema?.FieldsList == null) continue;
 
                 // Build a fast-lookup set of this stream's column names for the membership test,
                 // but iterate the EXPLAIN-ordered list to build the final projection — preserving

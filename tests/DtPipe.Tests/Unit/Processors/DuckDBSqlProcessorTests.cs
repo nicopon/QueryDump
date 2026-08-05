@@ -71,6 +71,55 @@ public class DuckDBSqlProcessorTests
         Assert.Equal("val", processor.Schema.FieldsList[0].Name);
     }
 
+    [Fact]
+    public async Task OpenAsync_JoinQueryWithRefTables_ExplainDoesNotThrow()
+    {
+        var mainField = new Field("GenerateIndex", Int64Type.Default, nullable: false);
+        var mainSchema = new Schema(new[] { mainField }, null);
+        var mainBatch = new RecordBatch(mainSchema, new IArrowArray[] { new Int64Array.Builder().Append(1).Build() }, 1);
+
+        var refField = new Field("Id", Int64Type.Default, nullable: false);
+        var refSchema = new Schema(new[] { refField }, null);
+        var refBatch = new RecordBatch(refSchema, new IArrowArray[] { new Int64Array.Builder().Append(1).Build() }, 1);
+
+        var channelMain = Channel.CreateUnbounded<RecordBatch>();
+        channelMain.Writer.TryWrite(mainBatch);
+        channelMain.Writer.Complete();
+
+        var channelRef = Channel.CreateUnbounded<RecordBatch>();
+        channelRef.Writer.TryWrite(refBatch);
+        channelRef.Writer.Complete();
+
+        var channelRef2 = Channel.CreateUnbounded<RecordBatch>();
+        channelRef2.Writer.TryWrite(refBatch);
+        channelRef2.Writer.Complete();
+
+        var mock = new Mock<IMemoryChannelRegistry>();
+        mock.Setup(r => r.WaitForArrowChannelSchemaAsync("main", It.IsAny<CancellationToken>())).ReturnsAsync(mainSchema);
+        mock.Setup(r => r.GetArrowChannel("main")).Returns((channelMain, mainSchema));
+
+        mock.Setup(r => r.WaitForArrowChannelSchemaAsync("ref", It.IsAny<CancellationToken>())).ReturnsAsync(refSchema);
+        mock.Setup(r => r.GetArrowChannel("ref")).Returns((channelRef, refSchema));
+
+        mock.Setup(r => r.WaitForArrowChannelSchemaAsync("ref2", It.IsAny<CancellationToken>())).ReturnsAsync(refSchema);
+        mock.Setup(r => r.GetArrowChannel("ref2")).Returns((channelRef2, refSchema));
+
+        var processor = new DuckDBSqlProcessor(
+            mock.Object,
+            "SELECT m.*, r.Id as ref1_id, r2.Id as ref2_id FROM main m LEFT JOIN ref r ON m.GenerateIndex = CAST(r.Id AS BIGINT) LEFT JOIN ref2 r2 ON m.GenerateIndex = CAST(r2.Id AS BIGINT)",
+            "main", "main",
+            refAliases: ["ref", "ref2"], refChannelAliases: ["ref", "ref2"],
+            NullLogger<DuckDBSqlProcessor>.Instance);
+
+        await processor.OpenAsync();
+        var batches = new List<RecordBatch>();
+        await foreach (var b in processor.ReadRecordBatchesAsync())
+            batches.Add(b);
+
+        await processor.DisposeAsync();
+        Assert.NotEmpty(batches);
+    }
+
     /// <summary>
     /// Regression test: WHERE clauses on CDI streaming sources (duckdb_arrow_scan) must be applied.
     ///
