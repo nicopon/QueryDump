@@ -62,7 +62,7 @@ The golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical reference
 
 | Project | Role |
 |---|---|
-| `src/DtPipe` | CLI entry point, DI wiring, `JobService`, `ExportService` |
+| `src/DtPipe` | CLI entry point, DI wiring, `JobService`, `ExportService`, MCP server, AI Agent |
 | `src/DtPipe.Core` | Abstractions, DAG engine, pipeline models, helpers |
 | `src/DtPipe.Adapters` | Readers and writers for all data sources/targets |
 | `src/DtPipe.Transformers` | Row and columnar data transformers |
@@ -77,12 +77,13 @@ The golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical reference
 - Each concrete transformer in `DtPipe.Transformers` lives in its own subdirectory (`Row/Expand/`, `Arrow/Filter/`…) with a matching sub-namespace (`DtPipe.Transformers.Row`, `DtPipe.Transformers.Arrow`…).
 - Each concrete stream processor in `DtPipe.Processors` follows the same pattern: one subdirectory per processor (`DuckDB/`, `Merge/`, `Sql/`…) with a matching sub-namespace (`DtPipe.Processors.DuckDB`, `DtPipe.Processors.Merge`, `DtPipe.Processors.Sql`…).
 - Readers and writers in `DtPipe.Adapters` are grouped by technology under `Adapters/<Name>/`.
+- AI Agent classes live under `src/DtPipe/Cli/Agent/` (`AgentExecutor`, `AgentTui`, `OllamaClient`, `AgentSystemPrompt`, `AgentTrajectory`).
 
 ### Core Data Flow
 
 The fundamental pipeline: `IStreamReader` → `IDataTransformer[]` → `IDataWriter`.
 
-1. `JobService.BuildSubcommands()` registers named subcommands (`inspect`, `providers`, `completion`, `secret`) into the `System.CommandLine` root command. Named subcommands are dispatched before pipeline parsing.
+1. `JobService.BuildSubcommands()` registers named subcommands (`inspect`, `providers`, `completion`, `secret`, `mcp`, `agent`) into the `System.CommandLine` root command. Named subcommands are dispatched before pipeline parsing.
 2. On pipeline execution, `FlagRegistryFactory.Build(serviceProvider)` assembles a `FlagRegistry` from all registered providers (via `[ComponentOption]` attributes) and stream processor trigger flags. `PipelineLexer.Parse(args)` then splits raw args into a `ParsedPipeline` (a list of `BranchSpec` records). `PipelineToJobConverter.Convert(parsed, streamTransformerFactories)` maps that to a `(Dictionary<string, JobDefinition>, JobDagDefinition)` pair.
 3. For linear pipelines, `LinearPipelineService` drives execution through `ExportService.RunExportAsync()`.
 4. For DAG pipelines, `DagOrchestrator` spawns concurrent `Task`s per branch, wiring them via in-memory `Channel<T>` for zero-copy data flow.

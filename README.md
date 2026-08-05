@@ -114,6 +114,17 @@ dtpipe \
 dtpipe mcp
 ```
 
+### Interactive AI Agent Mode
+
+```bash
+# Launch the interactive AI agent (auto-discovers local Ollama models)
+dtpipe agent
+
+# Or run a one-shot mission
+dtpipe agent "Inspect csv:invoices.csv, anonymize email, and output to jsonl:users.jsonl"
+```
+> Features local Ollama auto-discovery, Spectre.Console TUI, step-by-step trajectory inspector, Spectre DAG topology rendering, and 1-click YAML pipeline export.
+
 ---
 
 

@@ -704,3 +704,26 @@ To run this job:
 dtpipe --job sync_orders.yaml
 ```
 
+---
+
+## AI Agent Integration
+
+### Scenario: Interactive Pipeline Generation using `dtpipe agent`
+
+Instead of writing YAML jobs or long CLI commands by hand, you can describe your data integration goal in natural language using the `dtpipe agent` subcommand:
+
+```bash
+# Launch interactive mode (auto-discovers local Ollama models)
+dtpipe agent
+```
+
+When prompted, enter your data integration mission:
+> *"Inspect csv:invoices.csv, compute gross_total = subtotal * (1 + tax), filter gross_total > 100, and save to jsonl:high_invoices.jsonl"*
+
+The agent will:
+1. Inspect the source schema.
+2. Validate the YAML topology.
+3. Execute the pipeline.
+4. Render the DAG topology box and allow exporting a standalone `high_invoices.yaml` file for production automation.
+
+

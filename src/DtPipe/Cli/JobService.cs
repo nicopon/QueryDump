@@ -56,6 +56,7 @@ public class JobService
 		rootCommand.Subcommands.Add(new CompletionCommand());
 		rootCommand.Subcommands.Add(new SecretCommand(_console, _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>()));
 		rootCommand.Subcommands.Add(new McpCommand(_serviceProvider));
+		rootCommand.Subcommands.Add(new AgentCommand(_serviceProvider));
 		return rootCommand;
 	}
 

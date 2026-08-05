@@ -512,3 +512,22 @@ dtpipe mcp
 | `get-transformer-help` | `transformerName` | Inspect options, mapping syntax, and YAML examples for a transformer |
 | `get-anonymization-help` | *(none)* | Inspect Bogus faker datasets, methods, and options for anonymization |
 | `register-yaml-job` | `name`, `yamlContent` | Register a YAML job configuration in memory to obtain a virtual `memory://` URI |
+
+---
+
+### AI Agent Subcommand (`dtpipe agent`)
+
+Launches an interactive or automated ReAct AI agent loop for data integration tasks. The agent auto-discovers local Ollama models, renders compact TUI status lines, provides an interactive step inspector (trajectory viewer), renders Spectre.Console DAG topology boxes, and offers 1-click YAML file exports.
+
+```bash
+dtpipe agent [<prompt>] [options]
+```
+
+| Option | Alias | Description | Default |
+|:---|:---|:---|:---|
+| `<prompt>` | `-p`, `--prompt` | Task description for the AI agent | *(Interactive prompt if omitted)* |
+| `--model` | `-m` | Ollama model name (e.g. `gemma4:12b-mlx`, `qwen2.5-coder:7b`) | *(Auto-discovered from Ollama)* |
+| `--url` | `-u` | Ollama API endpoint URL | `http://localhost:11434` |
+| `--max-iterations` | | Maximum ReAct loop iterations per turn | `25` |
+| `--interactive` | `-i` | Force interactive model selection and prompt entry | `false` |
+

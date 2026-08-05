@@ -119,7 +119,7 @@ class Program
 
 	private static bool IsSubcommand(string arg)
 	{
-		var subs = new[] { "inspect", "providers", "completion", "secret", "mcp" };
+		var subs = new[] { "inspect", "providers", "completion", "secret", "mcp", "agent" };
 		return subs.Contains(arg.ToLowerInvariant());
 	}
 
