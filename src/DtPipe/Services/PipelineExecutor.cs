@@ -424,41 +424,8 @@ public sealed class PipelineExecutor
         }
     }
 
-    private async Task DirectRowTransferAsync(
-        IStreamReader reader,
-        IRowDataWriter writer,
-        int batchSize,
-        int limit,
-        double samplingRate,
-        int? samplingSeed,
-        IExportProgress progress,
-        CancellationToken ct)
-    {
-        long rowCount = 0;
-        Random? sampler = samplingRate > 0 && samplingRate < 1.0 ? (samplingSeed.HasValue ? new Random(samplingSeed.Value) : Random.Shared) : null;
-
-        await foreach (var batch in reader.ReadBatchesAsync(batchSize, ct))
-        {
-            var rowsToWrite = new List<object?[]>();
-            for (int i = 0; i < batch.Length; i++)
-            {
-                if (sampler != null && sampler.NextDouble() > samplingRate) continue;
-                rowsToWrite.Add(batch.Span[i]);
-                if (limit > 0 && ++rowCount >= limit) break;
-            }
-
-            if (rowsToWrite.Count > 0)
-            {
-                await writer.WriteBatchAsync(rowsToWrite.ToArray(), ct);
-                progress.ReportRead(rowsToWrite.Count);
-                progress.ReportWrite(rowsToWrite.Count);
-            }
-            if (limit > 0 && rowCount >= limit) break;
-        }
-    }
-
-    private async Task DirectRowTransferFromRowsAsync(
-        IAsyncEnumerable<IReadOnlyList<object?>> rows,
+    internal async Task DrainRowSourceAsync(
+        IAsyncEnumerable<object?[]> rows,
         IRowDataWriter writer,
         int batchSize,
         int limit,
@@ -474,7 +441,7 @@ public sealed class PipelineExecutor
         await foreach (var row in rows.WithCancellation(ct))
         {
             if (sampler != null && sampler.NextDouble() > samplingRate) continue;
-            buffer.Add(row as object?[] ?? row.ToArray());
+            buffer.Add(row);
             bool limitReached = limit > 0 && ++rowCount >= limit;
 
             if (buffer.Count >= batchSize || limitReached)
@@ -496,6 +463,52 @@ public sealed class PipelineExecutor
             progress.ReportRead(batch.Length);
             progress.ReportWrite(batch.Length);
         }
+    }
+
+    private async Task DirectRowTransferAsync(
+        IStreamReader reader,
+        IRowDataWriter writer,
+        int batchSize,
+        int limit,
+        double samplingRate,
+        int? samplingSeed,
+        IExportProgress progress,
+        CancellationToken ct)
+    {
+        async IAsyncEnumerable<object?[]> FlattenBatches([EnumeratorCancellation] CancellationToken innerCt = default)
+        {
+            await foreach (var batch in reader.ReadBatchesAsync(batchSize, innerCt))
+            {
+                var arr = batch.ToArray();
+                for (int i = 0; i < arr.Length; i++)
+                {
+                    yield return arr[i];
+                }
+            }
+        }
+
+        await DrainRowSourceAsync(FlattenBatches(ct), writer, batchSize, limit, samplingRate, samplingSeed, progress, ct);
+    }
+
+    private async Task DirectRowTransferFromRowsAsync(
+        IAsyncEnumerable<IReadOnlyList<object?>> rows,
+        IRowDataWriter writer,
+        int batchSize,
+        int limit,
+        double samplingRate,
+        int? samplingSeed,
+        IExportProgress progress,
+        CancellationToken ct)
+    {
+        async IAsyncEnumerable<object?[]> MaterializeRows([EnumeratorCancellation] CancellationToken innerCt = default)
+        {
+            await foreach (var r in rows.WithCancellation(innerCt))
+            {
+                yield return r as object?[] ?? r.ToArray();
+            }
+        }
+
+        await DrainRowSourceAsync(MaterializeRows(ct), writer, batchSize, limit, samplingRate, samplingSeed, progress, ct);
     }
 
     private async IAsyncEnumerable<RecordBatch> ApplySamplingAsync(

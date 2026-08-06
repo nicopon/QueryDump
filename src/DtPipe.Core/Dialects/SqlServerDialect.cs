@@ -26,4 +26,6 @@ public class SqlServerDialect : BaseSqlDialect
 	{
 		return false;
 	}
+
+	public override string? TableDiscoveryQuery => "SELECT TABLE_NAME AS table_name, TABLE_TYPE AS table_type FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME";
 }

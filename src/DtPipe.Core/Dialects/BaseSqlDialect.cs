@@ -37,4 +37,7 @@ public abstract partial class BaseSqlDialect : ISqlDialect
 	/// Checks if the identifier's case conflicts with the dialect's default unquoted casing.
 	/// </summary>
 	protected abstract bool IsCaseMismatch(string identifier);
+
+	/// <inheritdoc />
+	public virtual string? TableDiscoveryQuery => null;
 }

@@ -30,4 +30,6 @@ public class DuckDbDialect : BaseSqlDialect
 		// Quote if contains uppercase to preserve case
 		return identifier != identifier.ToLowerInvariant();
 	}
+
+	public override string? TableDiscoveryQuery => "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_name";
 }

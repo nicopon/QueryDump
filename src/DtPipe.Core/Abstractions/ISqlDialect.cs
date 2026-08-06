@@ -22,4 +22,9 @@ public interface ISqlDialect
 	/// Use this to implement "Smart Quoting".
 	/// </summary>
 	bool NeedsQuoting(string identifier);
+
+	/// <summary>
+	/// Gets the SQL query used to discover available tables and views in this dialect's database, or null if unsupported.
+	/// </summary>
+	string? TableDiscoveryQuery => null;
 }

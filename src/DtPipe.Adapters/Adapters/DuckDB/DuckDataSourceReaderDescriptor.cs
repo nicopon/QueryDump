@@ -22,6 +22,7 @@ public class DuckDataSourceReaderDescriptor : IProviderDescriptor<IStreamReader>
         var opt = (DuckDbReaderOptions)options;
         var logger = serviceProvider.GetService<ILogger<DuckDataSourceReader>>();
         var resolver = serviceProvider.GetService<IStringContentResolver>();
-        return new DuckDataSourceReader(connectionString, opt.Query!, opt, logger, resolver: resolver);
+        var securityContext = serviceProvider.GetService<IMcpSecurityContext>();
+        return new DuckDataSourceReader(connectionString, opt.Query!, opt, logger, resolver: resolver, mcpSecurityContext: securityContext);
     }
 }

@@ -83,8 +83,10 @@ public class CliDataWriterFactory : CliProviderFactory<IDataWriter>, IDataWriter
 	}
 }
 
-public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStreamReaderFactory
+public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStreamReaderFactory, IHasSqlDialect
 {
+	public ISqlDialect? Dialect => (_descriptor as IHasSqlDialect)?.Dialect;
+
 	public CliStreamReaderFactory(IProviderDescriptor<IStreamReader> descriptor, OptionsRegistry registry, IServiceProvider serviceProvider)
 		: base(descriptor, registry, serviceProvider)
 	{

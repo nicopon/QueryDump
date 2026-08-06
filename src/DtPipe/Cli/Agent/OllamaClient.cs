@@ -11,7 +11,7 @@ namespace DtPipe.Cli.Agent;
 
 public class OllamaClient
 {
-    private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    private static readonly HttpClient HttpClient = new HttpClient();
 
     public record OllamaModelInfo(string Name, long Size, DateTime ModifiedAt);
 
@@ -19,8 +19,11 @@ public class OllamaClient
     {
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+
             var url = baseUrl.TrimEnd('/') + "/api/tags";
-            var response = await HttpClient.GetAsync(url, ct);
+            var response = await HttpClient.GetAsync(url, cts.Token);
             if (!response.IsSuccessStatusCode)
                 return new List<OllamaModelInfo>();
 

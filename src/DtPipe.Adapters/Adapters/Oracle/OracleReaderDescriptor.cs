@@ -4,9 +4,11 @@ using DtPipe.Core.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+using DtPipe.Core.Dialects;
+
 namespace DtPipe.Adapters.Oracle;
 
-public class OracleReaderDescriptor : IProviderDescriptor<IStreamReader>
+public class OracleReaderDescriptor : IProviderDescriptor<IStreamReader>, IHasSqlDialect
 {
     public string ComponentName => OracleMetadata.ComponentName;
     public string Category => "Reader Options";
@@ -15,6 +17,8 @@ public class OracleReaderDescriptor : IProviderDescriptor<IStreamReader>
     public bool SupportsStdio => OracleMetadata.SupportsStdio;
     public bool RequiresQuery => true;
     public bool YieldsColumnarOutput => true;
+
+    public ISqlDialect Dialect => new OracleDialect();
 
     public IStreamReader Create(string connectionString, object options, IServiceProvider serviceProvider)
     {

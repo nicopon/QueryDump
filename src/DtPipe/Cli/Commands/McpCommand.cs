@@ -14,7 +14,11 @@ public class McpCommand : Command
         this.SetAction(async (parseResult, ct) =>
         {
             // Set security context for MCP
-            DtPipe.Core.Security.McpSecurityContext.IsMcpSession = true;
+            var securityContext = serviceProvider.GetService<DtPipe.Core.Security.IMcpSecurityContext>();
+            if (securityContext != null)
+            {
+                securityContext.IsMcpSession = true;
+            }
 
             // Resolve all hosted services and start them in registration order.
             // This avoids fragile string-based type resolution.

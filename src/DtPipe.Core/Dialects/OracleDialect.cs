@@ -29,4 +29,6 @@ public class OracleDialect : BaseSqlDialect
 		// Quote if contains lowercase to preserve case
 		return identifier != identifier.ToUpperInvariant();
 	}
+
+	public override string? TableDiscoveryQuery => "SELECT table_name, 'TABLE' AS table_type FROM user_tables ORDER BY table_name";
 }

@@ -58,49 +58,6 @@ public class DtPipeMcpTools
         }, new JsonSerializerOptions { WriteIndented = true });
     }
 
-    [McpServerTool(Name = "register-yaml-job")]
-    [System.ComponentModel.Description(
-        "Optional: Register a YAML job configuration in memory to receive a virtual memory:// URI. Note: To run YAML jobs, 'execute-yaml-job' accepts your YAML content string directly without needing to call 'register-yaml-job' first. " +
-        "To discover valid adapter connection string prefixes (e.g. 'csv', 'sqlite') and transformer types (e.g. 'fake', 'compute'), call the 'list-providers' tool. " +
-        "YAML Job Schema Example:\n" +
-        "main:\n" +
-        "  input: \"<adapter>:<source_path>\"\n" +
-        "  transformers:\n" +
-        "    - type: <transformer_type>\n" +
-        "      mappings:\n" +
-        "        <target_column>: <expression_or_format>\n" +
-        "  output: \"<adapter>:<destination_path>\"")]
-    public string RegisterYamlJob(
-        [System.ComponentModel.Description("Unique name for the job (alphanumeric and hyphens only, e.g. 'my-sales-analysis')")] string name,
-        [System.ComponentModel.Description("The complete YAML job configuration string")] string yamlContent)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(name))
-                return JsonSerializer.Serialize(new { success = false, error = "Job name cannot be empty." });
-
-            if (string.IsNullOrWhiteSpace(yamlContent))
-                return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
-
-            if (!Regex.IsMatch(name, "^[a-zA-Z0-9_-]+$"))
-                return JsonSerializer.Serialize(new { success = false, error = "Job name must contain only alphanumeric characters, underscores, or hyphens." });
-
-            var tempPath = Path.Combine(Path.GetTempPath(), "dtpipe-job-" + name + ".yaml");
-            File.WriteAllText(tempPath, yamlContent);
-
-            return JsonSerializer.Serialize(new
-            {
-                success = true,
-                message = "YAML job registered successfully in memory.",
-                uri = $"memory://{name}"
-            }, new JsonSerializerOptions { WriteIndented = true });
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
-        }
-    }
-
     [McpServerTool(Name = "help")]
     [System.ComponentModel.Description("Show general usage guidelines, YAML job structures, connection string rules, DAG capabilities, and list available adapters and transformers.")]
     public string Help()
@@ -150,7 +107,7 @@ public class DtPipeMcpTools
             bool isTableDiscovery = false;
             if (result.Factory.RequiresQuery && string.IsNullOrWhiteSpace(query))
             {
-                var discoveryQuery = TryBuildTableDiscoveryQuery(result.Factory.ComponentName);
+                var discoveryQuery = TryBuildTableDiscoveryQuery(result.Factory);
                 if (discoveryQuery != null)
                 {
                     query = discoveryQuery;
@@ -216,6 +173,39 @@ public class DtPipeMcpTools
         }
     }
 
+    private record YamlParseResult(
+        Dictionary<string, JobDefinition> Jobs,
+        JobDagDefinition Dag,
+        List<string> Errors);
+
+    private YamlParseResult ParseAndValidateYaml(string yamlContent)
+    {
+        var secretsManager = _serviceProvider.GetService<DtPipe.Cli.Security.ISecretsManager>();
+        var jobs = JobFileParser.ParseContent(yamlContent, secretsManager);
+
+        var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
+        var branches = jobs.Select(kv => new BranchDefinition
+        {
+            Alias = kv.Key,
+            Input = kv.Value.Input,
+            Output = kv.Value.Output,
+            StreamingAliases = kv.Value.From != null
+                ? kv.Value.From.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : Array.Empty<string>(),
+            RefAliases = kv.Value.Ref ?? Array.Empty<string>(),
+            Arguments = Array.Empty<string>(),
+            ProcessorName = streamTransformerFactories
+                .FirstOrDefault(f => f.IsApplicable(kv.Value))
+                ?.ComponentName
+        }).ToList();
+
+        var dag = new JobDagDefinition { Branches = branches };
+        var errors = PipelineValidator.Validate(dag, jobs, streamTransformerFactories).ToList();
+        errors.AddRange(ValidateJobTransformers(jobs));
+
+        return new YamlParseResult(jobs, dag, errors);
+    }
+
     [McpServerTool(Name = "validate-yaml-job")]
     [System.ComponentModel.Description("Validate a pipeline configuration specified directly as YAML. Checks for syntax errors and schema validation issues without executing.")]
     public string ValidateYamlJob(
@@ -226,35 +216,14 @@ public class DtPipeMcpTools
 
         try
         {
-            var secretsManager = _serviceProvider.GetService<DtPipe.Cli.Security.ISecretsManager>();
-            var jobs = JobFileParser.ParseContent(yamlContent, secretsManager);
+            var parsed = ParseAndValidateYaml(yamlContent);
 
-            var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
-            var branches = jobs.Select(kv => new BranchDefinition
-            {
-                Alias = kv.Key,
-                Input = kv.Value.Input,
-                Output = kv.Value.Output,
-                StreamingAliases = kv.Value.From != null
-                    ? kv.Value.From.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    : Array.Empty<string>(),
-                RefAliases = kv.Value.Ref ?? Array.Empty<string>(),
-                Arguments = Array.Empty<string>(),
-                ProcessorName = streamTransformerFactories
-                    .FirstOrDefault(f => f.IsApplicable(kv.Value))
-                    ?.ComponentName
-            }).ToList();
-
-            var dag = new JobDagDefinition { Branches = branches };
-            var errors = PipelineValidator.Validate(dag, jobs, streamTransformerFactories).ToList();
-            errors.AddRange(ValidateJobTransformers(jobs));
-
-            if (errors.Count > 0)
+            if (parsed.Errors.Count > 0)
             {
                 return JsonSerializer.Serialize(new
                 {
                     success = false,
-                    errors
+                    errors = parsed.Errors
                 }, new JsonSerializerOptions { WriteIndented = true });
             }
 
@@ -285,40 +254,19 @@ public class DtPipeMcpTools
 
         try
         {
-            var secretsManager = _serviceProvider.GetService<DtPipe.Cli.Security.ISecretsManager>();
-            var jobs = JobFileParser.ParseContent(yamlContent, secretsManager);
+            var parsed = ParseAndValidateYaml(yamlContent);
 
-            var streamTransformerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
-            var branches = jobs.Select(kv => new BranchDefinition
-            {
-                Alias = kv.Key,
-                Input = kv.Value.Input,
-                Output = kv.Value.Output,
-                StreamingAliases = kv.Value.From != null
-                    ? kv.Value.From.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    : Array.Empty<string>(),
-                RefAliases = kv.Value.Ref ?? Array.Empty<string>(),
-                Arguments = Array.Empty<string>(),
-                ProcessorName = streamTransformerFactories
-                    .FirstOrDefault(f => f.IsApplicable(kv.Value))
-                    ?.ComponentName
-            }).ToList();
-
-            var dag = new JobDagDefinition { Branches = branches };
-            var errors = PipelineValidator.Validate(dag, jobs, streamTransformerFactories).ToList();
-            errors.AddRange(ValidateJobTransformers(jobs));
-
-            if (errors.Count > 0)
+            if (parsed.Errors.Count > 0)
             {
                 return JsonSerializer.Serialize(new
                 {
                     success = false,
                     stage = "validation",
-                    errors
+                    errors = parsed.Errors
                 }, new JsonSerializerOptions { WriteIndented = true });
             }
 
-            var contexts = jobs.ToDictionary(
+            var contexts = parsed.Jobs.ToDictionary(
                 kv => kv.Key,
                 kv => new CliJobContext(null, null, null, Array.Empty<string>())
             );
@@ -327,7 +275,7 @@ public class DtPipeMcpTools
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             var globalOptions = new GlobalOptions();
-            var exitCode = await jobService.ExecutePipelineAsync(jobs, dag, contexts, globalOptions, ct);
+            var exitCode = await jobService.ExecutePipelineAsync(parsed.Jobs, parsed.Dag, contexts, globalOptions, ct);
             sw.Stop();
 
             return JsonSerializer.Serialize(new
@@ -335,7 +283,7 @@ public class DtPipeMcpTools
                 success = exitCode == 0,
                 exitCode,
                 durationMs = sw.ElapsedMilliseconds,
-                branches = dag.Branches.Select(b => new
+                branches = parsed.Dag.Branches.Select(b => new
                 {
                     b.Alias,
                     Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
@@ -544,13 +492,6 @@ public class DtPipeMcpTools
             if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
             {
                 effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
-                var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                if (optionsType != null)
-                {
-                    var instance = registry.Get(optionsType);
-                    optionsType.GetProperty("Input")?.SetValue(instance, effectiveConnectionString);
-                    registry.RegisterByType(optionsType, instance);
-                }
                 factory = f;
                 break;
             }
@@ -562,13 +503,6 @@ public class DtPipeMcpTools
             {
                 if (f.CanHandle(input))
                 {
-                    var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
-                    if (optionsType != null)
-                    {
-                        var instance = registry.Get(optionsType);
-                        optionsType.GetProperty("Input")?.SetValue(instance, input);
-                        registry.RegisterByType(optionsType, instance);
-                    }
                     factory = f;
                     break;
                 }
@@ -584,31 +518,16 @@ public class DtPipeMcpTools
         if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
             readerOpts.Query = query;
 
-        if (!string.IsNullOrEmpty(query))
-        {
-            var optionsType = factory.GetSupportedOptionTypes().FirstOrDefault();
-            if (optionsType != null)
-            {
-                var instance = registry.Get(optionsType);
-                optionsType.GetProperty("Query")?.SetValue(instance, query);
-                registry.RegisterByType(optionsType, instance);
-            }
-        }
-
         return new ReaderResolutionResult(factory, effectiveConnectionString);
     }
 
-    private static string? TryBuildTableDiscoveryQuery(string providerName)
+    private static string? TryBuildTableDiscoveryQuery(IStreamReaderFactory factory)
     {
-        return providerName.ToLowerInvariant() switch
+        if (factory is IHasSqlDialect hasDialect && hasDialect.Dialect?.TableDiscoveryQuery != null)
         {
-            "sqlite" => "SELECT name AS table_name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
-            "pg" or "postgresql" => "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_name",
-            "mssql" or "sqlserver" => "SELECT TABLE_NAME AS table_name, TABLE_TYPE AS table_type FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME",
-            "ora" or "oracle" => "SELECT table_name, 'TABLE' AS table_type FROM user_tables ORDER BY table_name",
-            "duck" or "duckdb" => "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_name",
-            _ => null
-        };
+            return hasDialect.Dialect.TableDiscoveryQuery;
+        }
+        return null;
     }
 
     private List<string> ValidateJobTransformers(Dictionary<string, JobDefinition> jobs)

@@ -26,4 +26,6 @@ public class SqliteDialect : BaseSqlDialect
 	{
 		return false;
 	}
+
+	public override string? TableDiscoveryQuery => "SELECT name AS table_name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
 }

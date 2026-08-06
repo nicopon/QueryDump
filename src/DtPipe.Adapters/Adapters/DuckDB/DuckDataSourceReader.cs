@@ -40,12 +40,14 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 	[GeneratedRegex(@"^\s*(\w+)", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
 	private static partial Regex FirstWordRegex();
 
-	public DuckDataSourceReader(string connectionString, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null)
-		: this(new DuckDBConnection(connectionString), query, options, logger, queryTimeout, resolver)
+	private readonly IMcpSecurityContext? _mcpSecurityContext;
+
+	public DuckDataSourceReader(string connectionString, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null, IMcpSecurityContext? mcpSecurityContext = null)
+		: this(new DuckDBConnection(connectionString), query, options, logger, queryTimeout, resolver, mcpSecurityContext)
 	{
 	}
 
-	public DuckDataSourceReader(DuckDBConnection connection, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null)
+	public DuckDataSourceReader(DuckDBConnection connection, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null, IMcpSecurityContext? mcpSecurityContext = null)
 	{
 		ValidateQueryIsSafeSelect(query);
 
@@ -54,6 +56,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 		_resolver = resolver;
 		_logger = logger ?? NullLogger.Instance;
 		_connection = connection;
+		_mcpSecurityContext = mcpSecurityContext;
 		_command = new DuckDBCommand(query, _connection)
 		{
 			CommandTimeout = queryTimeout
@@ -98,7 +101,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 		using (var limitCmd = _connection.CreateCommand())
 		{
 			var sql = "PRAGMA memory_limit='2GB'; PRAGMA threads=2;";
-			if (DtPipe.Core.Security.McpSecurityContext.IsMcpSession)
+			if (_mcpSecurityContext?.IsMcpSession == true)
 			{
 				sql += " PRAGMA disable_external_access=true;";
 			}

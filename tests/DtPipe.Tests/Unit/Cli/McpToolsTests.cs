@@ -109,13 +109,14 @@ public class McpToolsTests
     [Fact]
     public void McpSecurityContext_StateChange_Works()
     {
-        Assert.False(McpSecurityContext.IsMcpSession);
+        IMcpSecurityContext context = new McpSecurityContext();
+        Assert.False(context.IsMcpSession);
         
-        McpSecurityContext.IsMcpSession = true;
-        Assert.True(McpSecurityContext.IsMcpSession);
+        context.IsMcpSession = true;
+        Assert.True(context.IsMcpSession);
         
-        McpSecurityContext.IsMcpSession = false;
-        Assert.False(McpSecurityContext.IsMcpSession);
+        context.IsMcpSession = false;
+        Assert.False(context.IsMcpSession);
     }
 
     [Fact]

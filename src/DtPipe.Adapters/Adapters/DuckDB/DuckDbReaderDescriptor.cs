@@ -3,9 +3,11 @@ using DtPipe.Core.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+using DtPipe.Core.Dialects;
+
 namespace DtPipe.Adapters.DuckDB;
 
-public class DuckDbReaderDescriptor : IProviderDescriptor<IStreamReader>
+public class DuckDbReaderDescriptor : IProviderDescriptor<IStreamReader>, IHasSqlDialect
 {
     public string ComponentName => DuckDbMetadata.ComponentName;
     public string Category => "Reader Options";
@@ -14,6 +16,8 @@ public class DuckDbReaderDescriptor : IProviderDescriptor<IStreamReader>
     public bool SupportsStdio => DuckDbMetadata.SupportsStdio;
     public bool RequiresQuery => true;
     public bool YieldsColumnarOutput => true;
+
+    public ISqlDialect Dialect => new DuckDbDialect();
 
     public IStreamReader Create(string connectionString, object options, IServiceProvider serviceProvider)
     {

@@ -272,6 +272,7 @@ class Program
 		});
 
 		services.AddSingleton<OptionsRegistry>();
+		services.AddSingleton<DtPipe.Core.Security.IMcpSecurityContext, DtPipe.Core.Security.McpSecurityContext>();
 		services.AddSingleton<Spectre.Console.IAnsiConsole>(sp => Spectre.Console.AnsiConsole.Create(new Spectre.Console.AnsiConsoleSettings { Out = new Spectre.Console.AnsiConsoleOutput(Console.Error) }));
 		services.AddSingleton<JobService>();
 

@@ -1,13 +1,20 @@
+using System.Threading;
+
 namespace DtPipe.Core.Security;
 
 /// <summary>
-/// Context to track if the current execution is within an MCP (Model Context Protocol) session.
-/// Useful for applying tighter security sandboxes.
+/// Default implementation of <see cref="IMcpSecurityContext"/> tracking MCP session security context.
 /// </summary>
-public static class McpSecurityContext
+public class McpSecurityContext : IMcpSecurityContext
 {
+	private static readonly AsyncLocal<bool> _isMcpSession = new();
+
 	/// <summary>
-	/// Gets or sets whether the current session is an MCP session.
+	/// Gets or sets whether the current execution context is an MCP session.
 	/// </summary>
-	public static bool IsMcpSession { get; set; }
+	public bool IsMcpSession
+	{
+		get => _isMcpSession.Value;
+		set => _isMcpSession.Value = value;
+	}
 }
