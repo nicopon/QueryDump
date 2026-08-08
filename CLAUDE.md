@@ -132,6 +132,12 @@ Canonical topologies (Linear, SQL, JOIN, Merge, Fan-out, Diamond, Join→fan-out
 
 The same `--duck-init` option is available on `DuckDataSourceReader` (runs after `PRAGMA memory_limit/threads`) and `DuckDbDataWriter` (runs once after connection open, guarded by `_initSqlApplied`). Each DuckDB component has its own connection — `--duck-init` must be specified separately on each branch that needs it. The helper logic is in `DuckInitSqlHelper` (Adapters) and a private static `RunInitSqlAsync` (Processor).
 
+**DuckDB Hub (`duck+{provider}:`)** connection strings (`duck+mysql:`, `duck+pg:`, `duck+sqlite:`, `duck+s3:`) are parsed by `DuckHubConnectionParser.cs`. They automatically handle `INSTALL`, `LOAD`, and `ATTACH` extension commands, setting the default target schema to the attached alias.
+
+**Database Retry Policy (`--retry`)** uses Polly v8 (`DatabaseRetryPolicy.cs`) to retry transient database connection and timeout errors with exponential backoff and jitter.
+
+**MCP Server & AI Agent**: `dtpipe mcp` exposes tools (`dry-run`, `suggest-pipeline`, `list-cursors`, `execute-yaml-job`, schema inspection) via STDIO. `dtpipe agent` runs an interactive loop with auto-discovered local Ollama or OpenAI models (`OpenAiClient.cs`, `OllamaClient.cs`, `ConversationWindowManager.cs`).
+
 **`--duck-init` value resolution** is handled by `IStringContentResolver` (`DtPipe.Core.Security`). The CLI uses `CliStringContentResolver` (`DtPipe/Cli/Security/`); headless contexts use `DefaultStringContentResolver`. Resolution order: (1) `@file` or `keyring://` replaces the whole value, then (2) `${{ENV_VAR}}` and `${{keyring://alias}}` are substituted inline. Steps are composable. This resolver is also used by `--compute` and `--expand` (via `DefaultStringContentResolver.Instance`, env vars + `@file` only). Full syntax documented in `REFERENCE.md`.
 
 Logical SQL table names come from the branch args (`--from`/`--ref`). Physical channel aliases are resolved by `DagOrchestrator` before the processor is created, via `BranchChannelContext.AliasMap` — processors never need to know about fan-out sub-channel naming (`__fan_N` suffixes).

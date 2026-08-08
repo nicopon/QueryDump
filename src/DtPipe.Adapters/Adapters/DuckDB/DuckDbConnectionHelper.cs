@@ -15,6 +15,18 @@ public static class DuckDbConnectionHelper
 	{
 		if (string.IsNullOrWhiteSpace(connectionString)) return "Data Source=:memory:;";
 
+		if (connectionString.StartsWith("duck+", StringComparison.OrdinalIgnoreCase))
+		{
+			return connectionString;
+		}
+
+		if (connectionString.StartsWith("duck:", StringComparison.OrdinalIgnoreCase))
+		{
+			var path = connectionString.Substring(5).Trim();
+			if (path.StartsWith(":")) path = path.Substring(1);
+			return string.IsNullOrEmpty(path) ? "Data Source=:memory:;" : $"Data Source={path};";
+		}
+
 		if (!connectionString.Contains('=', StringComparison.OrdinalIgnoreCase))
 		{
 			return $"Data Source={connectionString};";

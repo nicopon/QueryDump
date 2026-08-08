@@ -107,23 +107,35 @@ dtpipe \
   --state "state.json"
 ```
 
+### Database Resilience (Retry Policy)
+
+```bash
+# Automatically retry transient database connection and timeout errors with Polly exponential backoff
+dtpipe \
+  -i "pg:Host=localhost;Database=prod" \
+  --query "SELECT * FROM sales" \
+  -o "duck+pg:Host=remote_db;Database=analytics" \
+  --retry
+```
+
 ### Start AI Agent MCP Server (Model Context Protocol)
 
 ```bash
 # Launch native MCP server over STDIO for AI assistants (Cursor, Claude Desktop, Antigravity)
 dtpipe mcp
 ```
+Includes tools: `dry-run`, `suggest-pipeline`, `list-cursors`, `execute-yaml-job`, and schema discovery.
 
 ### Interactive AI Agent Mode
 
 ```bash
-# Launch the interactive AI agent (auto-discovers local Ollama models)
-dtpipe agent
+# Launch the interactive AI agent (supports Ollama & OpenAI backends)
+dtpipe agent --provider openai --api-key "sk-..."
 
 # Or run a one-shot mission
 dtpipe agent "Inspect csv:invoices.csv, anonymize email, and output to jsonl:users.jsonl"
 ```
-> Features local Ollama auto-discovery, Spectre.Console TUI, step-by-step trajectory inspector, Spectre DAG topology rendering, and 1-click YAML pipeline export.
+> Features local Ollama auto-discovery, official OpenAI SDK integration, Spectre.Console TUI, step-by-step trajectory inspector, Spectre DAG topology rendering, and 1-click YAML pipeline export.
 
 ---
 
@@ -136,6 +148,7 @@ Explicit prefixes are recommended to avoid ambiguity.
 | Provider | Input | Output | Prefix |
 |:---|:---:|:---:|:---|
 | **DuckDB** | ✅ | ✅ | `duck:` |
+| **DuckDB Hub** | ✅ | ✅ | `duck+{provider}:` (`duck+mysql:`, `duck+pg:`, `duck+sqlite:`, `duck+s3:`) |
 | **SQLite** | ✅ | ✅ | `sqlite:` |
 | **PostgreSQL** | ✅ | ✅ | `pg:` |
 | **Oracle** | ✅ | ✅ | `ora:` |

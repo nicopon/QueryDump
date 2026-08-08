@@ -386,6 +386,25 @@ data with remote sources. The examples below cover S3, Azure Blob, and local Duc
 `--duck-init` value forms: `keyring://alias`, `${{keyring://alias}}`, `${{ENV_VAR}}`,
 `@/path/file.sql` — composable, full syntax in [REFERENCE.md](./REFERENCE.md#duckdb-options).
 
+### DuckDB Hub connections (`duck+{provider}:`)
+
+DtPipe supports native DuckDB Hub connections using the `duck+{provider}:` prefix. This transparently handles loading the extension (`mysql`, `postgres`, `sqlite`, `httpfs`) and running the appropriate `ATTACH` command.
+
+```bash
+# Read from a MySQL database via DuckDB Hub
+dtpipe \
+  -i "duck+mysql:Host=localhost;Database=mydb;User=root;" \
+  --query "SELECT * FROM mydb.users" \
+  -o users.parquet
+
+# Export directly into an attached SQLite file using DuckDB Hub
+dtpipe \
+  -i users.csv \
+  -o "duck+sqlite:data/prod.db" \
+  --table "users" \
+  --strategy Recreate
+```
+
 ### Recommended: credentials in the OS keyring
 
 ```bash

@@ -412,7 +412,11 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         var appenderTarget = _stagingTable ?? _unquotedTable!;
         var appenderSchema = _stagingTable != null ? null : (_unquotedSchema == "main" ? null : _unquotedSchema);
 
-        if (appenderSchema != null)
+        if (_stagingTable == null && _unquotedSchema != null && _unquotedSchema != "main")
+        {
+            _appender = ((DuckDBConnection)_connection!).CreateAppender(_unquotedSchema, null, appenderTarget);
+        }
+        else if (appenderSchema != null)
         {
             _appender = ((DuckDBConnection)_connection!).CreateAppender(appenderSchema, appenderTarget);
         }
@@ -471,28 +475,27 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         var pkCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         using var cmd = _connection!.CreateCommand();
-        var pragmaTarget = schemaName == "main" ? tableName : $"{schemaName}.{tableName}";
-        cmd.CommandText = $"PRAGMA table_info('{pragmaTarget}')";
+        cmd.CommandText = $"SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE LOWER(table_schema) = LOWER('{schemaName}') AND LOWER(table_name) = LOWER('{tableName}') ORDER BY ordinal_position";
 
         if (cmd is System.Data.Common.DbCommand dbCmd)
         {
             using var reader = await dbCmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
             {
-                var name = reader.GetString(1);
-                var type = reader.GetString(2);
-                var notNull = reader.GetBoolean(3);
-                var isPk = reader.GetBoolean(5);
-                if (isPk) pkCols.Add(name);
+                var name = reader.GetString(0);
+                var type = reader.GetString(1);
+                var isNullableStr = reader.GetString(2);
+                bool notNull = string.Equals(isNullableStr, "NO", StringComparison.OrdinalIgnoreCase);
 
-                columns.Add(new TargetColumnInfo(name, type.ToUpperInvariant(), _typeMapper.MapFromProviderType(type), !notNull, isPk, false, null));
+                columns.Add(new TargetColumnInfo(name, type.ToUpperInvariant(), _typeMapper.MapFromProviderType(type), !notNull, false, false, null));
             }
         }
 
+        var quotedTarget = BuildQuotedTableName(schemaName, tableName);
         long? rowCount = null;
         try
         {
-            cmd.CommandText = $"SELECT COUNT(*) FROM {pragmaTarget}";
+            cmd.CommandText = $"SELECT COUNT(*) FROM {quotedTarget}";
             if (cmd is System.Data.Common.DbCommand dbCmdRow)
             {
                 var res = await dbCmdRow.ExecuteScalarAsync(ct);

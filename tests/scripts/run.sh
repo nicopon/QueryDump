@@ -133,6 +133,7 @@ if [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then
     run_script "Incremental (Cursor)" "$SCRIPT_DIR/validate_cursor.sh"
     run_script "Keyring"        "$SCRIPT_DIR/validate_keyring.sh"
     run_script "XML Massive"    "$SCRIPT_DIR/validate_xml.sh"
+    run_script "DuckDB Hub"     "$SCRIPT_DIR/validate_duck_hub.sh"
 fi
 
 if [ $MODE_DAG -eq 1 ] || [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then

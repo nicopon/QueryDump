@@ -22,6 +22,7 @@ for MODEL in "${MODELS[@]}"; do
     "$SCRIPT_DIR/test-mission-join.sh" "$MODEL" || FAILED=true
     "$SCRIPT_DIR/test-mission-aggregation.sh" "$MODEL" || FAILED=true
     "$SCRIPT_DIR/test-mission-yaml.sh" "$MODEL" || FAILED=true
+    "$SCRIPT_DIR/test-mission-mcp-enrichment.sh" "$MODEL" || FAILED=true
 
     echo "🔌 Unloading model: $MODEL from Ollama memory..."
     curl -s -X POST http://localhost:11434/api/generate -d "{\"model\": \"$MODEL\", \"keep_alive\": 0}" > /dev/null
