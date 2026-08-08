@@ -14,6 +14,7 @@ using DtPipe.Core.Pipelines;
 using DtPipe.Configuration;
 using Apache.Arrow.Types;
 using DtPipe.Services;
+using DtPipe.Core.Infrastructure.Retry;
 
 namespace DtPipe;
 
@@ -87,319 +88,326 @@ public class ExportService
 			_observer.ShowConnectionStatus(false, null);
 		}
 
-		// Read schema persistence settings from reader options (ISchemaPersistenceAware — text readers only).
-		var readerSchemaPersist = registry.Get(readerFactory.OptionsType) as DtPipe.Core.Options.ISchemaPersistenceAware;
+		var retryPolicy = options.Retry 
+			? new DatabaseRetryPolicy(3, TimeSpan.FromSeconds(1)) 
+			: (IRetryPolicy)NoRetryPolicy.Instance;
 
-		// Load full Arrow schema from .dtschema file and inject into reader options (skips inference).
-		var schemaLoadName = readerSchemaPersist?.SchemaLoad;
-		if (!string.IsNullOrEmpty(schemaLoadName))
+		await retryPolicy.ExecuteAsync(async retryCt =>
 		{
-			var loadedSchema = SchemaStore.Load(schemaLoadName);
-			if (loadedSchema != null)
-				InjectSchema(readerFactory, registry, ArrowSchemaSerializer.SerializeCompact(loadedSchema));
-			else
-				_logger.LogWarning("Schema file '{Name}' not found — falling back to inference.", schemaLoadName);
-		}
+			// Read schema persistence settings from reader options (ISchemaPersistenceAware — text readers only).
+			var readerSchemaPersist = registry.Get(readerFactory.OptionsType) as DtPipe.Core.Options.ISchemaPersistenceAware;
 
-		await using var reader = readerFactory.Create(registry);
-		await reader.OpenAsync(ct);
-
-		// Persist the full Arrow schema to a .dtschema file for future runs.
-		var schemaSaveName = readerSchemaPersist?.SchemaSave;
-		if (!string.IsNullOrEmpty(schemaSaveName) && providerName != "stream-transformer")
-		{
-			var schema = (reader as IColumnarStreamReader)?.Schema;
-			if (schema is { FieldsList: { Count: > 0 } })
+			// Load full Arrow schema from .dtschema file and inject into reader options (skips inference).
+			var schemaLoadName = readerSchemaPersist?.SchemaLoad;
+			if (!string.IsNullOrEmpty(schemaLoadName))
 			{
-				SchemaStore.Save(schemaSaveName, providerName, schema);
-				_logger.LogInformation("Schema saved: {Name}.dtschema ({Count} fields)", schemaSaveName, schema.FieldsList.Count);
+				var loadedSchema = SchemaStore.Load(schemaLoadName);
+				if (loadedSchema != null)
+					InjectSchema(readerFactory, registry, ArrowSchemaSerializer.SerializeCompact(loadedSchema));
+				else
+					_logger.LogWarning("Schema file '{Name}' not found — falling back to inference.", schemaLoadName);
 			}
-			else if (reader.Columns is { Count: > 0 })
+
+			await using var reader = readerFactory.Create(registry);
+			await reader.OpenAsync(retryCt);
+
+			// Persist the full Arrow schema to a .dtschema file for future runs.
+			var schemaSaveName = readerSchemaPersist?.SchemaSave;
+			if (!string.IsNullOrEmpty(schemaSaveName) && providerName != "stream-transformer")
 			{
-				// Row-based reader (CSV): build an Arrow schema from PipeColumnInfo and save.
-				var fields = reader.Columns
-					.Select(c => ArrowTypeMapper.GetField(c.Name, c.ClrType, c.IsNullable))
-					.ToList();
-				var rowSchema = new Apache.Arrow.Schema(fields, null);
-				SchemaStore.Save(schemaSaveName, providerName, rowSchema);
-				_logger.LogInformation("Schema saved: {Name}.dtschema ({Count} fields)", schemaSaveName, fields.Count);
-			}
-		}
-
-		// Show auto-applied types panel when --auto-column-types was set
-		if (!silenceInternal && reader is IColumnTypeInferenceCapable autoCapable
-		    && autoCapable.AutoAppliedTypes?.Count > 0)
-			_observer.ShowColumnTypeInferenceSuggestion(autoCapable.AutoAppliedTypes, 100, applied: true);
-
-		if (showStatusMessages && !silenceInternal)
-			_observer.ShowConnectionStatus(true, reader.Columns?.Count);
-
-		if (reader.Columns is null || reader.Columns.Count == 0)
-		{
-			if (!silenceInternal) _observer.LogWarning("No columns returned by query.");
-			return;
-		}
-
-		// Initialize pipeline to define Target Schema
-		var currentSchema = reader.Columns ?? System.Array.Empty<PipeColumnInfo>();
-		var transformerSchemas = new Dictionary<IDataTransformer, (IReadOnlyList<PipeColumnInfo> In, IReadOnlyList<PipeColumnInfo> Out)>();
-
-		if (pipeline.Count > 0)
-		{
-			var transformerNames = pipeline.Select(t => t.GetType().Name.Replace("DataTransformer", ""));
-			if (showStatusMessages && !silenceInternal) _observer.ShowPipeline(transformerNames);
-
-			foreach (var t in pipeline)
-			{
-				var inputSchema = currentSchema;
-				currentSchema = await t.InitializeAsync(currentSchema, ct);
-				transformerSchemas[t] = (inputSchema, currentSchema);
-			}
-		}
-
-		// Now that transformers are initialized, we can segment correctly based on IsColumnar
-		var segments = PipelineSegmenter.GetSegments(pipeline);
-		if (pipeline.Count > 0)
-		{
-			// Fill segment schemas for bridging
-			foreach (var segment in segments)
-			{
-				segment.InputSchema = transformerSchemas.Count > 0 && segment.Transformers.Count > 0
-					? transformerSchemas[segment.Transformers[0]].In
-					: reader.Columns ?? System.Array.Empty<PipeColumnInfo>();
-
-				segment.OutputSchema = transformerSchemas.Count > 0 && segment.Transformers.Count > 0
-					? transformerSchemas[segment.Transformers[^1]].Out
-					: currentSchema;
-			}
-		}
-
-		// Update DAG registry if we are a branch
-		if (!string.IsNullOrEmpty(alias) && _channelRegistry != null && _channelRegistry.ContainsChannel(alias))
-		{
-			// Register the Arrow channel once schema known
-			if (!string.IsNullOrEmpty(alias))
-			{
-				Schema? sourceSchema = (reader as IStreamTransformer)?.Schema ?? (reader as IColumnarStreamReader)?.Schema;
-				if (sourceSchema != null)
+				var schema = (reader as IColumnarStreamReader)?.Schema;
+				if (schema is { FieldsList: { Count: > 0 } })
 				{
-					var evolvedSchema = EvolveSchema(sourceSchema, currentSchema);
-					_channelRegistry.UpdateArrowChannelSchema(alias, evolvedSchema);
+					SchemaStore.Save(schemaSaveName, providerName, schema);
+					_logger.LogInformation("Schema saved: {Name}.dtschema ({Count} fields)", schemaSaveName, schema.FieldsList.Count);
+				}
+				else if (reader.Columns is { Count: > 0 })
+				{
+					// Row-based reader (CSV): build an Arrow schema from PipeColumnInfo and save.
+					var fields = reader.Columns
+						.Select(c => ArrowTypeMapper.GetField(c.Name, c.ClrType, c.IsNullable))
+						.ToList();
+					var rowSchema = new Apache.Arrow.Schema(fields, null);
+					SchemaStore.Save(schemaSaveName, providerName, rowSchema);
+					_logger.LogInformation("Schema saved: {Name}.dtschema ({Count} fields)", schemaSaveName, fields.Count);
 				}
 			}
 
-			// 2. Update row-based columns
-			_channelRegistry.UpdateChannelColumns(alias, currentSchema ?? System.Array.Empty<PipeColumnInfo>());
-		}
+			// Show auto-applied types panel when --auto-column-types was set
+			if (!silenceInternal && reader is IColumnTypeInferenceCapable autoCapable
+			    && autoCapable.AutoAppliedTypes?.Count > 0)
+				_observer.ShowColumnTypeInferenceSuggestion(autoCapable.AutoAppliedTypes, 100, applied: true);
 
-		// Column type inference advisory (dry-run only, for text sources like CSV)
-		if (options.DryRunCount > 0 && reader is IColumnTypeInferenceCapable inferCapable)
-		{
-			try
+			if (showStatusMessages && !silenceInternal)
+				_observer.ShowConnectionStatus(true, reader.Columns?.Count);
+
+			if (reader.Columns is null || reader.Columns.Count == 0)
 			{
-				var sampleCount = Math.Max(options.DryRunCount, 100);
-				var suggested = await inferCapable.InferColumnTypesAsync(sampleCount, ct);
-				if (suggested.Count > 0 && !silenceInternal)
-					_observer.ShowColumnTypeInferenceSuggestion(suggested, sampleCount);
+				if (!silenceInternal) _observer.LogWarning("No columns returned by query.");
+				return;
 			}
-			catch { /* inference is best-effort, never fail the dry-run */ }
-		}
 
-		// Dry-run mode
-		if (options.DryRunCount > 0)
-		{
-			IDataWriter? writerForInspection = null;
-			if (!string.IsNullOrEmpty(outputPath))
+			// Initialize pipeline to define Target Schema
+			var currentSchema = reader.Columns ?? System.Array.Empty<PipeColumnInfo>();
+			var transformerSchemas = new Dictionary<IDataTransformer, (IReadOnlyList<PipeColumnInfo> In, IReadOnlyList<PipeColumnInfo> Out)>();
+
+			if (pipeline.Count > 0)
+			{
+				var transformerNames = pipeline.Select(t => t.GetType().Name.Replace("DataTransformer", ""));
+				if (showStatusMessages && !silenceInternal) _observer.ShowPipeline(transformerNames);
+
+				foreach (var t in pipeline)
+				{
+					var inputSchema = currentSchema;
+					currentSchema = await t.InitializeAsync(currentSchema, retryCt);
+					transformerSchemas[t] = (inputSchema, currentSchema);
+				}
+			}
+
+			// Now that transformers are initialized, we can segment correctly based on IsColumnar
+			var segments = PipelineSegmenter.GetSegments(pipeline);
+			if (pipeline.Count > 0)
+			{
+				// Fill segment schemas for bridging
+				foreach (var segment in segments)
+				{
+					segment.InputSchema = transformerSchemas.Count > 0 && segment.Transformers.Count > 0
+						? transformerSchemas[segment.Transformers[0]].In
+						: reader.Columns ?? System.Array.Empty<PipeColumnInfo>();
+
+					segment.OutputSchema = transformerSchemas.Count > 0 && segment.Transformers.Count > 0
+						? transformerSchemas[segment.Transformers[^1]].Out
+						: currentSchema;
+				}
+			}
+
+			// Update DAG registry if we are a branch
+			if (!string.IsNullOrEmpty(alias) && _channelRegistry != null && _channelRegistry.ContainsChannel(alias))
+			{
+				// Register the Arrow channel once schema known
+				if (!string.IsNullOrEmpty(alias))
+				{
+					Schema? sourceSchema = (reader as IStreamTransformer)?.Schema ?? (reader as IColumnarStreamReader)?.Schema;
+					if (sourceSchema != null)
+					{
+						var evolvedSchema = EvolveSchema(sourceSchema, currentSchema);
+						_channelRegistry.UpdateArrowChannelSchema(alias, evolvedSchema);
+					}
+				}
+
+				// 2. Update row-based columns
+				_channelRegistry.UpdateChannelColumns(alias, currentSchema ?? System.Array.Empty<PipeColumnInfo>());
+			}
+
+			// Column type inference advisory (dry-run only, for text sources like CSV)
+			if (options.DryRunCount > 0 && reader is IColumnTypeInferenceCapable inferCapable)
 			{
 				try
 				{
-					if (!string.IsNullOrEmpty(alias) && _channelRegistry != null && _channelRegistry.ContainsChannel(alias))
-					{
-						// Update registry with real schema and column info
-						if (currentSchema != null)
-						{
-							_channelRegistry.UpdateChannelColumns(alias, currentSchema);
-						}
-						
-						if (reader is IColumnarStreamReader cr && cr.Schema != null)
-						{
-							_channelRegistry.UpdateArrowChannelSchema(alias, cr.Schema);
-						}
-					}
-					writerForInspection = writerFactory.Create(registry);
+					var sampleCount = Math.Max(options.DryRunCount, 100);
+					var suggested = await inferCapable.InferColumnTypesAsync(sampleCount, retryCt);
+					if (suggested.Count > 0 && !silenceInternal)
+						_observer.ShowColumnTypeInferenceSuggestion(suggested, sampleCount);
 				}
-				catch (Exception ex)
+				catch { /* inference is best-effort, never fail the dry-run */ }
+			}
+
+			// Dry-run mode
+			if (options.DryRunCount > 0)
+			{
+				IDataWriter? writerForInspection = null;
+				if (!string.IsNullOrEmpty(outputPath))
 				{
-					_observer.LogWarning($"Could not create writer for schema inspection during dry-run: {ex.Message}. Target schema compatibility will not be checked.");
+					try
+					{
+						if (!string.IsNullOrEmpty(alias) && _channelRegistry != null && _channelRegistry.ContainsChannel(alias))
+						{
+							// Update registry with real schema and column info
+							if (currentSchema != null)
+							{
+								_channelRegistry.UpdateChannelColumns(alias, currentSchema);
+							}
+							
+							if (reader is IColumnarStreamReader cr && cr.Schema != null)
+							{
+								_channelRegistry.UpdateArrowChannelSchema(alias, cr.Schema);
+							}
+						}
+						writerForInspection = writerFactory.Create(registry);
+					}
+					catch (Exception ex)
+					{
+						_observer.LogWarning($"Could not create writer for schema inspection during dry-run: {ex.Message}. Target schema compatibility will not be checked.");
+					}
+				}
+
+				var executionPlan = BuildExecutionPlan(providerName, reader, writerFactory.ComponentName, writerForInspection, pipeline, segments);
+				bool isInteractive = string.IsNullOrEmpty(options.DryRunInteractiveBranch) || string.Equals(alias, options.DryRunInteractiveBranch, StringComparison.OrdinalIgnoreCase);
+				await _observer.RunDryRunAsync(reader, pipeline, options.DryRunCount, writerForInspection, transformerSchemas, executionPlan, isInteractive, retryCt);
+
+				if (writerForInspection != null)
+				{
+					await writerForInspection.DisposeAsync();
+				}
+				return;
+			}
+
+			string writerName = writerFactory.ComponentName;
+			if (showStatusMessages && !silenceInternal) _observer.ShowTarget(writerName, outputPath);
+
+			var exportableSchema = currentSchema ?? throw new InvalidOperationException("Exportable schema is null.");
+			await using var writer = writerFactory.Create(registry);
+
+			// Cursor tracking: wrap the writer if --cursor is specified
+			DtPipe.Core.Cursor.ICursorTracker? cursorTracker = null;
+			IDataWriter effectiveWriter = writer;
+			if (!string.IsNullOrEmpty(options.Cursor) && !string.IsNullOrEmpty(options.State))
+			{
+				if (writer is IColumnarDataWriter columnar)
+				{
+					var colDecorator = new DtPipe.Core.Cursor.CursorTrackingColumnarDecorator(columnar, options.Cursor);
+					cursorTracker = colDecorator;
+					effectiveWriter = colDecorator;
+				}
+				else
+				{
+					var rowDecorator = new DtPipe.Core.Cursor.CursorTrackingRowDecorator(writer, options.Cursor);
+					cursorTracker = rowDecorator;
+					effectiveWriter = rowDecorator;
+				}
+
+				var currentCursor = DtPipe.Core.Cursor.CursorStateStore.Read(options.State);
+				if (currentCursor != null && !silenceInternal)
+				{
+					_observer.LogMessage($"[grey]   Cursor loaded: {currentCursor.Column} = {currentCursor.Value} (from {options.State})[/]");
+				}
+				else if (!silenceInternal)
+				{
+					_observer.LogMessage($"[grey]   No active cursor state found at {options.State}[/]");
 				}
 			}
 
-			var executionPlan = BuildExecutionPlan(providerName, reader, writerFactory.ComponentName, writerForInspection, pipeline, segments);
-			bool isInteractive = string.IsNullOrEmpty(options.DryRunInteractiveBranch) || string.Equals(alias, options.DryRunInteractiveBranch, StringComparison.OrdinalIgnoreCase);
-			await _observer.RunDryRunAsync(reader, pipeline, options.DryRunCount, writerForInspection, transformerSchemas, executionPlan, isInteractive, ct);
+			// Read schema validation and hook settings from writer options
+			var writerSchemaSettings = registry.Get(writerFactory.OptionsType) as DtPipe.Core.Options.ISchemaValidationAware;
+			var writerHooks = registry.Get(writerFactory.OptionsType) as DtPipe.Core.Options.IHookAware;
 
-			if (writerForInspection != null)
+			// Schema Validation
+			await _schemaValidator.ValidateAndMigrateAsync(writer, exportableSchema, writerSchemaSettings, retryCt);
+
+			// Execute Pre-Hook (from writer options)
+			await _hookExecutor.ExecuteAsync(writer, "Pre-Hook", writerHooks?.PreExec, retryCt);
+
+			await effectiveWriter.InitializeAsync(exportableSchema, retryCt);
+
+			// Use Observer to create Progress
+			var transformerModes = segments
+				.SelectMany(s => s.Transformers.Select(t => (
+					Name: t.GetType().Name.Replace("DataTransformer", ""),
+					IsColumnar: s.IsColumnar)))
+				.ToList();
+			using var progress = (silenceInternal && resultsCollector == null)
+				? (IExportProgress)new DtPipe.Feedback.NullExportProgress()
+				: _observer.CreateProgressReporter(
+					!options.NoStats && !silenceInternal,
+					transformerModes,
+					suppressLiveTui: outputIsStdio || silenceInternal,
+					branchName: alias,
+					suppressCompletionOutput: resultsCollector != null);
+
+			using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(retryCt);
+			var effectiveCt = linkedCts.Token;
+
+			// Propagate InputSchemaArrow for each segment so the row→columnar bridge can preserve complex
+			// Arrow type metadata (Timestamp timezone, Decimal precision/scale, arrow.uuid annotations).
+			// Each segment derives its Arrow schema from its own InputSchema (PipeColumnInfo) via
+			// ArrowSchemaFactory, which is authoritative after the InitializeAsync chain. The reader's
+			// native schema is merged in for field-level metadata enrichment only — never to override a
+			// column type that a transformer has mutated (e.g. Overwrite: Int64 → StringType).
+			Schema? readerArrowSchema = (reader as IStreamTransformer)?.Schema ?? (reader as IColumnarStreamReader)?.Schema;
+			foreach (var segment in segments)
 			{
-				await writerForInspection.DisposeAsync();
+				segment.InputSchemaArrow = readerArrowSchema != null
+					? ArrowSchemaFactory.CreateEnriched(segment.InputSchema, readerArrowSchema)
+					: ArrowSchemaFactory.Create(segment.InputSchema);
 			}
-			return;
-		}
-
-		string writerName = writerFactory.ComponentName;
-		if (showStatusMessages && !silenceInternal) _observer.ShowTarget(writerName, outputPath);
-
-		var exportableSchema = currentSchema ?? throw new InvalidOperationException("Exportable schema is null.");
-		await using var writer = writerFactory.Create(registry);
-
-		// Cursor tracking: wrap the writer if --cursor is specified
-		DtPipe.Core.Cursor.ICursorTracker? cursorTracker = null;
-		IDataWriter effectiveWriter = writer;
-		if (!string.IsNullOrEmpty(options.Cursor) && !string.IsNullOrEmpty(options.State))
-		{
-			if (writer is IColumnarDataWriter columnar)
-			{
-				var colDecorator = new DtPipe.Core.Cursor.CursorTrackingColumnarDecorator(columnar, options.Cursor);
-				cursorTracker = colDecorator;
-				effectiveWriter = colDecorator;
-			}
-			else
-			{
-				var rowDecorator = new DtPipe.Core.Cursor.CursorTrackingRowDecorator(writer, options.Cursor);
-				cursorTracker = rowDecorator;
-				effectiveWriter = rowDecorator;
-			}
-
-			var currentCursor = DtPipe.Core.Cursor.CursorStateStore.Read(options.State);
-			if (currentCursor != null && !silenceInternal)
-			{
-				_observer.LogMessage($"[grey]   Cursor loaded: {currentCursor.Column} = {currentCursor.Value} (from {options.State})[/]");
-			}
-			else if (!silenceInternal)
-			{
-				_observer.LogMessage($"[grey]   No active cursor state found at {options.State}[/]");
-			}
-		}
-
-		// Read schema validation and hook settings from writer options
-		var writerSchemaSettings = registry.Get(writerFactory.OptionsType) as DtPipe.Core.Options.ISchemaValidationAware;
-		var writerHooks = registry.Get(writerFactory.OptionsType) as DtPipe.Core.Options.IHookAware;
-
-		// Schema Validation
-		await _schemaValidator.ValidateAndMigrateAsync(writer, exportableSchema, writerSchemaSettings, ct);
-
-		// Execute Pre-Hook (from writer options)
-		await _hookExecutor.ExecuteAsync(writer, "Pre-Hook", writerHooks?.PreExec, ct);
-
-		await effectiveWriter.InitializeAsync(exportableSchema, ct);
-
-		// Use Observer to create Progress
-		var transformerModes = segments
-			.SelectMany(s => s.Transformers.Select(t => (
-				Name: t.GetType().Name.Replace("DataTransformer", ""),
-				IsColumnar: s.IsColumnar)))
-			.ToList();
-		using var progress = (silenceInternal && resultsCollector == null)
-			? (IExportProgress)new DtPipe.Feedback.NullExportProgress()
-			: _observer.CreateProgressReporter(
-				!options.NoStats && !silenceInternal,
-				transformerModes,
-				suppressLiveTui: outputIsStdio || silenceInternal,
-				branchName: alias,
-				suppressCompletionOutput: resultsCollector != null);
-
-		using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-		var effectiveCt = linkedCts.Token;
-
-		// Propagate InputSchemaArrow for each segment so the row→columnar bridge can preserve complex
-		// Arrow type metadata (Timestamp timezone, Decimal precision/scale, arrow.uuid annotations).
-		// Each segment derives its Arrow schema from its own InputSchema (PipeColumnInfo) via
-		// ArrowSchemaFactory, which is authoritative after the InitializeAsync chain. The reader's
-		// native schema is merged in for field-level metadata enrichment only — never to override a
-		// column type that a transformer has mutated (e.g. Overwrite: Int64 → StringType).
-		Schema? readerArrowSchema = (reader as IStreamTransformer)?.Schema ?? (reader as IColumnarStreamReader)?.Schema;
-		foreach (var segment in segments)
-		{
-			segment.InputSchemaArrow = readerArrowSchema != null
-				? ArrowSchemaFactory.CreateEnriched(segment.InputSchema, readerArrowSchema)
-				: ArrowSchemaFactory.Create(segment.InputSchema);
-		}
-
-		try
-		{
-			var startTime = DateTime.UtcNow;
-
-			// Execute Unified Pipeline
-			await _pipelineExecutor.ExecuteSegmentedPipelineAsync(reader, effectiveWriter, segments, exportableSchema, options, progress, linkedCts, effectiveCt);
-
-			await writer.CompleteAsync(ct);
-
-			// Persist cursor state after successful CompleteAsync
-			if (cursorTracker?.TrackedMaxValue != null && !string.IsNullOrEmpty(options.State))
-			{
-				var runMeta = new DtPipe.Core.Cursor.CursorRunMetadata(
-					StartedAt: startTime,
-					CompletedAt: DateTime.UtcNow,
-					RowsTransferred: progress.GetMetrics().WriteCount,
-					Status: "success");
-				DtPipe.Core.Cursor.CursorStateStore.Save(options.State, cursorTracker.TrackedMaxValue, runMeta);
-				if (!silenceInternal)
-					_observer.LogMessage($"[grey]   Cursor saved: {options.Cursor} = {cursorTracker.TrackedMaxValue.Value} → {options.State}[/]");
-			}
-
-			progress.Complete();
-
-			resultsCollector?.Enqueue(new DtPipe.Feedback.BranchSummary(
-				alias,
-				progress.GetMetrics(),
-				reader is DtPipe.Core.Abstractions.IColumnarStreamReader,
-				transformerModes));
-
-			var elapsed = DateTime.UtcNow - startTime;
-			var rowsPerSecond = elapsed.TotalSeconds > 0 ? progress.GetMetrics().ReadCount / elapsed.TotalSeconds : 0;
-			if (_logger.IsEnabled(LogLevel.Information))
-				_logger.LogInformation("Export completed in {Elapsed}. Written {Rows} rows ({Speed:F1} rows/s).", elapsed, progress.GetMetrics().WriteCount, rowsPerSecond);
-
-			// --- POST-EXEC HOOK ---
-			await _hookExecutor.ExecuteAsync(writer, "Post-Hook", writerHooks?.PostExec, ct);
-
-
-			await _metricsService.SaveMetricsAsync(progress, options.MetricsPath, ct);
-		}
-		catch (OperationCanceledException)
-		{
-			// Graceful termination for orphaned producers or cancellation
-			progress.Complete();
-			if (!silenceInternal) _observer.LogMessage($"[grey]✓ Export stopped (no more consumers).[/]");
-		}
-		catch (Exception ex)
-		{
-			_logger.LogError(ex, "Export failed");
-			_observer.LogError(ex);
 
 			try
 			{
-				await _hookExecutor.ExecuteAsync(writer, "On-Error Hook", writerHooks?.OnErrorExec, CancellationToken.None, TimeSpan.FromSeconds(HookTimeoutSeconds));
-			}
-			catch (Exception hookEx)
-			{
-				_logger.LogError(hookEx, "On-Error Hook failed");
-				_observer.LogError(hookEx);
-			}
+				var startTime = DateTime.UtcNow;
 
-			throw;
-		}
-		finally
-		{
-			try
-			{
-				await _hookExecutor.ExecuteAsync(writer, "Finally Hook", writerHooks?.FinallyExec, CancellationToken.None, TimeSpan.FromSeconds(HookTimeoutSeconds));
+				// Execute Unified Pipeline
+				await _pipelineExecutor.ExecuteSegmentedPipelineAsync(reader, effectiveWriter, segments, exportableSchema, options, progress, linkedCts, effectiveCt);
+
+				await writer.CompleteAsync(retryCt);
+
+				// Persist cursor state after successful CompleteAsync
+				if (cursorTracker?.TrackedMaxValue != null && !string.IsNullOrEmpty(options.State))
+				{
+					var runMeta = new DtPipe.Core.Cursor.CursorRunMetadata(
+						StartedAt: startTime,
+						CompletedAt: DateTime.UtcNow,
+						RowsTransferred: progress.GetMetrics().WriteCount,
+						Status: "success");
+					DtPipe.Core.Cursor.CursorStateStore.Save(options.State, cursorTracker.TrackedMaxValue, runMeta);
+					if (!silenceInternal)
+						_observer.LogMessage($"[grey]   Cursor saved: {options.Cursor} = {cursorTracker.TrackedMaxValue.Value} → {options.State}[/]");
+				}
+
+				progress.Complete();
+
+				resultsCollector?.Enqueue(new DtPipe.Feedback.BranchSummary(
+					alias,
+					progress.GetMetrics(),
+					reader is DtPipe.Core.Abstractions.IColumnarStreamReader,
+					transformerModes));
+
+				var elapsed = DateTime.UtcNow - startTime;
+				var rowsPerSecond = elapsed.TotalSeconds > 0 ? progress.GetMetrics().ReadCount / elapsed.TotalSeconds : 0;
+				if (_logger.IsEnabled(LogLevel.Information))
+					_logger.LogInformation("Export completed in {Elapsed}. Written {Rows} rows ({Speed:F1} rows/s).", elapsed, progress.GetMetrics().WriteCount, rowsPerSecond);
+
+				// --- POST-EXEC HOOK ---
+				await _hookExecutor.ExecuteAsync(writer, "Post-Hook", writerHooks?.PostExec, retryCt);
+
+
+				await _metricsService.SaveMetricsAsync(progress, options.MetricsPath, retryCt);
 			}
-			catch (Exception hookEx)
+			catch (OperationCanceledException)
 			{
-				_logger.LogError(hookEx, "Finally Hook failed");
-				_observer.LogError(hookEx);
+				// Graceful termination for orphaned producers or cancellation
+				progress.Complete();
+				if (!silenceInternal) _observer.LogMessage($"[grey]✓ Export stopped (no more consumers).[/]");
 			}
-		}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Export failed");
+				_observer.LogError(ex);
+
+				try
+				{
+					await _hookExecutor.ExecuteAsync(writer, "On-Error Hook", writerHooks?.OnErrorExec, CancellationToken.None, TimeSpan.FromSeconds(HookTimeoutSeconds));
+				}
+				catch (Exception hookEx)
+				{
+					_logger.LogError(hookEx, "On-Error Hook failed");
+					_observer.LogError(hookEx);
+				}
+
+				throw;
+			}
+			finally
+			{
+				try
+				{
+					await _hookExecutor.ExecuteAsync(writer, "Finally Hook", writerHooks?.FinallyExec, CancellationToken.None, TimeSpan.FromSeconds(HookTimeoutSeconds));
+				}
+				catch (Exception hookEx)
+				{
+					_logger.LogError(hookEx, "Finally Hook failed");
+					_observer.LogError(hookEx);
+				}
+			}
+		}, ct);
 	}
 
 	/// <summary>
