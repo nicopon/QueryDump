@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 namespace DtPipe.Cli.Agent;
 
 /// <summary>
-/// Abstraction pour la fourniture de tools à l'agent.
-/// Permet de découpler l'agent de DtPipeMcpTools.
+/// Abstraction for providing tools to the agent.
+/// Allows decoupling the agent execution loop from DtPipeMcpTools.
 /// </summary>
 public interface IAgentToolProvider
 {

@@ -3,22 +3,22 @@ using System.Text.Json;
 
 namespace DtPipe.Cli.Agent;
 
-// Message dans la conversation (rôle : system, user, assistant, tool)
+// Message in the conversation (role: system, user, assistant, tool)
 public record ChatMessage(
     string Role,
     string? Content,
-    string? Name = null, // nom du tool (si Role == "tool")
+    string? Name = null, // tool name (if Role == "tool")
     List<ToolCall>? ToolCalls = null,
-    string? ToolCallId = null // ID du tool call (requis si Role == "tool" pour OpenAI)
+    string? ToolCallId = null // tool call ID (required if Role == "tool" for OpenAI)
 );
 
-// Appel d'outil dans la réponse du LLM
+// Tool call in the LLM response
 public record ToolCall(string Id, string Name, JsonElement Arguments);
 
-// Définition d'un outil pour le LLM
+// Tool definition for the LLM
 public record ToolDefinition(string Name, string Description, JsonElement ParametersSchema);
 
-// Réponse du LLM
+// LLM response
 public record LlmResponse(
     ChatMessage Message,
     bool Done,

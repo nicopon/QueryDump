@@ -21,8 +21,8 @@ public class ConversationWindowManager
     }
 
     /// <summary>
-    /// Si la liste dépasse maxMessages, résume les messages intermédiaires
-    /// en un seul message "assistant" synthétique et conserve system + récents.
+    /// If the message count exceeds maxMessages, summarizes middle messages
+    /// into a single synthetic "assistant" message, keeping system + recent messages.
     /// </summary>
     public List<ChatMessage> Compact(List<ChatMessage> messages)
     {
@@ -35,7 +35,7 @@ public class ConversationWindowManager
             .Take(messages.Count - _keepSystemMessages - _keepRecentMessages)
             .ToList();
 
-        // Résumer les messages intermédiaires
+        // Summarize intermediate messages
         var toolCalls = middleMessages
             .Where(m => m.ToolCalls != null)
             .SelectMany(m => m.ToolCalls!)

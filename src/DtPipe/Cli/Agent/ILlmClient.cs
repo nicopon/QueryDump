@@ -6,13 +6,13 @@ namespace DtPipe.Cli.Agent;
 
 public interface ILlmClient
 {
-    /// <summary>Nom du provider (ex: "ollama", "openai")</summary>
+    /// <summary>Provider name (e.g., "ollama", "openai")</summary>
     string ProviderName { get; }
 
-    /// <summary>Liste les modèles disponibles sur ce backend.</summary>
+    /// <summary>Lists available models on this backend.</summary>
     Task<List<string>> ListModelsAsync(string baseUrl, CancellationToken ct = default);
 
-    /// <summary>Envoie un chat completion avec function calling.</summary>
+    /// <summary>Sends a chat completion request with support for tool calls.</summary>
     Task<LlmResponse> ChatAsync(
         string baseUrl,
         string model,
