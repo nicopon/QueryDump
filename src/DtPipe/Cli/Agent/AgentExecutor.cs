@@ -16,6 +16,7 @@ public class AgentExecutor
     private readonly ILlmClient _llmClient;
     private readonly AgentTui _tui;
     private readonly IAnsiConsole _console;
+    private readonly ConversationWindowManager _windowManager = new();
 
     public AgentTrajectory Trajectory { get; } = new();
     public List<ChatMessage> Messages { get; } = new();
@@ -59,7 +60,8 @@ public class AgentExecutor
                 .SpinnerStyle(Style.Parse("blue bold"))
                 .StartAsync($"Agent thinking (Step {currentStepNum})...", async ctx =>
                 {
-                    response = await _llmClient.ChatAsync(baseUrl, model, Messages, tools, 16384, ct);
+                    var compactedMessages = _windowManager.Compact(Messages);
+                    response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages, tools, 16384, ct);
                     
                     if (string.IsNullOrEmpty(response.Error))
                     {
