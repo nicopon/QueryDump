@@ -371,6 +371,7 @@ public class DtPipeMcpTools
     internal static void ValidatePathSafety(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
+        if (path.StartsWith("duck+", StringComparison.OrdinalIgnoreCase)) return;
 
         // Clean query/parameters from SQLite/DuckDB connection strings
         string cleanPath = path;

@@ -16,6 +16,7 @@ namespace DtPipe.Adapters.DuckDB;
 public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequiresOptions<DuckDbReaderOptions>, IBatchSizeConfigurable
 {
 	private readonly DuckDBConnection _connection;
+	private readonly DuckHubConnectionInfo _hubInfo;
 	private readonly DuckDBCommand _command;
 	private readonly string _query;
 	private readonly string? _initSql;
@@ -43,12 +44,26 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 	private readonly IMcpSecurityContext? _mcpSecurityContext;
 
 	public DuckDataSourceReader(string connectionString, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null, IMcpSecurityContext? mcpSecurityContext = null)
-		: this(new DuckDBConnection(connectionString), query, options, logger, queryTimeout, resolver, mcpSecurityContext)
 	{
+		_hubInfo = DuckHubConnectionParser.Parse(connectionString);
+		_connection = new DuckDBConnection(_hubInfo.EffectiveConnectionString);
+
+		ValidateQueryIsSafeSelect(query);
+
+		_query = query;
+		_initSql = options.InitSql;
+		_resolver = resolver;
+		_logger = logger ?? NullLogger.Instance;
+		_mcpSecurityContext = mcpSecurityContext;
+		_command = new DuckDBCommand(query, _connection)
+		{
+			CommandTimeout = queryTimeout
+		};
 	}
 
 	public DuckDataSourceReader(DuckDBConnection connection, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null, IMcpSecurityContext? mcpSecurityContext = null)
 	{
+		_hubInfo = new DuckHubConnectionInfo { IsHub = false };
 		ValidateQueryIsSafeSelect(query);
 
 		_query = query;
@@ -96,6 +111,16 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 	public async Task OpenAsync(CancellationToken ct = default)
 	{
 		await _connection.OpenAsync(ct);
+
+		if (_hubInfo.IsHub && _hubInfo.InitSqlStatements.Length > 0)
+		{
+			foreach (var stmt in _hubInfo.InitSqlStatements)
+			{
+				using var hubCmd = _connection.CreateCommand();
+				hubCmd.CommandText = stmt;
+				await hubCmd.ExecuteNonQueryAsync(ct);
+			}
+		}
 
 		// Cap memory to prevent Jetsam overcommit kills when multiple branches run concurrently
 		using (var limitCmd = _connection.CreateCommand())

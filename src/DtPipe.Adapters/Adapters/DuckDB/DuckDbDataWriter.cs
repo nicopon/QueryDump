@@ -20,6 +20,7 @@ namespace DtPipe.Adapters.DuckDB;
 public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IKeyValidator, ISchemaMigrator
 {
     private readonly string _connectionString;
+    private readonly DuckHubConnectionInfo _hubInfo;
     private readonly DuckDbWriterOptions _options;
     private readonly ILogger<DuckDbDataWriter> _logger;
     private readonly ITypeMapper _typeMapper;
@@ -47,6 +48,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
 
     public DuckDbDataWriter(string connectionString, DuckDbWriterOptions options, ILogger<DuckDbDataWriter> logger, ITypeMapper typeMapper, IStringContentResolver? resolver = null)
     {
+        _hubInfo = DuckHubConnectionParser.Parse(connectionString);
         _connectionString = connectionString;
         _options = options;
         _logger = logger;
@@ -61,8 +63,16 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
 
         // Resolve Table/Schema
         var parts = _options.Table.Split('.');
-        _unquotedSchema = parts.Length == 2 ? parts[0] : "main";
-        _unquotedTable = parts.Length == 2 ? parts[1] : _options.Table;
+        if (parts.Length == 2)
+        {
+            _unquotedSchema = parts[0];
+            _unquotedTable = parts[1];
+        }
+        else
+        {
+            _unquotedSchema = _hubInfo.IsHub ? _hubInfo.Alias : "main";
+            _unquotedTable = _options.Table;
+        }
         _quotedTargetTableName = BuildQuotedTableName(_unquotedSchema, _unquotedTable);
 
         // Apply Write Strategy
@@ -241,13 +251,21 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
     {
         if (_connection == null)
         {
-            _connection = new DuckDBConnection(_connectionString);
+            _connection = new DuckDBConnection(_hubInfo.EffectiveConnectionString);
         }
 
         if (_connection.State != ConnectionState.Open)
         {
             if (_connection is System.Data.Common.DbConnection dbConn) await dbConn.OpenAsync(ct);
             else _connection.Open();
+
+            if (_hubInfo.IsHub && _hubInfo.InitSqlStatements.Length > 0)
+            {
+                foreach (var stmt in _hubInfo.InitSqlStatements)
+                {
+                    await ExecuteNonQueryAsync(stmt, ct);
+                }
+            }
 
             if (!_initSqlApplied)
             {
