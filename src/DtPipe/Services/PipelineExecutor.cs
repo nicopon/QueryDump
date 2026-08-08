@@ -401,26 +401,18 @@ public sealed class PipelineExecutor
         IExportProgress progress,
         CancellationToken ct)
     {
-        var buffer = new List<object?[]>(batchSize);
-        await foreach (var row in source.WithCancellation(ct))
+        var batcher = new SampledBatcher(writer, batchSize, 0, 1.0, null, progress, reportReads: false);
+        try
         {
-            // If row is a virtual view (ArrowRowView), it must be materialized 
-            // before being buffered for the batch writer, as ArrowRowView is ephemeral.
-            var rowArray = row as object?[] ?? row.ToArray();
-            buffer.Add(rowArray);
-            if (buffer.Count >= batchSize)
+            await foreach (var row in source.WithCancellation(ct))
             {
-                var batch = buffer.ToArray();
-                await writer.WriteBatchAsync(batch, ct);
-                progress.ReportWrite(batch.Length);
-                buffer.Clear();
+                await batcher.ProcessRowAsync(row, ct);
             }
         }
-        if (buffer.Count > 0)
+        catch (LimitReachedException) { }
+        finally
         {
-            var batch = buffer.ToArray();
-            await writer.WriteBatchAsync(batch, ct);
-            progress.ReportWrite(batch.Length);
+            await batcher.FlushAsync(ct);
         }
     }
 
@@ -434,34 +426,18 @@ public sealed class PipelineExecutor
         IExportProgress progress,
         CancellationToken ct)
     {
-        long rowCount = 0;
-        Random? sampler = samplingRate > 0 && samplingRate < 1.0 ? (samplingSeed.HasValue ? new Random(samplingSeed.Value) : Random.Shared) : null;
-        var buffer = new List<object?[]>(batchSize);
-
-        await foreach (var row in rows.WithCancellation(ct))
+        var batcher = new SampledBatcher(writer, batchSize, limit, samplingRate, samplingSeed, progress, reportReads: true);
+        try
         {
-            if (sampler != null && sampler.NextDouble() > samplingRate) continue;
-            buffer.Add(row);
-            bool limitReached = limit > 0 && ++rowCount >= limit;
-
-            if (buffer.Count >= batchSize || limitReached)
+            await foreach (var row in rows.WithCancellation(ct))
             {
-                var batch = buffer.ToArray();
-                await writer.WriteBatchAsync(batch, ct);
-                progress.ReportRead(batch.Length);
-                progress.ReportWrite(batch.Length);
-                buffer.Clear();
+                await batcher.ProcessRowAsync(row, ct);
             }
-
-            if (limitReached) break;
         }
-
-        if (buffer.Count > 0)
+        catch (LimitReachedException) { }
+        finally
         {
-            var batch = buffer.ToArray();
-            await writer.WriteBatchAsync(batch, ct);
-            progress.ReportRead(batch.Length);
-            progress.ReportWrite(batch.Length);
+            await batcher.FlushAsync(ct);
         }
     }
 
