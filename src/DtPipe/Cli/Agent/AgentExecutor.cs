@@ -13,21 +13,21 @@ namespace DtPipe.Cli.Agent;
 public class AgentExecutor
 {
     private readonly DtPipeMcpTools _mcpTools;
-    private readonly OllamaClient _ollamaClient;
+    private readonly ILlmClient _llmClient;
     private readonly AgentTui _tui;
     private readonly IAnsiConsole _console;
 
     public AgentTrajectory Trajectory { get; } = new();
-    public List<OllamaClient.OllamaChatMessage> Messages { get; } = new();
+    public List<ChatMessage> Messages { get; } = new();
 
-    public AgentExecutor(DtPipeMcpTools mcpTools, OllamaClient ollamaClient, AgentTui tui, IAnsiConsole console)
+    public AgentExecutor(DtPipeMcpTools mcpTools, ILlmClient llmClient, AgentTui tui, IAnsiConsole console)
     {
         _mcpTools = mcpTools;
-        _ollamaClient = ollamaClient;
+        _llmClient = llmClient;
         _tui = tui;
         _console = console;
 
-        Messages.Add(new OllamaClient.OllamaChatMessage("system", AgentSystemPrompt.DefaultSystemPrompt));
+        Messages.Add(new ChatMessage("system", AgentSystemPrompt.DefaultSystemPrompt));
     }
 
     public async Task<int> RunTurnAsync(
@@ -37,7 +37,7 @@ public class AgentExecutor
         int maxIterations = 25,
         CancellationToken ct = default)
     {
-        Messages.Add(new OllamaClient.OllamaChatMessage("user", userPrompt));
+        Messages.Add(new ChatMessage("user", userPrompt));
 
         var tools = McpToolReflector.BuildToolDefinitions(typeof(DtPipeMcpTools));
         var toolCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -52,14 +52,14 @@ public class AgentExecutor
             string? currentReasoning = null;
             string? currentToolName = null;
 
-            OllamaClient.ChatResponse response;
+            LlmResponse? response = null;
 
             await _console.Status()
                 .Spinner(Spinner.Known.Dots)
                 .SpinnerStyle(Style.Parse("blue bold"))
                 .StartAsync($"Agent thinking (Step {currentStepNum})...", async ctx =>
                 {
-                    response = await _ollamaClient.ChatAsync(baseUrl, model, Messages, tools, 16384, ct);
+                    response = await _llmClient.ChatAsync(baseUrl, model, Messages, tools, 16384, ct);
                     
                     if (string.IsNullOrEmpty(response.Error))
                     {
@@ -72,10 +72,19 @@ public class AgentExecutor
                         if (message.ToolCalls != null && message.ToolCalls.Count > 0)
                         {
                             var toolCall = message.ToolCalls[0];
-                            currentToolName = toolCall.Function.Name;
+                            currentToolName = toolCall.Name;
                         }
                     }
                 });
+
+            if (response == null || !string.IsNullOrEmpty(response.Error))
+            {
+                string errMsg = response?.Error ?? "No response received from LLM.";
+                _tui.RenderAgentResponse($"Error calling LLM: {errMsg}");
+                Trajectory.AddStep(currentStepNum, $"LLM Error: {errMsg}");
+                success = false;
+                break;
+            }
 
             // Compact iteration log
             _tui.RenderCompactIterationStatus(currentStepNum, maxIterations, currentReasoning, currentToolName);
@@ -92,9 +101,8 @@ public class AgentExecutor
 
             // Execute tool call
             var toolCall = lastMsg.ToolCalls[0];
-            var fn = toolCall.Function;
-            var toolName = fn.Name;
-            var args = fn.Arguments;
+            var toolName = toolCall.Name;
+            var args = toolCall.Arguments;
 
             toolCounts[toolName] = toolCounts.GetValueOrDefault(toolName, 0) + 1;
             string argsFormatted = args.ValueKind != JsonValueKind.Undefined ? args.ToString() : "{}";
@@ -129,7 +137,7 @@ public class AgentExecutor
             toolResultRaw ??= "{}";
             Trajectory.AddStep(currentStepNum, currentReasoning ?? "", toolName, argsFormatted, toolResultRaw, isError);
 
-            Messages.Add(new OllamaClient.OllamaChatMessage("tool", toolResultRaw, toolName));
+            Messages.Add(new ChatMessage("tool", toolResultRaw, toolName, ToolCallId: toolCall.Id));
             turnIterations++;
         }
 

@@ -41,35 +41,31 @@ public class AgentTui
         _console.WriteLine();
     }
 
-    public async Task<string?> SelectModelAsync(OllamaClient ollamaClient, string url)
+    public async Task<string?> SelectModelAsync(ILlmClient llmClient, string url)
     {
-        var models = await ollamaClient.GetAvailableModelsAsync(url);
+        var models = await llmClient.ListModelsAsync(url);
         if (models.Count == 0)
         {
-            _console.MarkupLine("[yellow]⚠️ Could not auto-discover Ollama models at endpoint.[/]");
+            _console.MarkupLine($"[yellow]⚠️ Could not auto-discover {llmClient.ProviderName} models at endpoint.[/]");
+            string defaultModel = llmClient.ProviderName == "ollama" ? "gemma4:12b-mlx" : "gpt-4o";
             var manualModel = _console.Prompt(
-                new TextPrompt<string>("Enter Ollama model name (e.g., [green]gemma4:12b-mlx[/]):")
-                    .DefaultValue("gemma4:12b-mlx")
+                new TextPrompt<string>($"Enter {llmClient.ProviderName} model name (e.g., [green]{defaultModel}[/]):")
+                    .DefaultValue(defaultModel)
             );
             return manualModel;
         }
 
         var prompt = new SelectionPrompt<string>()
-            .Title("Select an [bold cyan]Ollama Model[/] for the mission:")
+            .Title($"Select a [bold cyan]{llmClient.ProviderName} Model[/] for the mission:")
             .PageSize(10)
             .MoreChoicesText("[grey](Move up and down to reveal more models)[/]");
 
-        var modelMap = new Dictionary<string, string>();
-        foreach (var m in models.OrderBy(m => m.Name))
+        foreach (var m in models.OrderBy(m => m))
         {
-            string sizeMb = m.Size > 0 ? $" ({m.Size / (1024 * 1024):N0} MB)" : "";
-            string label = $"{m.Name}{sizeMb}";
-            modelMap[label] = m.Name;
-            prompt.AddChoice(label);
+            prompt.AddChoice(m);
         }
 
-        var selectedLabel = _console.Prompt(prompt);
-        return modelMap[selectedLabel];
+        return _console.Prompt(prompt);
     }
 
     public string PromptUserMission()

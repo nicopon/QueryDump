@@ -20,9 +20,9 @@ public static class McpToolReflector
     /// Generates Ollama-compatible tool definitions by reflecting on methods decorated with [McpServerTool]
     /// and parameter [Description] attributes.
     /// </summary>
-    public static List<OllamaClient.ToolDefinition> BuildToolDefinitions(Type targetType)
+    public static List<ToolDefinition> BuildToolDefinitions(Type targetType)
     {
-        var tools = new List<OllamaClient.ToolDefinition>();
+        var tools = new List<ToolDefinition>();
 
         var methods = targetType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.GetCustomAttribute<McpServerToolAttribute>() != null);
@@ -77,7 +77,7 @@ public static class McpToolReflector
             }
 
             using var doc = JsonDocument.Parse(parametersObj.ToJsonString());
-            tools.Add(new OllamaClient.ToolDefinition("function", new OllamaClient.ToolFunction(toolName, description, doc.RootElement.Clone())));
+            tools.Add(new ToolDefinition(toolName, description, doc.RootElement.Clone()));
         }
 
         return tools;

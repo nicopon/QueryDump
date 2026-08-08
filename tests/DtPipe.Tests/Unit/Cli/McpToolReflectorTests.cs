@@ -44,11 +44,11 @@ public class McpToolReflectorTests
         var tools = McpToolReflector.BuildToolDefinitions(typeof(DummyMcpTools));
         Assert.Equal(2, tools.Count);
 
-        var sampleTool = tools.FirstOrDefault(t => t.Function.Name == "sample-tool");
+        var sampleTool = tools.FirstOrDefault(t => t.Name == "sample-tool");
         Assert.NotNull(sampleTool);
-        Assert.Equal("A sample tool for testing", sampleTool.Function.Description);
+        Assert.Equal("A sample tool for testing", sampleTool.Description);
 
-        var props = sampleTool.Function.Parameters.GetProperty("properties");
+        var props = sampleTool.ParametersSchema.GetProperty("properties");
         Assert.True(props.TryGetProperty("input", out var inputProp));
         Assert.Equal("string", inputProp.GetProperty("type").GetString());
         Assert.Equal("Sample input path", inputProp.GetProperty("description").GetString());

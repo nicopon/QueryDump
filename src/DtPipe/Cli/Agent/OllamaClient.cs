@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -9,11 +10,19 @@ using System.Threading.Tasks;
 
 namespace DtPipe.Cli.Agent;
 
-public class OllamaClient
+public class OllamaClient : ILlmClient
 {
     private static readonly HttpClient HttpClient = new HttpClient();
 
+    public string ProviderName => "ollama";
+
     public record OllamaModelInfo(string Name, long Size, DateTime ModifiedAt);
+
+    public async Task<List<string>> ListModelsAsync(string baseUrl, CancellationToken ct = default)
+    {
+        var models = await GetAvailableModelsAsync(baseUrl, ct);
+        return models.Select(m => m.Name).ToList();
+    }
 
     public async Task<List<OllamaModelInfo>> GetAvailableModelsAsync(string baseUrl, CancellationToken ct = default)
     {
@@ -53,39 +62,82 @@ public class OllamaClient
         }
     }
 
-    public record ToolFunction(string Name, string Description, JsonElement Parameters);
-    public record ToolDefinition(string Type, ToolFunction Function);
+    private record ToolFunction(string Name, string Description, JsonElement Parameters);
+    private record OllamaToolDefinition(string Type, ToolFunction Function);
 
-    public record OllamaChatMessage(
+    private record OllamaChatMessage(
         [property: JsonPropertyName("role")] string Role,
         [property: JsonPropertyName("content")] string? Content,
         [property: JsonPropertyName("name")] string? Name = null,
+        [property: JsonPropertyName("tool_call_id")] string? ToolCallId = null,
         [property: JsonPropertyName("tool_calls")] List<OllamaToolCall>? ToolCalls = null
     );
 
-    public record OllamaToolCall(
+    private record OllamaToolCall(
+        [property: JsonPropertyName("id")] string? Id,
         [property: JsonPropertyName("function")] OllamaFunctionCall Function
     );
 
-    public record OllamaFunctionCall(
+    private record OllamaFunctionCall(
         [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("arguments")] JsonElement Arguments
     );
 
-    public record ChatResponse(
+    private record ChatResponse(
         string Model,
         OllamaChatMessage Message,
         bool Done,
         string? Error
     );
 
-    public async Task<ChatResponse> ChatAsync(
+    public async Task<LlmResponse> ChatAsync(
         string baseUrl,
         string model,
-        List<OllamaChatMessage> messages,
+        List<ChatMessage> messages,
         List<ToolDefinition> tools,
         int numCtx = 16384,
         CancellationToken ct = default)
+    {
+        // Map messages to OllamaChatMessage
+        var ollamaMessages = messages.Select(m => new OllamaChatMessage(
+            m.Role,
+            m.Content,
+            m.Name,
+            m.ToolCallId,
+            m.ToolCalls?.Select(tc => new OllamaToolCall(tc.Id, new OllamaFunctionCall(tc.Name, tc.Arguments))).ToList()
+        )).ToList();
+
+        // Map tools to OllamaToolDefinition
+        var ollamaTools = tools.Select(t => new OllamaToolDefinition(
+            "function",
+            new ToolFunction(t.Name, t.Description, t.ParametersSchema)
+        )).ToList();
+
+        var response = await InternalChatAsync(baseUrl, model, ollamaMessages, ollamaTools, numCtx, ct);
+
+        if (response.Error != null)
+        {
+            return new LlmResponse(new ChatMessage("assistant", null), true, response.Error);
+        }
+
+        var assistantMsg = new ChatMessage(
+            response.Message.Role,
+            response.Message.Content,
+            response.Message.Name,
+            response.Message.ToolCalls?.Select(tc => new ToolCall(tc.Id ?? $"call_{Guid.NewGuid():N}", tc.Function.Name, tc.Function.Arguments)).ToList(),
+            response.Message.ToolCallId
+        );
+
+        return new LlmResponse(assistantMsg, response.Done, null);
+    }
+
+    private async Task<ChatResponse> InternalChatAsync(
+        string baseUrl,
+        string model,
+        List<OllamaChatMessage> messages,
+        List<OllamaToolDefinition> tools,
+        int numCtx,
+        CancellationToken ct)
     {
         var url = baseUrl.TrimEnd('/') + "/api/chat";
 
@@ -144,6 +196,7 @@ public class OllamaClient
             toolCalls = new List<OllamaToolCall>();
             foreach (var tc in tcArray.EnumerateArray())
             {
+                var id = tc.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
                 var fnEl = tc.GetProperty("function");
                 var fnName = fnEl.GetProperty("name").GetString() ?? "";
                 var fnArgs = fnEl.GetProperty("arguments");
@@ -159,10 +212,10 @@ public class OllamaClient
                     catch { }
                 }
 
-                toolCalls.Add(new OllamaToolCall(new OllamaFunctionCall(fnName, fnArgs.Clone())));
+                toolCalls.Add(new OllamaToolCall(id, new OllamaFunctionCall(fnName, fnArgs.Clone())));
             }
         }
 
-        return new ChatResponse(model, new OllamaChatMessage(role, msgContent, null, toolCalls), true, null);
+        return new ChatResponse(role, new OllamaChatMessage(role, msgContent, null, null, toolCalls), true, null);
     }
 }

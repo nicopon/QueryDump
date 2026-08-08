@@ -25,17 +25,27 @@ public class AgentCommand : Command
         };
         promptOption.Aliases.Add("-p");
 
+        var providerOption = new Option<string>("--provider")
+        {
+            Description = "LLM provider to use ('ollama' or 'openai')"
+        };
+        providerOption.DefaultValueFactory = _ => "ollama";
+
+        var apiKeyOption = new Option<string?>("--api-key")
+        {
+            Description = "API key for OpenAI provider. Falls back to DTPIPE_LLM_API_KEY environment variable."
+        };
+
         var modelOption = new Option<string?>("--model")
         {
-            Description = "Ollama model name (e.g. 'gemma4:12b-mlx', 'qwen2.5-coder:7b'). Auto-discovered if omitted."
+            Description = "Model name (e.g. 'qwen2.5-coder:7b', 'gpt-4o'). Auto-discovered if omitted."
         };
         modelOption.Aliases.Add("-m");
 
-        var urlOption = new Option<string>("--url")
+        var urlOption = new Option<string?>("--url")
         {
-            Description = "Ollama API endpoint URL"
+            Description = "API endpoint URL (defaults: http://localhost:11434 for ollama, https://api.openai.com for openai)"
         };
-        urlOption.DefaultValueFactory = _ => "http://localhost:11434";
         urlOption.Aliases.Add("-u");
 
         var maxIterOption = new Option<int>("--max-iterations")
@@ -52,6 +62,8 @@ public class AgentCommand : Command
 
         Arguments.Add(promptArgument);
         Options.Add(promptOption);
+        Options.Add(providerOption);
+        Options.Add(apiKeyOption);
         Options.Add(modelOption);
         Options.Add(urlOption);
         Options.Add(maxIterOption);
@@ -63,16 +75,27 @@ public class AgentCommand : Command
             var mcpTools = serviceProvider.GetRequiredService<DtPipeMcpTools>();
 
             var prompt = parseResult.GetValue(promptArgument) ?? parseResult.GetValue(promptOption);
+            var provider = parseResult.GetValue(providerOption) ?? "ollama";
+            var apiKey = parseResult.GetValue(apiKeyOption);
             var model = parseResult.GetValue(modelOption);
-            var url = parseResult.GetValue(urlOption) ?? "http://localhost:11434";
+            var url = parseResult.GetValue(urlOption);
             var maxIterations = parseResult.GetValue(maxIterOption);
 
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                url = provider.Equals("openai", StringComparison.OrdinalIgnoreCase)
+                    ? "https://api.openai.com"
+                    : "http://localhost:11434";
+            }
+
             var tui = new AgentTui(console);
-            var ollamaClient = new OllamaClient();
+            ILlmClient llmClient = provider.Equals("openai", StringComparison.OrdinalIgnoreCase)
+                ? new OpenAiClient(apiKey)
+                : new OllamaClient();
 
             if (string.IsNullOrWhiteSpace(model))
             {
-                model = await tui.SelectModelAsync(ollamaClient, url);
+                model = await tui.SelectModelAsync(llmClient, url);
                 if (string.IsNullOrWhiteSpace(model))
                 {
                     console.MarkupLine("[red]Error:[/] No model selected.");
@@ -91,7 +114,7 @@ public class AgentCommand : Command
             }
 
             tui.RenderHeader(model, url);
-            var executor = new AgentExecutor(mcpTools, ollamaClient, tui, console);
+            var executor = new AgentExecutor(mcpTools, llmClient, tui, console);
 
             // Execute initial turn
             var exitCode = await executor.RunTurnAsync(prompt, model, url, maxIterations, ct);
