@@ -6,6 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using DtPipe.Cli.Mcp;
 using DtPipe.Core.Security;
 using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
+using DtPipe.Core.Options;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Cli;
@@ -21,15 +23,20 @@ public class McpToolsTests
         var services = new ServiceCollection();
         services.AddSingleton<DtPipe.Core.Options.OptionsRegistry>();
         services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(Array.Empty<IStreamTransformerFactory>());
+
+        var readerFactories = new IStreamReaderFactory[] { new DummyReaderFactory() };
+        services.AddSingleton<IEnumerable<IStreamReaderFactory>>(readerFactories);
+        services.AddSingleton<IEnumerable<IDataWriterFactory>>(Array.Empty<IDataWriterFactory>());
+
         _serviceProvider = services.BuildServiceProvider();
 
         _helpService = new McpHelpService(
-            Array.Empty<IStreamReaderFactory>(),
+            readerFactories,
             Array.Empty<IDataTransformerFactory>(),
             Array.Empty<IDataWriterFactory>());
 
         _tools = new DtPipeMcpTools(
-            Array.Empty<IStreamReaderFactory>(),
+            readerFactories,
             Array.Empty<IDataTransformerFactory>(),
             Array.Empty<IDataWriterFactory>(),
             _helpService,
@@ -169,4 +176,63 @@ main:
         Assert.Contains("Unknown transformer", json);
         Assert.Contains("nonexistent_transformer", json);
     }
+
+    [Fact]
+    public async System.Threading.Tasks.Task DryRun_InvalidYaml_ReturnsErrors()
+    {
+        var result = await _tools.DryRun("invalid_yaml_here");
+        Assert.Contains("success\": false", result);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task DryRun_ValidYamlNoProvider_ReturnsErrorsInBranches()
+    {
+        var yaml = @"
+main:
+  input: ""nonexistent_provider:dummy""
+  output: ""csv:output.csv""
+";
+        var result = await _tools.DryRun(yaml);
+        Assert.Contains("success\": true", result);
+        Assert.Contains("No provider found", result);
+    }
+
+    [Fact]
+    public void ListCursors_NoStateFiles_ReturnsInfoMessage()
+    {
+        var result = _tools.ListCursors();
+        Assert.Contains("No active cursor state files found", result);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task SuggestPipeline_ValidSourceDest_GeneratesYaml()
+    {
+        var result = await _tools.SuggestPipeline("csv:input.csv", "sqlite:output.db");
+        Assert.Contains("main:", result);
+        Assert.Contains("input: \"csv:input.csv\"", result);
+        Assert.Contains("output: \"sqlite:output.db\"", result);
+    }
+}
+
+public class DummyReaderFactory : IStreamReaderFactory
+{
+    public string ComponentName => "csv";
+    public string Category => "Readers";
+    public Type OptionsType => typeof(DtPipe.Core.Options.EmptyOptions);
+    public bool RequiresQuery => false;
+    public bool CanHandle(string connectionString) => connectionString.EndsWith(".csv");
+    public IEnumerable<Type> GetSupportedOptionTypes() => new[] { typeof(DtPipe.Core.Options.EmptyOptions) };
+    public IStreamReader Create(OptionsRegistry registry) => new DummyStreamReader();
+}
+
+public class DummyStreamReader : IStreamReader
+{
+    public IReadOnlyList<PipeColumnInfo>? Columns => new List<PipeColumnInfo>
+    {
+        new PipeColumnInfo("id", typeof(int), false),
+        new PipeColumnInfo("name", typeof(string), true)
+    };
+    public System.Threading.Tasks.ValueTask DisposeAsync() => default;
+    public Task OpenAsync(CancellationToken ct) => Task.CompletedTask;
+    public IAsyncEnumerable<ReadOnlyMemory<object?[]>> ReadBatchesAsync(int batchSize, CancellationToken ct) => throw new NotImplementedException();
 }
