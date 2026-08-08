@@ -12,7 +12,7 @@ namespace DtPipe.Cli.Agent;
 
 public class AgentExecutor
 {
-    private readonly DtPipeMcpTools _mcpTools;
+    private readonly IAgentToolProvider _toolProvider;
     private readonly ILlmClient _llmClient;
     private readonly AgentTui _tui;
     private readonly IAnsiConsole _console;
@@ -20,9 +20,9 @@ public class AgentExecutor
     public AgentTrajectory Trajectory { get; } = new();
     public List<ChatMessage> Messages { get; } = new();
 
-    public AgentExecutor(DtPipeMcpTools mcpTools, ILlmClient llmClient, AgentTui tui, IAnsiConsole console)
+    public AgentExecutor(IAgentToolProvider toolProvider, ILlmClient llmClient, AgentTui tui, IAnsiConsole console)
     {
-        _mcpTools = mcpTools;
+        _toolProvider = toolProvider;
         _llmClient = llmClient;
         _tui = tui;
         _console = console;
@@ -39,7 +39,7 @@ public class AgentExecutor
     {
         Messages.Add(new ChatMessage("user", userPrompt));
 
-        var tools = McpToolReflector.BuildToolDefinitions(typeof(DtPipeMcpTools));
+        var tools = _toolProvider.GetToolDefinitions();
         var toolCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         var stopwatch = Stopwatch.StartNew();
@@ -123,8 +123,8 @@ public class AgentExecutor
                 {
                     try
                     {
-                        toolResultRaw = await McpToolReflector.InvokeToolAsync(_mcpTools, toolName, args, ct);
-                        var parsedResult = ToolResult.FromJson(toolResultRaw);
+                        var parsedResult = await _toolProvider.InvokeToolAsync(toolName, args, ct);
+                        toolResultRaw = parsedResult.Content;
                         isError = parsedResult.IsError;
                     }
                     catch (Exception ex)

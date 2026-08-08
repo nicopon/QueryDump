@@ -113,8 +113,8 @@ public class AgentCommand : Command
                 }
             }
 
-            tui.RenderHeader(model, url);
-            var executor = new AgentExecutor(mcpTools, llmClient, tui, console);
+            var toolProvider = new McpToolProvider(mcpTools);
+            var executor = new AgentExecutor(toolProvider, llmClient, tui, console);
 
             // Execute initial turn
             var exitCode = await executor.RunTurnAsync(prompt, model, url, maxIterations, ct);
