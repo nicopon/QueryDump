@@ -15,20 +15,20 @@ public class TrajectoryStep
 }
 
 public class AgentTrajectory
- {
+{
     public List<TrajectoryStep> Steps { get; } = new();
     public string? LastGeneratedYaml { get; set; }
 
-     /// <summary>
-     /// Determinism report produced when the validated plan is replicated N times (<c>--repeat</c>).
-     /// Null when replication is not requested.
-     /// </summary>
+    /// <summary>
+    /// Determinism report produced when the validated plan is replicated N times (<c>--repeat</c>).
+    /// Null when replication is not requested.
+    /// </summary>
     public DeterminismReport? Determinism { get; set; }
 
     public void AddStep(int iteration, string reasoning, string? toolName = null, string? toolArgs = null, string? toolResult = null, bool isError = false)
-     {
+    {
         Steps.Add(new TrajectoryStep
-          {
+        {
             Iteration = iteration,
             Timestamp = DateTime.Now,
             Reasoning = reasoning,
@@ -36,27 +36,33 @@ public class AgentTrajectory
             ToolArgs = toolArgs,
             ToolResult = toolResult,
             IsError = isError
-          });
-     }
- }
+        });
+    }
+}
 
- /// <summary>
- /// Result of replicating a validated plan N times to measure determinism.
- /// </summary>
+/// <summary>
+/// Result of replicating a validated plan N times to measure determinism.
+/// </summary>
 public class DeterminismReport
- {
+{
     /// <summary>Number of replications executed.</summary>
     public int Repetitions { get; init; }
 
-     /// <summary>Distinct generated YAML payloads observed across replications.</summary>
+    /// <summary>Distinct generated YAML payloads observed across replications.</summary>
     public List<string> DistinctYaml { get; init; } = new();
 
-     /// <summary>Number of distinct YAML payloads (1 => fully deterministic).</summary>
-    public int Variance => DistinctYaml.Count;
+    /// <summary>Number of distinct YAML payloads observed (1 => fully deterministic).</summary>
+    public int DistinctCount => DistinctYaml.Count;
 
-     /// <summary>True when all replications produced byte-for-byte identical YAML.</summary>
-    public bool IsDeterministic => Variance == 1;
+    /// <summary>
+    /// Amount of variance: the number of distinct payloads beyond the canonical one.
+    /// 0 => every replication produced byte-for-byte identical YAML (fully deterministic).
+    /// </summary>
+    public int Variance => Math.Max(0, DistinctYaml.Count - 1);
 
-     /// <summary>Whether a single YAML payload was observed.</summary>
+    /// <summary>True when every replication produced byte-for-byte identical YAML.</summary>
+    public bool IsDeterministic => Variance == 0;
+
+    /// <summary>Whether at least one YAML payload was observed.</summary>
     public bool HasYaml => DistinctYaml.Count > 0;
- }
+}

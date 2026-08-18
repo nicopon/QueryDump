@@ -3,6 +3,12 @@ using System.Text.Json;
 
 namespace DtPipe.Cli.Agent;
 
+/// <summary>
+/// Plain result of a single tool invocation, used to avoid passing <c>out</c> parameters
+/// through <c>async</c> methods (which C# forbids).
+/// </summary>
+public sealed record ToolInvocationOutcome(string Content, bool IsError);
+
 public record ToolResult(string Content, bool IsError)
 {
     public static ToolResult Success(string content) => new(content, false);

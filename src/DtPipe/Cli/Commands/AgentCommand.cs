@@ -60,6 +60,24 @@ public class AgentCommand : Command
         };
         interactiveOption.Aliases.Add("-i");
 
+        var temperatureOption = new Option<double>("--temperature")
+          {
+            Description = "Sampling temperature. 0 makes decoding deterministic (default)."
+          };
+        temperatureOption.DefaultValueFactory = _ => 0.0;
+
+        var seedOption = new Option<int?>("--seed")
+          {
+            Description = "Fixed seed for reproducible sampling. A fixed seed makes the run deterministic."
+          };
+        seedOption.DefaultValueFactory = _ => 0;
+
+        var repeatOption = new Option<int>("--repeat")
+          {
+            Description = "Number of replications of the validated plan for determinism/variance measurement (default: 1)."
+          };
+        repeatOption.DefaultValueFactory = _ => 1;
+
         Arguments.Add(promptArgument);
         Options.Add(promptOption);
         Options.Add(providerOption);
@@ -68,6 +86,9 @@ public class AgentCommand : Command
         Options.Add(urlOption);
         Options.Add(maxIterOption);
         Options.Add(interactiveOption);
+        Options.Add(temperatureOption);
+        Options.Add(seedOption);
+        Options.Add(repeatOption);
 
         this.SetAction(async (parseResult, ct) =>
         {
@@ -80,6 +101,9 @@ public class AgentCommand : Command
             var model = parseResult.GetValue(modelOption);
             var url = parseResult.GetValue(urlOption);
             var maxIterations = parseResult.GetValue(maxIterOption);
+            var temperature = parseResult.GetValue(temperatureOption);
+            var seed = parseResult.GetValue(seedOption);
+            var repeat = parseResult.GetValue(repeatOption);
 
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -116,8 +140,15 @@ public class AgentCommand : Command
             var toolProvider = new McpToolProvider(mcpTools);
             var executor = new AgentExecutor(toolProvider, llmClient, tui, console);
 
-            // Execute initial turn
-            var exitCode = await executor.RunTurnAsync(prompt, model, url, maxIterations, ct);
+             var agentOptions = new AgentOptions
+                    {
+                 Temperature = temperature,
+                 Seed = seed,
+                 Repeat = repeat
+                    };
+
+              // Execute initial turn
+             var exitCode = await executor.RunTurnAsync(prompt, model, url, agentOptions, maxIterations, ct);
 
             // Interactive post-mission conversation loop
             while (!ct.IsCancellationRequested)
@@ -132,13 +163,13 @@ public class AgentCommand : Command
 
                 switch (action)
                 {
-                    case PostMissionAction.ContinueDiscussion:
-                        var followUp = tui.PromptFollowUp();
-                        if (!string.IsNullOrWhiteSpace(followUp))
-                        {
-                            exitCode = await executor.RunTurnAsync(followUp, model, url, maxIterations, ct);
-                        }
-                        break;
+                     case PostMissionAction.ContinueDiscussion:
+                         var followUp = tui.PromptFollowUp();
+                         if (!string.IsNullOrWhiteSpace(followUp))
+                          {
+                             exitCode = await executor.RunTurnAsync(followUp, model, url, agentOptions, maxIterations, ct);
+                          }
+                         break;
 
                     case PostMissionAction.ViewDag:
                         if (executor.Trajectory.LastGeneratedYaml != null)
