@@ -79,10 +79,16 @@ public class AgentCommand : Command
         repeatOption.DefaultValueFactory = _ => 1;
 
         var sequentialOption = new Option<bool>("--sequential")
-           {
+            {
             Description = "Execute tool calls one at a time instead of running independent calls in parallel (default: parallel)."
-           };
+            };
         sequentialOption.DefaultValueFactory = _ => false;
+
+        var modeOption = new Option<AgentMode>("--mode")
+            {
+            Description = "Operating mode. 'plan' (default) only designs & validates a pipeline; 'execute'/'autonomous' may run it through the guardrails."
+            };
+        modeOption.DefaultValueFactory = _ => AgentMode.Plan;
 
         Arguments.Add(promptArgument);
         Options.Add(promptOption);
@@ -96,6 +102,7 @@ public class AgentCommand : Command
         Options.Add(seedOption);
         Options.Add(repeatOption);
         Options.Add(sequentialOption);
+        Options.Add(modeOption);
 
         this.SetAction(async (parseResult, ct) =>
         {
@@ -110,8 +117,9 @@ public class AgentCommand : Command
             var maxIterations = parseResult.GetValue(maxIterOption);
             var temperature = parseResult.GetValue(temperatureOption);
             var seed = parseResult.GetValue(seedOption);
-            var repeat = parseResult.GetValue(repeatOption);
-            var sequential = parseResult.GetValue(sequentialOption);
+             var repeat = parseResult.GetValue(repeatOption);
+             var sequential = parseResult.GetValue(sequentialOption);
+             var mode = parseResult.GetValue(modeOption);
 
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -149,12 +157,13 @@ public class AgentCommand : Command
             var executor = new AgentExecutor(toolProvider, llmClient, tui, console);
 
              var agentOptions = new AgentOptions
-                    {
+                     {
+                 Mode = mode,
                  Temperature = temperature,
                  Seed = seed,
                  Repeat = repeat,
                  Sequential = sequential
-                    };
+                     };
 
               // Execute initial turn
              var exitCode = await executor.RunTurnAsync(prompt, model, url, agentOptions, maxIterations, ct);

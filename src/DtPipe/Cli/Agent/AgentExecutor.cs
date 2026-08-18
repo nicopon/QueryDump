@@ -53,6 +53,8 @@ public class AgentExecutor
         CancellationToken ct = default)
      {
         var opts = options ?? new AgentOptions();
+          // F1: select the role prompt for the operating mode (PLAN forbids execution).
+        Messages[0] = new ChatMessage("system", AgentSystemPrompt.Select(opts.Mode));
         Messages.Add(new ChatMessage("user", userPrompt));
 
         var toolCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -75,11 +77,11 @@ public class AgentExecutor
         int repls = Math.Max(1, opts.Repeat);
         for (int r = 1; r < repls; r++)
          {
-            var fresh = new List<ChatMessage>
-             {
-                new("system", AgentSystemPrompt.DefaultSystemPrompt),
-                new("user", userPrompt)
-             };
+             var fresh = new List<ChatMessage>
+               {
+                 new("system", AgentSystemPrompt.Select(opts.Mode)),
+                 new("user", userPrompt)
+               };
             var repl = await RunPlanningLoopAsync(fresh, userPrompt, model, baseUrl, opts, maxIterations,
                 recordTrajectory: false, renderTui: false, ct);
             if (!string.IsNullOrWhiteSpace(repl.Yaml))
@@ -106,7 +108,10 @@ public class AgentExecutor
         CancellationToken ct)
      {
         var toolCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        string? producedYaml = null;   // resolved plan: yamlContent argument, else regex fallback
+           // F1: the LLM only sees the tools allowed for the current mode (in PLAN mode,
+          // 'execute-yaml-job' is filtered out so the model cannot drive execution).
+        var availableTools = _toolProvider.GetToolDefinitions(opts.Mode);
+        string? producedYaml = null;    // resolved plan: yamlContent argument, else regex fallback
         string? argYaml = null;         // from the yamlContent tool-call argument (source of truth, F6)
         string? contentYaml = null;      // regex extraction from free-text content (deprecated fallback)
         bool regexFallbackNoticed = false;  // guards a single, non-logged-noise notice when the fallback is used
@@ -131,9 +136,9 @@ public class AgentExecutor
                       .SpinnerStyle(Style.Parse("blue bold"))
                       .StartAsync<LlmResponse>($"Agent thinking (Step {currentStepNum})...", async ctx =>
                       {
-                        response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
-                             _toolProvider.GetToolDefinitions(), 16384,
-                            temperature: opts.Temperature, seed: opts.Seed, ct);
+                         response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
+                              availableTools, 16384,
+                             temperature: opts.Temperature, seed: opts.Seed, ct);
 
                         if (string.IsNullOrEmpty(response.Error))
                            {
@@ -155,8 +160,8 @@ public class AgentExecutor
               }
              else
                 {
-                 response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
-                       _toolProvider.GetToolDefinitions(), 16384,
+                  response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
+                        availableTools, 16384,
                     temperature: opts.Temperature, seed: opts.Seed, ct);
 
                  if (string.IsNullOrEmpty(response.Error))
