@@ -18,18 +18,26 @@ public class AgentExecutor
     private readonly IAnsiConsole _console;
     private readonly ConversationWindowManager _windowManager = new();
 
-    public AgentTrajectory Trajectory { get; } = new();
-    public List<ChatMessage> Messages { get; } = new();
+      /// <summary>
+       /// Fact store that survives conversation compaction (F4 — non-destructive context). Cached
+       /// "fact" tool results (inspected schemas, sample rows, recent errors) are reloaded into the
+       /// compacted window instead of being discarded. Exposed so callers/tests can inspect it.
+       /// </summary>
+     public AgentContextStore ContextStore { get; }
 
-    public AgentExecutor(IAgentToolProvider toolProvider, ILlmClient llmClient, AgentTui tui, IAnsiConsole console)
-     {
-         _toolProvider = toolProvider;
-         _llmClient = llmClient;
-         _tui = tui;
-         _console = console;
+     public AgentTrajectory Trajectory { get; } = new();
+     public List<ChatMessage> Messages { get; } = new();
 
-        Messages.Add(new ChatMessage("system", AgentSystemPrompt.DefaultSystemPrompt));
-     }
+     public AgentExecutor(IAgentToolProvider toolProvider, ILlmClient llmClient, AgentTui tui, IAnsiConsole console, AgentContextStore? contextStore = null)
+        {
+            _toolProvider = toolProvider;
+            _llmClient = llmClient;
+            _tui = tui;
+            _console = console;
+           ContextStore = contextStore ?? new AgentContextStore();
+
+         Messages.Add(new ChatMessage("system", AgentSystemPrompt.DefaultSystemPrompt));
+        }
 
     /// <summary>
     /// Runs a single agent turn. When <see cref="AgentOptions.Repeat"/> &gt; 1 the validated plan
@@ -114,7 +122,7 @@ public class AgentExecutor
 
             LlmResponse? response = null;
 
-            var compactedMessages = _windowManager.Compact(messages);
+            var compactedMessages = _windowManager.Compact(messages, ContextStore);
 
             if (renderTui)
               {
@@ -247,8 +255,13 @@ public class AgentExecutor
                  if (recordTrajectory)
                      Trajectory.AddStep(Trajectory.Steps.Count + 1, currentReasoning ?? "", call.Name, argsFormatted, toolResultRaw, outcome.IsError);
 
-                 messages.Add(new ChatMessage("tool", toolResultRaw, call.Name, ToolCallId: call.Id));
-               }
+                  messages.Add(new ChatMessage("tool", toolResultRaw, call.Name, ToolCallId: call.Id));
+
+                   // F4: cache "fact" tool results so they survive conversation compaction. The
+                   // fact key is derived from the call's arguments so re-inspections of the same
+                   // input overwrite rather than accumulate.
+                  RecordFactFor(call, toolResultRaw, outcome.IsError);
+                 }
 
              producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
              turnIterations++;
@@ -350,6 +363,66 @@ public class AgentExecutor
               return producedYaml;
             }
 
-        return producedYaml;
-        }
-}
+          return producedYaml;
+           }
+
+       /// <summary>
+        /// Records a tool result as a surviving "fact" when the tool is one that produces reusable
+        /// knowledge (F4). Only fact-producing tools are cached; their result key is derived from
+        /// the call's arguments so re-inspecting the same target overwrites the previous fact.
+        /// </summary>
+     private void RecordFactFor(ToolCall call, string result, bool isError)
+         {
+         if (!IsFactProducingTool(call.Name))
+             return;
+
+         string key = BuildFactKey(call);
+         ContextStore.RecordFact(key, call.Name, result, isError);
+          }
+
+       /// <summary>The tools whose results are reusable facts (schemas, samples, skeletons, errors).</summary>
+     private static bool IsFactProducingTool(string toolName)
+          => toolName is "inspect" or "preview-data" or "suggest-pipeline" or "dry-run" or "list-providers" or "get-adapter-help" or "get-transformer-help";
+
+       /// <summary>
+        /// Derives a stable fact key from a tool call's args. For input/query-bearing tools the
+        /// key is "<tool> @ <input>[ #<query>]" so that, e.g., re-inspecting the same source
+        /// overwrites the prior inspection rather than piling up duplicates.
+        /// </summary>
+     private static string BuildFactKey(ToolCall call)
+          {
+         if (call.Arguments.ValueKind == JsonValueKind.Object)
+             {
+             var sb = new System.Text.StringBuilder();
+             sb.Append(call.Name).Append(" @");
+
+            string? input = FirstArgProperty(call.Arguments, "input", "source", "connection", "connectionString", "file");
+             if (input != null)
+                 sb.Append(' ').Append(input);
+
+             string? query = FirstArgProperty(call.Arguments, "query", "sql");
+             if (query != null)
+                 sb.Append(" #").Append(query.Length > 40 ? query[..40] : query);
+
+              if (sb.Length > 2)
+                  return sb.ToString().Trim();
+             }
+
+          return call.Name;
+          }
+
+       private static string? FirstArgProperty(JsonElement args, params string[] names)
+          {
+         foreach (var n in names)
+            {
+             if (args.TryGetProperty(n, out var v) && (v.ValueKind == JsonValueKind.String || v.ValueKind != JsonValueKind.Undefined))
+                 {
+                  if (v.ValueKind == JsonValueKind.String)
+                      return v.GetString();
+                  return v.GetRawText();
+                  }
+             }
+
+          return null;
+          }
+     }
