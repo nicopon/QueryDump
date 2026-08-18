@@ -98,7 +98,10 @@ public class AgentExecutor
         CancellationToken ct)
      {
         var toolCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        string? producedYaml = null;
+        string? producedYaml = null;   // resolved plan: yamlContent argument, else regex fallback
+        string? argYaml = null;         // from the yamlContent tool-call argument (source of truth, F6)
+        string? contentYaml = null;      // regex extraction from free-text content (deprecated fallback)
+        bool regexFallbackNoticed = false;  // guards a single, non-logged-noise notice when the fallback is used
 
         bool success = false;
         int turnIterations = 1;
@@ -125,44 +128,46 @@ public class AgentExecutor
                             temperature: opts.Temperature, seed: opts.Seed, ct);
 
                         if (string.IsNullOrEmpty(response.Error))
-                          {
-                            var message = response.Message;
-                            messages.Add(message);
-                            currentReasoning = message.Content;
+                           {
+                             var message = response.Message;
+                             messages.Add(message);
+                             currentReasoning = message.Content;
 
-                            producedYaml = ApplyYamlExtraction(currentReasoning, producedYaml);
+                             contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
+                             producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
 
-                            if (message.ToolCalls != null && message.ToolCalls.Count > 0)
-                              {
-                                currentToolName = message.ToolCalls[0].Name;
-                              }
-                          }
+                             if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+                                {
+                                 currentToolName = message.ToolCalls[0].Name;
+                                }
+                           }
 
                         return response;
                       });
               }
-            else
-              {
-                response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
-                     _toolProvider.GetToolDefinitions(), 16384,
+             else
+                {
+                 response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages,
+                       _toolProvider.GetToolDefinitions(), 16384,
                     temperature: opts.Temperature, seed: opts.Seed, ct);
 
-                if (string.IsNullOrEmpty(response.Error))
-                  {
-                    var message = response.Message;
-                    messages.Add(message);
-                    currentReasoning = message.Content;
+                 if (string.IsNullOrEmpty(response.Error))
+                     {
+                     var message = response.Message;
+                     messages.Add(message);
+                     currentReasoning = message.Content;
 
-                    producedYaml = ApplyYamlExtraction(currentReasoning, producedYaml);
+                     contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
+                     producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
 
-                    if (message.ToolCalls != null && message.ToolCalls.Count > 0)
-                      {
-                        currentToolName = message.ToolCalls[0].Name;
-                      }
-                  }
-              }
+                       if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+                           {
+                          currentToolName = message.ToolCalls[0].Name;
+                             }
+                        }
+                 }
 
-            if (response == null || !string.IsNullOrEmpty(response.Error))
+             if (response == null || !string.IsNullOrEmpty(response.Error))
              {
                 string errMsg = response?.Error ?? "No response received from LLM.";
                 if (renderTui)
@@ -189,50 +194,65 @@ public class AgentExecutor
                 break;
              }
 
-             // Execute tool call
-            var toolCall = lastMsg.ToolCalls[0];
-            var toolName = toolCall.Name;
-            var args = toolCall.Arguments;
+             // Execute every tool call in this turn (F5). Independent calls run in parallel by
+             // default; --sequential forces one-at-a-time execution. Results are appended in the
+             // same order as the calls so each "tool" message stays correlated with its call id.
+             var calls = lastMsg.ToolCalls!;
 
-            toolCounts[toolName] = toolCounts.GetValueOrDefault(toolName, 0) + 1;
-            string argsFormatted = args.ValueKind != JsonValueKind.Undefined ? args.ToString() : "{}";
+                     // F6: the yamlContent tool-call argument is the source of truth. Collect it
+                  // across all calls before resolving the plan so it always wins over the regex.
+             foreach (var call in calls)
+               {
+                 if (call.Arguments.ValueKind == JsonValueKind.Object &&
+                     call.Arguments.TryGetProperty("yamlContent", out var yamlProp) &&
+                     yamlProp.ValueKind == JsonValueKind.String)
+                   {
+                      argYaml = yamlProp.GetString();
+                   }
+               }
 
-             // Prefer the yamlContent tool-call argument as the source of truth; keep the regex
-             // fallback (F6 will mark it a logged, deprecated fallback).
-            if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty("yamlContent", out var yamlProp) && yamlProp.ValueKind == JsonValueKind.String)
-             {
-                producedYaml = yamlProp.GetString();
-             }
+             var outcomes = new List<ToolInvocationOutcome>(calls.Count);
+             if (opts.Sequential)
+               {
+                 foreach (var call in calls)
+                   {
+                    outcomes.Add(await InvokeToolInto(call.Name, call.Arguments, ct));
+                    toolCounts[call.Name] = toolCounts.GetValueOrDefault(call.Name, 0) + 1;
+                   }
+               }
+             else
+               {
+                 var tasks = calls
+                       .Select(c => InvokeToolInto(c.Name, c.Arguments, ct))
+                       .ToArray();
+                 await Task.WhenAll(tasks);
+                 foreach (var (c, t) in calls.Zip(tasks))
+                   {
+                    var outcome = await t;
+                    outcomes.Add(outcome);
+                    toolCounts[c.Name] = toolCounts.GetValueOrDefault(c.Name, 0) + 1;
+                   }
+               }
 
-            string toolResultRaw = "{}";
-            bool isError = false;
+             for (int i = 0; i < calls.Count; i++)
+               {
+                 var call = calls[i];
+                 var outcome = outcomes[i];
+                 string toolResultRaw = (outcome.Content ?? "{}");
+                 string argsFormatted = call.Arguments.ValueKind != JsonValueKind.Undefined ? call.Arguments.ToString() : "{}";
 
-            if (renderTui)
-              {
-                await _console.Status()
-                      .Spinner(Spinner.Known.Default)
-                      .SpinnerStyle(Style.Parse("magenta bold"))
-                      .StartAsync($"Executing tool '{toolName}'...", async ctx =>
-                      {
-                        var outcome = await InvokeToolInto(toolName, args, ct);
-                        toolResultRaw = outcome.Content;
-                        isError = outcome.IsError;
-                      });
-              }
-            else
-              {
-                var outcome = await InvokeToolInto(toolName, args, ct);
-                toolResultRaw = outcome.Content;
-                isError = outcome.IsError;
-              }
+                 toolResultRaw ??= "{}";
+                 if (renderTui)
+                     _tui.RenderToolResult(call.Name, toolResultRaw, outcome.IsError);
+                 if (recordTrajectory)
+                     Trajectory.AddStep(Trajectory.Steps.Count + 1, currentReasoning ?? "", call.Name, argsFormatted, toolResultRaw, outcome.IsError);
 
-            toolResultRaw ??= "{}";
-            if (recordTrajectory)
-                Trajectory.AddStep(currentStepNum, currentReasoning ?? "", toolName, argsFormatted, toolResultRaw, isError);
+                 messages.Add(new ChatMessage("tool", toolResultRaw, call.Name, ToolCallId: call.Id));
+               }
 
-            messages.Add(new ChatMessage("tool", toolResultRaw, toolName, ToolCallId: toolCall.Id));
-            turnIterations++;
-         }
+             producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
+             turnIterations++;
+           }
 
         // Promote the primary run's YAML to the instance trajectory for interactive / inspection flows.
         if (recordTrajectory && !string.IsNullOrWhiteSpace(producedYaml))
@@ -275,25 +295,61 @@ public class AgentExecutor
          };
      }
 
-    /// <summary>
-    /// Extracts a YAML job block from free-text agent content (fallback only — the
-    /// <c>yamlContent</c> tool argument is the source of truth, F6).
-    /// </summary>
-     private static string? ApplyYamlExtraction(string? content, string? current)
-       {
+     /// <summary>
+     /// Extracts a YAML job block from free-text agent content. This is the <b>deprecated
+     /// fallback</b> only: the <c>yamlContent</c> tool-call argument is the source of truth (F6).
+     /// Returns the most recently extracted block, or <paramref name="current"/> when no block is
+     /// found.
+     /// </summary>
+     [System.Obsolete("Use the yamlContent tool-call argument instead; regex extraction is a logged fallback.")]
+     private static string? ExtractYamlFromContent(string? content, string? current)
+        {
         if (string.IsNullOrWhiteSpace(content))
             return current;
 
         var match = Regex.Match(content, @"```yaml\s*(?<yaml>[\s\S]*?)\s*```", RegexOptions.IgnoreCase);
         if (match.Success)
-         {
-            var extracted = match.Groups["yaml"].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(extracted) && (extracted.Contains("input:") || extracted.Contains("output:")))
+          {
+           var extracted = match.Groups["yaml"].Value.Trim();
+           if (!string.IsNullOrWhiteSpace(extracted) && (extracted.Contains("input:") || extracted.Contains("output:")))
              {
-                return extracted;
+             return extracted;
              }
-         }
+          }
 
         return current;
-     }
+        }
+
+     /// <summary>
+     /// Resolves the plan YAML with the single-path precedence required by F6: the
+     /// <c>yamlContent</c> tool-call argument wins; the regex-extracted content is only used when
+     /// the argument is absent. When the regex fallback is actually used, a single non-silent
+     /// notice is logged so the deprecated path is never silent.
+     /// </summary>
+     private string? ResolveYaml(string? argYaml, string? contentYaml, string? producedYaml, ref bool noticeFallback)
+        {
+        if (!string.IsNullOrWhiteSpace(argYaml))
+            {
+             producedYaml = argYaml;
+             return producedYaml;
+            }
+
+        if (!string.IsNullOrWhiteSpace(contentYaml))
+            {
+             if (contentYaml != producedYaml)
+                 {
+                 if (!noticeFallback)
+                    {
+                     _tui.RenderFallbackNotice();
+                     noticeFallback = true;
+                     }
+
+                     producedYaml = contentYaml;
+                  }
+
+              return producedYaml;
+            }
+
+        return producedYaml;
+        }
 }

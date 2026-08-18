@@ -73,10 +73,16 @@ public class AgentCommand : Command
         seedOption.DefaultValueFactory = _ => 0;
 
         var repeatOption = new Option<int>("--repeat")
-          {
+           {
             Description = "Number of replications of the validated plan for determinism/variance measurement (default: 1)."
-          };
+           };
         repeatOption.DefaultValueFactory = _ => 1;
+
+        var sequentialOption = new Option<bool>("--sequential")
+           {
+            Description = "Execute tool calls one at a time instead of running independent calls in parallel (default: parallel)."
+           };
+        sequentialOption.DefaultValueFactory = _ => false;
 
         Arguments.Add(promptArgument);
         Options.Add(promptOption);
@@ -89,6 +95,7 @@ public class AgentCommand : Command
         Options.Add(temperatureOption);
         Options.Add(seedOption);
         Options.Add(repeatOption);
+        Options.Add(sequentialOption);
 
         this.SetAction(async (parseResult, ct) =>
         {
@@ -104,6 +111,7 @@ public class AgentCommand : Command
             var temperature = parseResult.GetValue(temperatureOption);
             var seed = parseResult.GetValue(seedOption);
             var repeat = parseResult.GetValue(repeatOption);
+            var sequential = parseResult.GetValue(sequentialOption);
 
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -144,7 +152,8 @@ public class AgentCommand : Command
                     {
                  Temperature = temperature,
                  Seed = seed,
-                 Repeat = repeat
+                 Repeat = repeat,
+                 Sequential = sequential
                     };
 
               // Execute initial turn
