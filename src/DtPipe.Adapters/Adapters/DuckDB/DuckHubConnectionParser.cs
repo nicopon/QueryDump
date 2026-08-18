@@ -71,7 +71,8 @@ public static class DuckHubConnectionParser
             {
                 $"INSTALL {extensionName};",
                 $"LOAD {extensionName};",
-                $"ATTACH '{escapedDetails}' AS {alias} (TYPE {typeParam});"
+                $"ATTACH '{escapedDetails}' AS {alias} (TYPE {typeParam});",
+                $"USE {alias};"
             };
         }
 
@@ -88,8 +89,8 @@ public static class DuckHubConnectionParser
 
     private static string GetDatabaseAlias(string provider, string connectionDetails)
     {
-        // Try to find Database= or Db= in connection details
-        var match = Regex.Match(connectionDetails, @"\b(?:Database|Db)\s*=\s*([^;]+)", RegexOptions.IgnoreCase);
+        // Try to find Database=, DbName=, or Db= in connection details (supports semicolon or space delimited)
+        var match = Regex.Match(connectionDetails, @"\b(?:Database|DbName|Db)\s*[=:]\s*([^;\s]+)", RegexOptions.IgnoreCase);
         if (match.Success)
         {
             var dbName = match.Groups[1].Value.Trim('\'', '"', ' ');

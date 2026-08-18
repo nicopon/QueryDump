@@ -46,3 +46,79 @@ services:
     entrypoint: /bin/sh -c "while true; do sleep 3600; done"
     network_mode: service:mssql
 
+  mysql:
+    image: mysql:8.4
+    container_name: dtpipe-integ-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: integration
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -ppassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: dtpipe-integ-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: dtpipe-integ-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb --ignore-existing myminio/dtpipe-test-bucket;
+      /usr/bin/mc anonymous set public myminio/dtpipe-test-bucket;
+      exit 0;
+      "
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    container_name: dtpipe-integ-azurite
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite-data:/var/opt/azurite
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 10000 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  azurite-init:
+    image: mcr.microsoft.com/azure-cli:latest
+    container_name: dtpipe-integ-azurite-init
+    depends_on:
+      azurite:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      az storage container create --name dtpipe-azure-bucket --connection-string 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;' ;
+      exit 0;
+      "
+
+volumes:
+  minio-data:
+  azurite-data:

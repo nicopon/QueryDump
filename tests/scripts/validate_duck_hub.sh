@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# validate_duck_hub.sh — Integration test for duck+{provider}: hub connections and retry policy
+# validate_duck_hub.sh — Integration test for duck+{provider}: hub connections (SQLite, Postgres, MySQL, S3/MinIO, Azure/Azurite, Excel) and retry policy
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DTPIPE="${DTPIPE:-$ROOT_DIR/src/DtPipe/bin/Debug/net10.0/DtPipe}"
+if [ ! -f "$DTPIPE" ]; then
+    DTPIPE="$ROOT_DIR/dist/release/dtpipe"
+fi
+
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 TMP_DIR="$(mktemp -d)"
 
@@ -14,7 +18,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== Testing DuckDB Hub (duck+sqlite:) and Retry Policy ==="
+echo "=== Testing DuckDB Hub (duck+{provider}:) Integration Suite ==="
 
 mkdir -p "$ARTIFACTS_DIR"
 
@@ -31,9 +35,14 @@ if [ ! -f "$SRC_CSV" ]; then
       -o "$SRC_CSV" --no-stats
 fi
 
+SRC_LINES=$(wc -l < "$SRC_CSV" | tr -d ' ')
+
+# ------------------------------------------------------------------------------
+# 1. Test SQLite via duck+sqlite:
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 1: DuckDB Hub (duck+sqlite:) ---"
 SQLITE_TGT="$TMP_DIR/hub_target.sqlite"
 
-# 1. Test writing to an attached SQLite database via duck+sqlite:
 echo "Testing write via duck+sqlite: ..."
 "$DTPIPE" -i "$SRC_CSV" -o "duck+sqlite:$SQLITE_TGT" --table "users" --strategy Recreate --no-stats --retry
 
@@ -41,25 +50,134 @@ if [ ! -f "$SQLITE_TGT" ]; then
     echo "FAIL: Target SQLite DB $SQLITE_TGT was not created."
     exit 1
 fi
-
 echo "  -> Write via duck+sqlite: PASSED"
 
-# 2. Test reading from an attached SQLite database via duck+sqlite:
 echo "Testing read via duck+sqlite: ..."
-"$DTPIPE" -i "duck+sqlite:$SQLITE_TGT" --query "SELECT * FROM hub_target.users ORDER BY Id" -o "$TMP_DIR/read_out.csv" --no-stats --retry
+"$DTPIPE" -i "duck+sqlite:$SQLITE_TGT" --query "SELECT * FROM users ORDER BY Id" -o "$TMP_DIR/sqlite_read.csv" --no-stats --retry
 
-if [ ! -f "$TMP_DIR/read_out.csv" ]; then
-    echo "FAIL: Output file read_out.csv was not created."
-    exit 1
-fi
-
-SRC_LINES=$(wc -l < "$SRC_CSV" | tr -d ' ')
-OUT_LINES=$(wc -l < "$TMP_DIR/read_out.csv" | tr -d ' ')
-
+OUT_LINES=$(wc -l < "$TMP_DIR/sqlite_read.csv" | tr -d ' ')
 if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
-    echo "FAIL: Expected $SRC_LINES lines in output, got $OUT_LINES"
+    echo "FAIL: Expected $SRC_LINES lines in SQLite output, got $OUT_LINES"
+    exit 1
+fi
+echo "  -> Read via duck+sqlite: PASSED ($OUT_LINES lines matched)"
+
+# ------------------------------------------------------------------------------
+# 2. Test PostgreSQL via duck+pg:
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 2: DuckDB Hub (duck+pg:) ---"
+PG_CONN="duck+pg:host=127.0.0.1 port=5440 dbname=integration user=postgres password=password"
+
+if nc -z 127.0.0.1 5440 2>/dev/null || nc -w 2 127.0.0.1 5440 2>/dev/null; then
+    echo "Testing write via duck+pg: ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "$PG_CONN" --table "duck_pg_users" --strategy Recreate --no-stats --retry
+
+    echo "Testing read via duck+pg: ..."
+    "$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM duck_pg_users ORDER BY Id" -o "$TMP_DIR/pg_read.csv" --no-stats --retry
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/pg_read.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines in Postgres output, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Write and Read via duck+pg: PASSED ($OUT_LINES lines matched)"
+else
+    echo "SKIP: PostgreSQL container (port 5440) not reachable."
+fi
+
+# ------------------------------------------------------------------------------
+# 3. Test MySQL via duck+mysql:
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 3: DuckDB Hub (duck+mysql:) ---"
+MYSQL_CONN="duck+mysql:host=127.0.0.1 port=3306 database=integration user=testuser password=password"
+
+if nc -z 127.0.0.1 3306 2>/dev/null || nc -w 2 127.0.0.1 3306 2>/dev/null; then
+    echo "Testing write via duck+mysql: ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "$MYSQL_CONN" --table "duck_mysql_users" --strategy Recreate --no-stats --retry
+
+    echo "Testing read via duck+mysql: ..."
+    "$DTPIPE" -i "$MYSQL_CONN" --query "SELECT * FROM duck_mysql_users ORDER BY Id" -o "$TMP_DIR/mysql_read.csv" --no-stats --retry
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/mysql_read.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines in MySQL output, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Write and Read via duck+mysql: PASSED ($OUT_LINES lines matched)"
+else
+    echo "SKIP: MySQL container (port 3306) not reachable."
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Test S3 Object Storage (MinIO) via DuckDB httpfs / duck+s3:
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 4: DuckDB S3 / MinIO (httpfs) ---"
+if nc -z 127.0.0.1 9000 2>/dev/null || nc -w 2 127.0.0.1 9000 2>/dev/null; then
+    S3_INIT="INSTALL httpfs; LOAD httpfs; SET s3_endpoint='127.0.0.1:9000'; SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin'; SET s3_use_ssl=false; SET s3_url_style='path';"
+    S3_TARGET="s3://dtpipe-test-bucket/users.parquet"
+
+    echo "Testing write to MinIO S3 bucket via DuckDB httpfs: ..."
+    "$DTPIPE" -i "$SRC_CSV" --duck-init "$S3_INIT" -o "$S3_TARGET" --strategy Recreate --no-stats
+
+    echo "Testing read from MinIO S3 bucket via DuckDB httpfs: ..."
+    "$DTPIPE" -i "$S3_TARGET" --duck-init "$S3_INIT" -o "$TMP_DIR/s3_read.csv" --no-stats
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/s3_read.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines in S3/MinIO output, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Write and Read Parquet on MinIO S3: PASSED ($OUT_LINES lines matched)"
+else
+    echo "SKIP: MinIO container (port 9000) not reachable."
+fi
+
+# ------------------------------------------------------------------------------
+# 5. Test Excel (.xlsx) via DuckDB excel extension
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 5: DuckDB Excel Extension (.xlsx) ---"
+EXCEL_FILE="$TMP_DIR/users.xlsx"
+EXCEL_INIT="INSTALL excel; LOAD excel;"
+
+echo "Testing export to Excel (.xlsx) via DuckDB excel extension..."
+"$DTPIPE" -i "$SRC_CSV" -o "duck:$TMP_DIR/excel_temp.duckdb" --table "users" --post-exec "$EXCEL_INIT COPY (SELECT * FROM users) TO '$EXCEL_FILE' WITH (FORMAT XLSX);" --no-stats >/dev/null 2>&1
+
+if [ -f "$EXCEL_FILE" ]; then
+    echo "Testing reading from Excel (.xlsx) via DuckDB read_xlsx..."
+    "$DTPIPE" -i "duck:memory" --duck-init "$EXCEL_INIT" --query "SELECT * FROM read_xlsx('$EXCEL_FILE')" -o "$TMP_DIR/excel_read.csv" --no-stats
+    OUT_LINES=$(wc -l < "$TMP_DIR/excel_read.csv" | tr -d ' ')
+    if [ "$OUT_LINES" -lt 900 ]; then
+        echo "FAIL: Expected at least 900 lines in Excel output, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Write and Read Excel (.xlsx) via DuckDB excel extension: PASSED ($OUT_LINES lines matched)"
+else
+    echo "FAIL: Target Excel file $EXCEL_FILE was not created."
     exit 1
 fi
 
-echo "  -> Read via duck+sqlite: PASSED ($OUT_LINES lines matched)"
-echo "=== All DuckDB Hub Integration Tests PASSED ==="
+# ------------------------------------------------------------------------------
+# 6. Test Azure Blob Storage (Azurite) via DuckDB azure extension
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test 6: DuckDB Azure Blob Storage (Azurite) ---"
+if nc -z 127.0.0.1 10000 2>/dev/null || nc -w 2 127.0.0.1 10000 2>/dev/null; then
+    AZURE_INIT="INSTALL azure; LOAD azure; CREATE SECRET azurite_secret (TYPE AZURE, PROVIDER CONNECTION_STRING, CONNECTION_STRING 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;');"
+    AZURE_TARGET="azure://dtpipe-azure-bucket/users.parquet"
+
+    echo "Testing write to Azure Blob Storage (Azurite) via DuckDB azure: ..."
+    "$DTPIPE" -i "$SRC_CSV" --duck-init "$AZURE_INIT" -o "$AZURE_TARGET" --strategy Recreate --no-stats
+
+    echo "Testing read from Azure Blob Storage (Azurite) via DuckDB azure: ..."
+    "$DTPIPE" -i "$AZURE_TARGET" --duck-init "$AZURE_INIT" -o "$TMP_DIR/azure_read.csv" --no-stats
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/azure_read.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines in Azure output, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Write and Read Parquet on Azure Blob (Azurite): PASSED ($OUT_LINES lines matched)"
+else
+    echo "SKIP: Azurite container (port 10000) not reachable."
+fi
+
+echo -e "\n=== All DuckDB Extender & Hub Integration Tests Completed Successfully ==="

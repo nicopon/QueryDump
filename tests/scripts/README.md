@@ -6,8 +6,8 @@ This directory contains a suite of Bash scripts used to validate DtPipe function
 
 DtPipe uses a centralized Docker infrastructure for all integration tests.
 
-- **Shared Infrastructure**: All database containers (Postgres, MSSQL, Oracle) are defined in [tests/infra/docker-compose.yml](../infra/docker-compose.yml).
-- **Startup & Health**: Scripts call [start_infra.sh](../infra/start_infra.sh) which ensures all services are not just running, but fully ready for SQL connections.
+- **Shared Infrastructure**: All database and storage containers (Postgres, MSSQL, Oracle, MySQL, MinIO S3) are defined in [tests/infra/docker-compose.yml](../infra/docker-compose.yml).
+- **Startup & Health**: Scripts call [start_infra.sh](../infra/start_infra.sh) which ensures all services are not just running, but fully ready for connections.
 - **Persistence**: Containers persist after scripts finish. Use [stop_infra.sh](../infra/stop_infra.sh) if you need a full cleanup.
 
 ## Quick Start
@@ -19,7 +19,7 @@ DtPipe uses a centralized Docker infrastructure for all integration tests.
 # No Docker: transformers, schema, options, hooks, docs, DAG topologies
 ./tests/scripts/run.sh --test
 
-# Docker required: above + driver chain + upsert/ignore
+# Docker required: above + driver chain + upsert/ignore + DuckDB hub
 ./tests/scripts/run.sh --test-docker
 
 # 135-command catalog suite (Docker + init_test_data.sh required)
@@ -38,7 +38,7 @@ DtPipe uses a centralized Docker infrastructure for all integration tests.
 |:---|:---|:---|
 | `--smoke` | Golden smoke test: edge cases, 1M rows, all DB drivers | Yes |
 | `--test` | Transformers, schema, options, hooks, docs, DAG | No |
-| `--test-docker` | All `--test` suites + driver chain (upsert/ignore/cross-DB) | Yes |
+| `--test-docker` | All `--test` suites + driver chain (upsert/ignore/cross-DB) + DuckDB Hub | Yes |
 | `--catalog` | 135-command catalog (requires `init_test_data.sh` first) | Yes |
 | `--dag` | DAG topology validation only | No |
 | `--bench` | Performance benchmarks (linear pipeline, DuckDB) | No |
@@ -51,6 +51,7 @@ DtPipe uses a centralized Docker infrastructure for all integration tests.
 |:---|:---|:---|
 | **`smoke.sh`** | Vicious edge cases (CSV escaping, SQL injection, NULL, UTF-8), 1M rows, composite-key upsert on all DB drivers. | Yes |
 | **`validate_drivers.sh`** | Read/write for all drivers, Upsert/Ignore strategies, cross-driver chain (CSV→PG→MSSQL→Oracle→Parquet), Oracle insert modes. | Yes |
+| **`validate_duck_hub.sh`** | DuckDB Extender & Hub (`duck+{provider}:`): SQLite, Postgres, MySQL, and MinIO S3 Object Storage (`httpfs` / `duck+s3:`). | Yes |
 
 ### 🧪 Feature Validation (no Docker)
 | Script | Validates |

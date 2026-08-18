@@ -84,6 +84,18 @@ is_db_ready() {
                 return $?
             fi
              ;;
+         "dtpipe-integ-mysql")
+            $ENGINE_CMD exec "$container" mysqladmin ping -h 127.0.0.1 -u root -ppassword >/dev/null 2>&1
+            return $?
+             ;;
+         "dtpipe-integ-minio")
+            $ENGINE_CMD exec "$container" curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1
+            return $?
+             ;;
+         "dtpipe-integ-azurite")
+            $ENGINE_CMD exec "$container" nc -z 127.0.0.1 10000 >/dev/null 2>&1
+            return $?
+             ;;
          *)
             return 0 # Default to success for others
              ;;
@@ -91,7 +103,7 @@ is_db_ready() {
 }
 
 # List of expected containers from docker-compose.yml
-CONTAINERS=("dtpipe-integ-postgres" "dtpipe-integ-mssql" "dtpipe-integ-oracle" "dtpipe-integ-mssql-tools")
+CONTAINERS=("dtpipe-integ-postgres" "dtpipe-integ-mssql" "dtpipe-integ-oracle" "dtpipe-integ-mssql-tools" "dtpipe-integ-mysql" "dtpipe-integ-minio" "dtpipe-integ-azurite")
 
 check_all_ready() {
     for container in "${CONTAINERS[@]}"; do

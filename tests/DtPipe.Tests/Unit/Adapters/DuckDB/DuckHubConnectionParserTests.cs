@@ -28,10 +28,11 @@ public class DuckHubConnectionParserTests
         Assert.Equal("Host=localhost;Database=customers_db;User=root;", info.ConnectionDetails);
         Assert.Equal("Data Source=:memory:;", info.EffectiveConnectionString);
         
-        Assert.Equal(3, info.InitSqlStatements.Length);
+        Assert.Equal(4, info.InitSqlStatements.Length);
         Assert.Equal("INSTALL mysql;", info.InitSqlStatements[0]);
         Assert.Equal("LOAD mysql;", info.InitSqlStatements[1]);
         Assert.Equal("ATTACH 'Host=localhost;Database=customers_db;User=root;' AS customers_db (TYPE MYSQL);", info.InitSqlStatements[2]);
+        Assert.Equal("USE customers_db;", info.InitSqlStatements[3]);
     }
 
     [Fact]
@@ -43,9 +44,11 @@ public class DuckHubConnectionParserTests
         Assert.True(info.IsHub);
         Assert.Equal("pg", info.Provider);
         Assert.Equal("sales", info.Alias);
+        Assert.Equal(4, info.InitSqlStatements.Length);
         Assert.Equal("INSTALL postgres;", info.InitSqlStatements[0]);
         Assert.Equal("LOAD postgres;", info.InitSqlStatements[1]);
         Assert.Equal("ATTACH 'Host=127.0.0.1;Db=sales;Password=''123'';' AS sales (TYPE POSTGRES);", info.InitSqlStatements[2]);
+        Assert.Equal("USE sales;", info.InitSqlStatements[3]);
     }
 
     [Fact]
@@ -57,9 +60,11 @@ public class DuckHubConnectionParserTests
         Assert.True(info.IsHub);
         Assert.Equal("sqlite", info.Provider);
         Assert.Equal("prod", info.Alias);
+        Assert.Equal(4, info.InitSqlStatements.Length);
         Assert.Equal("INSTALL sqlite;", info.InitSqlStatements[0]);
         Assert.Equal("LOAD sqlite;", info.InitSqlStatements[1]);
         Assert.Equal("ATTACH 'data/prod.db' AS prod (TYPE SQLITE);", info.InitSqlStatements[2]);
+        Assert.Equal("USE prod;", info.InitSqlStatements[3]);
     }
 
     [Fact]

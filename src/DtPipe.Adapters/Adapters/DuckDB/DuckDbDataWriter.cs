@@ -70,7 +70,14 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
         else
         {
-            _unquotedSchema = _hubInfo.IsHub ? _hubInfo.Alias : "main";
+            if (_hubInfo.IsHub && (_hubInfo.Provider == "pg" || _hubInfo.Provider == "postgres" || _hubInfo.Provider == "postgresql"))
+            {
+                _unquotedSchema = "public";
+            }
+            else
+            {
+                _unquotedSchema = null;
+            }
             _unquotedTable = _options.Table;
         }
         _quotedTargetTableName = BuildQuotedTableName(_unquotedSchema, _unquotedTable);
@@ -347,13 +354,20 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
     }
 
-    private async Task<bool> TableExistsAsync(string schema, string table, CancellationToken ct)
+    private async Task<bool> TableExistsAsync(string? schema, string table, CancellationToken ct)
     {
         using var cmd = _connection!.CreateCommand();
         // DuckDB lowercases unquoted names in information_schema. 
         // Using LOWER() ensures we find the table regardless of whether the test created it 
         // unquoted (lowercase) or quoted (case-preserved).
-        cmd.CommandText = $"SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_schema) = LOWER('{schema}') AND LOWER(table_name) = LOWER('{table}')";
+        if (string.IsNullOrEmpty(schema))
+        {
+            cmd.CommandText = $"SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_name) = LOWER('{table}')";
+        }
+        else
+        {
+            cmd.CommandText = $"SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_schema) = LOWER('{schema}') AND LOWER(table_name) = LOWER('{table}')";
+        }
         
         if (cmd is System.Data.Common.DbCommand dbCmd)
         {
@@ -410,15 +424,15 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
 
         var appenderTarget = _stagingTable ?? _unquotedTable!;
-        var appenderSchema = _stagingTable != null ? null : (_unquotedSchema == "main" ? null : _unquotedSchema);
 
-        if (_stagingTable == null && _unquotedSchema != null && _unquotedSchema != "main")
+        if (_hubInfo.IsHub)
         {
-            _appender = ((DuckDBConnection)_connection!).CreateAppender(_unquotedSchema, null, appenderTarget);
+            var hubSchema = _stagingTable != null ? null : _unquotedSchema;
+            _appender = ((DuckDBConnection)_connection!).CreateAppender(_hubInfo.Alias, hubSchema, appenderTarget);
         }
-        else if (appenderSchema != null)
+        else if (_unquotedSchema != null && _unquotedSchema != "main")
         {
-            _appender = ((DuckDBConnection)_connection!).CreateAppender(appenderSchema, appenderTarget);
+            _appender = ((DuckDBConnection)_connection!).CreateAppender(_unquotedSchema, appenderTarget);
         }
         else
         {
@@ -426,11 +440,12 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
     }
 
-    private string BuildQuotedTableName(string schema, string table)
+    private string BuildQuotedTableName(string? schema, string table)
     {
-        var s = _dialect.Quote(schema);
         var t = _dialect.Quote(table);
-        return string.IsNullOrEmpty(schema) ? t : $"{s}.{t}";
+        if (string.IsNullOrEmpty(schema)) return t;
+        var s = _dialect.Quote(schema);
+        return $"{s}.{t}";
     }
 
     private string GenerateCreateTableSql(string tableName, IEnumerable<PipeColumnInfo> columns, IReadOnlyList<string>? keyColumns = null)
@@ -465,7 +480,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         if (_cachedSchema != null) return _cachedSchema;
         await EnsureConnectionOpenAsync(ct);
 
-        var schemaName = _unquotedSchema ?? "main";
+        var schemaName = _unquotedSchema;
         var tableName = _unquotedTable ?? _options.Table;
 
         if (!await TableExistsAsync(schemaName, tableName, ct))
@@ -475,7 +490,8 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         var pkCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         using var cmd = _connection!.CreateCommand();
-        cmd.CommandText = $"SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE LOWER(table_schema) = LOWER('{schemaName}') AND LOWER(table_name) = LOWER('{tableName}') ORDER BY ordinal_position";
+        var schemaFilter = string.IsNullOrEmpty(schemaName) ? "" : $"AND LOWER(table_schema) = LOWER('{schemaName}')";
+        cmd.CommandText = $"SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE LOWER(table_name) = LOWER('{tableName}') {schemaFilter} ORDER BY ordinal_position";
 
         if (cmd is System.Data.Common.DbCommand dbCmd)
         {

@@ -33,7 +33,7 @@ Thumbs.db
 
 # Dotnet
 .net/
-artifacts/
+/artifacts/
 BenchmarkDotNet.Artifacts/
 
 # Database
@@ -44,9 +44,10 @@ BenchmarkDotNet.Artifacts/
 
 # Test Data
 tests/output/*
+tests/artifacts/
 tests/DtPipe.Tests/Data/Target/*
 !tests/DtPipe.Tests/Data/Target/.gitkeep
-tests/scripts/artifacts/
+tests/scripts/artifacts/*
 !tests/scripts/artifacts/.gitkeep
 tests/scripts/sandbox/
 
