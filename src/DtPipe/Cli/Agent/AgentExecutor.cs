@@ -61,7 +61,7 @@ public class AgentExecutor
                 .StartAsync($"Agent thinking (Step {currentStepNum})...", async ctx =>
                 {
                     var compactedMessages = _windowManager.Compact(Messages);
-                    response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages, tools, 16384, ct);
+                    response = await _llmClient.ChatAsync(baseUrl, model, compactedMessages, tools, 16384, temperature: 0.0, seed: null, ct);
                     
                     if (string.IsNullOrEmpty(response.Error))
                     {

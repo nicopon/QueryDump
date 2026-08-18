@@ -96,9 +96,11 @@ public class OllamaClient : ILlmClient
         List<ChatMessage> messages,
         List<ToolDefinition> tools,
         int numCtx = 16384,
+        double temperature = 0.7,
+        int? seed = null,
         CancellationToken ct = default)
-    {
-        // Map messages to OllamaChatMessage
+     {
+         // Map messages to OllamaChatMessage
         var ollamaMessages = messages.Select(m => new OllamaChatMessage(
             m.Role,
             m.Content,
@@ -107,13 +109,13 @@ public class OllamaClient : ILlmClient
             m.ToolCalls?.Select(tc => new OllamaToolCall(tc.Id, new OllamaFunctionCall(tc.Name, tc.Arguments))).ToList()
         )).ToList();
 
-        // Map tools to OllamaToolDefinition
+         // Map tools to OllamaToolDefinition
         var ollamaTools = tools.Select(t => new OllamaToolDefinition(
-            "function",
+             "function",
             new ToolFunction(t.Name, t.Description, t.ParametersSchema)
         )).ToList();
 
-        var response = await InternalChatAsync(baseUrl, model, ollamaMessages, ollamaTools, numCtx, ct);
+        var response = await InternalChatAsync(baseUrl, model, ollamaMessages, ollamaTools, numCtx, temperature, seed, ct);
 
         if (response.Error != null)
         {
@@ -137,18 +139,32 @@ public class OllamaClient : ILlmClient
         List<OllamaChatMessage> messages,
         List<OllamaToolDefinition> tools,
         int numCtx,
+        double temperature,
+        int? seed,
         CancellationToken ct)
-    {
+     {
         var url = baseUrl.TrimEnd('/') + "/api/chat";
 
+        // temperature is always sent so a run can be made fully deterministic (temperature = 0).
+        // seed is only sent when explicitly provided (null => omit, provider picks its own).
+        var options = new Dictionary<string, object>
+         {
+            ["num_ctx"] = numCtx,
+            ["temperature"] = temperature
+         };
+        if (seed.HasValue)
+         {
+            options["seed"] = seed.Value;
+         }
+
         var requestBody = new
-        {
+         {
             model = model,
             messages = messages,
             tools = tools,
-            options = new { num_ctx = numCtx },
+            options = options,
             stream = false
-        };
+         };
 
         var jsonOptions = new JsonSerializerOptions
         {

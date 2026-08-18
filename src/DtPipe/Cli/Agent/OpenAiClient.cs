@@ -11,6 +11,11 @@ using OpenAI.Chat;
 
 namespace DtPipe.Cli.Agent;
 
+// The OpenAI .NET SDK flags ChatCompletionOptions.Seed with OPENAI001 ("for evaluation
+// purposes only"). We use it deliberately to make agent runs deterministic and replicable
+// (F3), so the diagnostic is suppressed for this file.
+#pragma warning disable OPENAI001
+
 public class OpenAiClient : ILlmClient
 {
     private readonly string _apiKey;
@@ -69,8 +74,10 @@ public class OpenAiClient : ILlmClient
         List<ChatMessage> messages,
         List<ToolDefinition> tools,
         int maxTokens = 16384,
+        double temperature = 0.7,
+        int? seed = null,
         CancellationToken ct = default)
-    {
+      {
         try
         {
             var clientOptions = new OpenAIClientOptions();
@@ -121,11 +128,19 @@ public class OpenAiClient : ILlmClient
                 BinaryData.FromString(t.ParametersSchema.GetRawText())
             )).ToList();
 
-            var options = new ChatCompletionOptions();
+            var options = new ChatCompletionOptions
+             {
+                 Temperature = (float)temperature
+             };
+            if (seed.HasValue)
+             {
+                 options.Seed = seed.Value;
+             }
+
             foreach (var tool in chatTools)
-            {
+             {
                 options.Tools.Add(tool);
-            }
+             }
 
             ClientResult<ChatCompletion> result = await chatClient.CompleteChatAsync(sdkMessages, options, ct);
             ChatCompletion completion = result.Value;
