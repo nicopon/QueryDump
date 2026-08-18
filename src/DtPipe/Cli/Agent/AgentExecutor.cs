@@ -142,12 +142,14 @@ public class AgentExecutor
 
                         if (string.IsNullOrEmpty(response.Error))
                            {
-                             var message = response.Message;
-                             messages.Add(message);
-                             currentReasoning = message.Content;
+                     var message = response.Message;
+                              messages.Add(message);
+                              currentReasoning = message.Content;
 
+                            #pragma warning disable CS0618 // ExtractYamlFromContent is the logged, deprecated regex fallback (F6)
                              contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
-                             producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
+                            #pragma warning restore CS0618
+                              producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
 
                              if (message.ToolCalls != null && message.ToolCalls.Count > 0)
                                 {
@@ -167,11 +169,13 @@ public class AgentExecutor
                  if (string.IsNullOrEmpty(response.Error))
                      {
                      var message = response.Message;
-                     messages.Add(message);
-                     currentReasoning = message.Content;
+                      messages.Add(message);
+                      currentReasoning = message.Content;
 
+                     #pragma warning disable CS0618 // ExtractYamlFromContent is the logged, deprecated regex fallback (F6)
                      contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
-                     producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
+                     #pragma warning restore CS0618
+                      producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
 
                        if (message.ToolCalls != null && message.ToolCalls.Count > 0)
                            {

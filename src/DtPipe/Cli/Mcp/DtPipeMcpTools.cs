@@ -16,6 +16,7 @@ using DtPipe.Configuration;
 using DtPipe.Cli;
 using DtPipe.Cli.Pipeline;
 using DtPipe.Cli.Infrastructure;
+using DtPipe.Cli.Security;
 using ModelContextProtocol.Server;
 
 namespace DtPipe.Cli.Mcp;
@@ -27,6 +28,13 @@ public class DtPipeMcpTools
     private readonly IEnumerable<IDataWriterFactory> _writerFactories;
     private readonly IMcpHelpService _mcpHelpService;
     private readonly IServiceProvider _serviceProvider;
+
+       /// <summary>
+        /// Optional agent-scoped options (F1/F2). When set by the agent command, governs the
+        /// guardrails: <see cref="DtPipe.Cli.Agent.AgentOptions.Apply"/> enables a real write (subject
+        /// to the approval gate), and the allow-* flags configure the SQL safety policy.
+        /// </summary>
+     public DtPipe.Cli.Agent.AgentOptions? AgentOptions { get; set; }
 
     public DtPipeMcpTools(
         IEnumerable<IStreamReaderFactory> readerFactories,
@@ -243,33 +251,115 @@ public class DtPipeMcpTools
         }
     }
 
-    [McpServerTool(Name = "execute-yaml-job")]
-    [System.ComponentModel.Description("Execute a pipeline configuration specified directly as YAML. This is the only way to run pipelines and avoids command-line quoting/escaping issues.")]
-    public async Task<string> ExecuteYamlJob(
-        [System.ComponentModel.Description("The complete YAML configuration string representing the pipeline")] string yamlContent,
-        CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(yamlContent))
-            return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
+     [McpServerTool(Name = "execute-yaml-job")]
+     [System.ComponentModel.Description("Execute a pipeline configuration specified directly as YAML. This is the only way to run pipelines and avoids command-line quoting/escaping issues. By default the run is a dry-run (no data is written); pass apply=true to perform a real write, which additionally requires approval and a compliant SQL safety check.")]
+     public async Task<string> ExecuteYamlJob(
+          [System.ComponentModel.Description("The complete YAML configuration string representing the pipeline")] string yamlContent,
+          [System.ComponentModel.Description("Perform a real write. Default false => dry-run only.")] bool apply = false,
+          [System.ComponentModel.Description("Allow destructive SQL verbs (DROP/DELETE/TRUNCATE/UPDATE/ALTER/INSERT/ATTACH). Default deny.")] bool allowDestructive = false,
+          [System.ComponentModel.Description("Allow network access in SQL (LOAD httpfs/azure, remote read_parquet). Default deny.")] bool allowNetwork = false,
+         CancellationToken ct = default)
+      {
+         if (string.IsNullOrWhiteSpace(yamlContent))
+             return JsonSerializer.Serialize(new { success = false, error = "YAML job content cannot be empty." });
 
-        try
-        {
+         try
+          {
             var parsed = ParseAndValidateYaml(yamlContent);
 
             if (parsed.Errors.Count > 0)
-            {
-                return JsonSerializer.Serialize(new
                 {
+                 return JsonSerializer.Serialize(new
+                   {
                     success = false,
                     stage = "validation",
                     errors = parsed.Errors
-                }, new JsonSerializerOptions { WriteIndented = true });
-            }
+                   }, new JsonSerializerOptions { WriteIndented = true });
+                }
+
+                  // F2 — guardrails. Fail-closed: by default nothing is written. A real write requires
+                  // the apply flag, an approving gate, and a clean SQL safety check.
+                  // When the agent set options, they are the source of truth for the safety policy and
+                  // the approval override; the tool parameters are the MCP/standalone defaults.
+              var agentOpts = AgentOptions;
+             bool effectiveAllowDestructive = agentOpts?.AllowDestructive ?? allowDestructive;
+             bool effectiveAllowNetwork = agentOpts?.AllowNetwork ?? allowNetwork;
+
+              var safety = DefaultSqlSafetyPolicy.DryRunYaml(yamlContent, new SqlSafetyOptions
+                    {
+                  AllowDestructive = effectiveAllowDestructive,
+                  AllowNetwork = effectiveAllowNetwork
+                   });
+
+             if (!safety.Allowed)
+                   {
+                   return JsonSerializer.Serialize(new
+                      {
+                      success = false,
+                      stage = "safety",
+                      applied = false,
+                      violation = safety.Violations,
+                      message = "Execution blocked by the SQL safety policy. Re-run with the appropriate --allow-* flag."
+                       }, new JsonSerializerOptions { WriteIndented = true });
+                   }
+
+                   // Determine whether the operator consented to a real write. In the agent context
+                   // the --apply flag (carried via AgentOptions) is the authoritative consent; outside
+                   // the agent it comes from the tool parameter.
+                   bool consentedApply = AgentOptions != null ? AgentOptions.Apply : apply;
+
+                   // A real write requires consent. In the agent context the --apply flag IS the
+                   // non-interactive approval. Outside the agent, a shared approval gate (fail-closed,
+                   // denies non-interactive writes) makes the decision.
+                   if (consentedApply && AgentOptions == null)
+                      {
+                       var approvalGate = _serviceProvider.GetService<IApprovalGate>() ?? new DefaultApprovalGate();
+                       var request = new ApprovalRequest
+                           {
+                           Yaml = yamlContent,
+                           Apply = true,
+                           Interactive = false,
+                           Description = "execute-yaml-job"
+                           };
+
+                        if (!approvalGate.Approve(request))
+                            {
+                          return JsonSerializer.Serialize(new
+                             {
+                              success = true,
+                              stage = "approval",
+                              applied = false,
+                              mode = "dry-run",
+                              message = "Write not approved (non-interactive). No data written — run was a dry-run only."
+                                }, new JsonSerializerOptions { WriteIndented = true });
+                            }
+                       }
+
+                   // apply=false => dry-run by default: the pipeline is validated above but never
+                    // executed, so no data is written. This keeps execute-yaml-job fail-closed.
+                if (!consentedApply)
+                        {
+                       return JsonSerializer.Serialize(new
+                            {
+                           success = true,
+                           stage = "dry-run",
+                           applied = false,
+                           mode = "dry-run",
+                           safety = "ok",
+                           branches = parsed.Dag.Branches.Select(b => new
+                                {
+                             b.Alias,
+                             Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
+                             Output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Output)
+                                }).ToList(),
+                           message = "Dry-run only: apply=false. No data written. Pass apply=true (and approve) to execute."
+                             }, new JsonSerializerOptions { WriteIndented = true });
+                           }
 
             var contexts = parsed.Jobs.ToDictionary(
-                kv => kv.Key,
-                kv => new CliJobContext(null, null, null, Array.Empty<string>())
-            );
+                 kv => kv.Key,
+                 kv => new CliJobContext(null, null, null, Array.Empty<string>())
+               );
 
             var jobService = _serviceProvider.GetRequiredService<DtPipe.Cli.JobService>();
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -279,28 +369,31 @@ public class DtPipeMcpTools
             sw.Stop();
 
             return JsonSerializer.Serialize(new
-            {
+               {
                 success = exitCode == 0,
                 exitCode,
+                applied = true,
+                mode = "write",
                 durationMs = sw.ElapsedMilliseconds,
+                safety = "ok",
                 branches = parsed.Dag.Branches.Select(b => new
-                {
+                   {
                     b.Alias,
                     Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
                     Output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Output)
-                }).ToList()
-            }, new JsonSerializerOptions { WriteIndented = true });
-        }
-        catch (Exception ex)
-        {
-            return JsonSerializer.Serialize(new
-            {
-                success = false,
-                stage = "execution",
-                errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
-            }, new JsonSerializerOptions { WriteIndented = true });
-        }
-    }
+                   }).ToList()
+               }, new JsonSerializerOptions { WriteIndented = true });
+           }
+         catch (Exception ex)
+           {
+             return JsonSerializer.Serialize(new
+               {
+                 success = false,
+                 stage = "execution",
+                 errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
+               }, new JsonSerializerOptions { WriteIndented = true });
+           }
+       }
 
     [McpServerTool(Name = "preview-data")]
     [System.ComponentModel.Description("Preview data from a source (up to 10 rows, with automatic masking of sensitive columns). Example input: 'csv:file.csv' or 'pg:Host=localhost;Database=prod;Username=postgres'")]

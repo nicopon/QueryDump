@@ -63,9 +63,9 @@ public sealed class DefaultSqlSafetyPolicy : ISqlSafetyPolicy
          "TRUNCATE", "DROP", "DELETE", "UPDATE", "ALTER", "ATTACH", "INSERT"
         };
 
-    private static readonly Regex DestructiveRegex = new(
-        @"(^|[\s(])(" + string.Join("|", DestructiveVerbs.Select(Regex.Escape)) + @")\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+     private static readonly Regex DestructiveRegex = new(
+          @"(^|[\s'""(,;=:])(" + string.Join("|", DestructiveVerbs.Select(Regex.Escape)) + @")\b",
+         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex NetworkRegex = new(
         @"(?i)" +
@@ -73,54 +73,69 @@ public sealed class DefaultSqlSafetyPolicy : ISqlSafetyPolicy
         @"(read_parquet|read_csv|read_csv_auto|read_json)\s*\(\s*['""]?(https?|s3|ftp|gs)://",
         RegexOptions.Compiled);
 
-    public SqlSafetyResult Analyze(string sql, SqlSafetyOptions options)
-        {
-        if (string.IsNullOrWhiteSpace(sql))
-            {
-            return SqlSafetyResult.Ok();
-            }
+        public SqlSafetyResult Analyze(string sql, SqlSafetyOptions options)
+           {
+            if (string.IsNullOrWhiteSpace(sql))
+                 {
+                return SqlSafetyResult.Ok();
+                 }
 
-        var violations = new List<string>();
+            var violations = new List<string>();
 
-        var destructiveMatches = DestructiveRegex.Matches(sql)
-            .Select(m => m.Groups[2].Value.ToUpperInvariant())
-            .Distinct()
-            .OrderBy(v => v)
-            .ToList();
+            var destructiveMatches = DestructiveRegex.Matches(sql)
+                 .Select(m => m.Groups[2].Value.ToUpperInvariant())
+                 .Distinct()
+                 .OrderBy(v => v)
+                 .ToList();
 
-        bool networkDetected = NetworkRegex.IsMatch(sql);
+            bool networkDetected = NetworkRegex.IsMatch(sql);
 
-        if (destructiveMatches.Count > 0 && !options.AllowDestructive)
-            {
-            violations.Add(
-                "Destructive SQL verb(s) detected: " +
-                string.Join(", ", destructiveMatches) +
-                ". Set --allow-destructive to permit (default: deny).");
-            }
+            if (destructiveMatches.Count > 0 && !options.AllowDestructive)
+                 {
+                violations.Add(
+                     "Destructive SQL verb(s) detected: " +
+                     string.Join(", ", destructiveMatches) +
+                     ". Set --allow-destructive to permit (default: deny).");
+                 }
 
-        if (networkDetected && !options.AllowNetwork)
-            {
-            violations.Add(
-                "Network access detected in SQL (LOAD httpfs/azure or remote read_parquet/read_csv). " +
-                "Set --allow-network to permit (default: deny).");
-            }
+            if (networkDetected && !options.AllowNetwork)
+                 {
+                violations.Add(
+                     "Network access detected in SQL (LOAD httpfs/azure or remote read_parquet/read_csv). " +
+                     "Set --allow-network to permit (default: deny).");
+                 }
 
-        if (violations.Count == 0)
-            {
+            if (violations.Count == 0)
+                 {
+                return new SqlSafetyResult
+                     {
+                      Allowed = true,
+                      NetworkDetected = networkDetected,
+                      DetectedDestructive = destructiveMatches
+                     };
+                 }
+
             return new SqlSafetyResult
-                {
-                Allowed = true,
-                NetworkDetected = networkDetected,
-                DetectedDestructive = destructiveMatches
-                };
+                 {
+                  Allowed = false,
+                  Violations = violations,
+                  NetworkDetected = networkDetected,
+                  DetectedDestructive = destructiveMatches
+                 };
             }
 
-        return new SqlSafetyResult
-            {
-            Allowed = false,
-            Violations = violations,
-            NetworkDetected = networkDetected,
-            DetectedDestructive = destructiveMatches
-            };
-        }
-}
+          /// <summary>
+           /// Analyzes a whole YAML job string for destructive verbs / network access. This is the
+           /// guardrail's fast pre-check: it fails closed on the raw text so an obviously unsafe plan
+           /// is refused before it is executed. (Per-branch provider-option inspection is a
+           /// finer-grained follow-up; the text scan covers the common cases.)
+           /// </summary>
+        public static SqlSafetyResult DryRunYaml(string yaml, SqlSafetyOptions options)
+             {
+              if (string.IsNullOrWhiteSpace(yaml))
+                   return SqlSafetyResult.Ok();
+
+              var policy = new DefaultSqlSafetyPolicy();
+              return policy.Analyze(yaml, options);
+                  }
+          }

@@ -351,6 +351,12 @@ class Program
 		// MCP Server integration
 		services.AddSingleton<DtPipe.Cli.Mcp.IMcpHelpService, DtPipe.Cli.Mcp.McpHelpService>();
 		services.AddSingleton<DtPipe.Cli.Mcp.DtPipeMcpTools>();
+
+		// F2 guardrails: non-interactive default gate => writes are denied (dry-run only) unless an
+		// explicit override is wired by the command. The SQL safety policy classifies/forbids
+		// destructive verbs and network access.
+		services.AddSingleton<DtPipe.Cli.Security.ISqlSafetyPolicy, DtPipe.Cli.Security.DefaultSqlSafetyPolicy>();
+		services.AddSingleton(sp => (DtPipe.Cli.Security.IApprovalGate)new DtPipe.Cli.Security.DefaultApprovalGate());
 		services.AddMcpServer()
 		        .WithStdioServerTransport()
 		        .WithTools<DtPipe.Cli.Mcp.DtPipeMcpTools>();

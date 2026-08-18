@@ -85,10 +85,28 @@ public class AgentCommand : Command
         sequentialOption.DefaultValueFactory = _ => false;
 
         var modeOption = new Option<AgentMode>("--mode")
-            {
-            Description = "Operating mode. 'plan' (default) only designs & validates a pipeline; 'execute'/'autonomous' may run it through the guardrails."
-            };
+              {
+             Description = "Operating mode. 'plan' (default) only designs & validates a pipeline; 'execute'/'autonomous' may run it through the guardrails."
+              };
         modeOption.DefaultValueFactory = _ => AgentMode.Plan;
+
+        var applyOption = new Option<bool>("--apply")
+              {
+             Description = "Perform a real write when executing a pipeline. Default (off) => dry-run only; writes also require approval."
+              };
+        applyOption.DefaultValueFactory = _ => false;
+
+        var allowDestructiveOption = new Option<bool>("--allow-destructive")
+              {
+             Description = "Allow destructive SQL verbs (DROP/DELETE/TRUNCATE/UPDATE/ALTER/INSERT/ATTACH). Default deny."
+              };
+        allowDestructiveOption.DefaultValueFactory = _ => false;
+
+        var allowNetworkOption = new Option<bool>("--allow-network")
+              {
+             Description = "Allow network access in SQL (LOAD httpfs/azure, remote read_parquet). Default deny."
+              };
+        allowNetworkOption.DefaultValueFactory = _ => false;
 
         Arguments.Add(promptArgument);
         Options.Add(promptOption);
@@ -103,6 +121,9 @@ public class AgentCommand : Command
         Options.Add(repeatOption);
         Options.Add(sequentialOption);
         Options.Add(modeOption);
+        Options.Add(applyOption);
+        Options.Add(allowDestructiveOption);
+        Options.Add(allowNetworkOption);
 
         this.SetAction(async (parseResult, ct) =>
         {
@@ -118,8 +139,11 @@ public class AgentCommand : Command
             var temperature = parseResult.GetValue(temperatureOption);
             var seed = parseResult.GetValue(seedOption);
              var repeat = parseResult.GetValue(repeatOption);
-             var sequential = parseResult.GetValue(sequentialOption);
-             var mode = parseResult.GetValue(modeOption);
+              var sequential = parseResult.GetValue(sequentialOption);
+              var mode = parseResult.GetValue(modeOption);
+              var apply = parseResult.GetValue(applyOption);
+              var allowDestructive = parseResult.GetValue(allowDestructiveOption);
+              var allowNetwork = parseResult.GetValue(allowNetworkOption);
 
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -156,16 +180,23 @@ public class AgentCommand : Command
             var toolProvider = new McpToolProvider(mcpTools);
             var executor = new AgentExecutor(toolProvider, llmClient, tui, console);
 
-             var agentOptions = new AgentOptions
-                     {
-                 Mode = mode,
-                 Temperature = temperature,
-                 Seed = seed,
-                 Repeat = repeat,
-                 Sequential = sequential
-                     };
+              var agentOptions = new AgentOptions
+                      {
+                Mode = mode,
+                Temperature = temperature,
+                Seed = seed,
+                Repeat = repeat,
+                 Sequential = sequential,
+                Apply = apply,
+                AllowDestructive = allowDestructive,
+                AllowNetwork = allowNetwork
+                       };
 
-              // Execute initial turn
+                // F2: share the agent guardrail options with the execution tool so execute-yaml-job
+               // honors --apply / --allow-destructive / --allow-network (fail-closed by default).
+              mcpTools.AgentOptions = agentOptions;
+
+                // Execute initial turn
              var exitCode = await executor.RunTurnAsync(prompt, model, url, agentOptions, maxIterations, ct);
 
             // Interactive post-mission conversation loop
