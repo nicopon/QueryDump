@@ -507,7 +507,8 @@ dtpipe mcp
 | `inspect` | `input`, `query?` | Inspect data source schema or auto-discover database tables if query is omitted |
 | `preview-data` | `input`, `limit?`, `query?` | Preview sample data rows (default: 5 rows) |
 | `validate-yaml-job` | `yamlContent` | Validate YAML job topology and syntax without running |
-| `execute-yaml-job` | `yamlContent` | Execute a complete YAML job pipeline directly in-memory |
+| `execute-yaml-job` | `yamlContent`, `apply?`, `allowDestructive?`, `allowNetwork?` | Execute a YAML job in-memory. **Dry-run by default** (no write); `apply=true` performs a write, gated by the approval gate and the SQL safety policy |
+| `dry-run` | `yamlContent` | Validate, open the reader, report schema/estimated count without writing |
 | `help` | *(none)* | General usage guidelines, YAML job structures, and DAG topology rules |
 | `get-adapter-help` | `adapterName` | Inspect connection string format, reader/writer options, and YAML examples for an adapter |
 | `get-transformer-help` | `transformerName` | Inspect options, mapping syntax, and YAML examples for a transformer |
@@ -531,4 +532,57 @@ dtpipe agent [<prompt>] [options]
 | `--url` | `-u` | Ollama API endpoint URL | `http://localhost:11434` |
 | `--max-iterations` | | Maximum ReAct loop iterations per turn | `25` |
 | `--interactive` | `-i` | Force interactive model selection and prompt entry | `false` |
+| `--mode` | | Operating mode: `plan` designs/validates only (no execution); `execute`/`autonomous` may run through the guardrails | `plan` |
+| `--temperature` | | Sampling temperature; `0` makes decoding deterministic | `0` |
+| `--seed` | | Fixed seed for reproducible sampling | `0` |
+| `--repeat` | | Replicate the validated plan N times and report determinism variance | `1` |
+| `--sequential` | | Execute tool calls one at a time instead of running independent calls in parallel | `false` |
+| `--apply` | | Perform a real write (a write also requires an approving gate and a clean SQL safety check) | `false` (dry-run) |
+| `--allow-destructive` | | Allow destructive SQL verbs (`DROP`/`DELETE`/`TRUNCATE`/`UPDATE`/`ALTER`/`INSERT`/`ATTACH`) | `false` |
+| `--allow-network` | | Allow network access in SQL (`LOAD httpfs`/`azure`, remote `read_parquet`/`read_csv`) | `false` |
+
+> **Hardening (fail-closed defaults).** With no flags, `dtpipe agent` is the safest behavior:
+> mode `plan`, temperature `0` + seed (deterministic), dry-run only, destructive SQL and network
+> access denied. A real write requires `--apply` **and** approval **and** a compliant SQL safety
+> check. The planner never sees the `execute-yaml-job` tool; execution is a deterministic engine
+> step. The regex YAML extraction is a logged fallback — the `yamlContent` tool argument is the
+> source of truth. Inspected schemas/samples/errors survive conversation compaction (non-destructive
+> context). See the **Agent Guardrails** section for the SQL safety policy detail.
+
+---
+
+### Agent Guardrails (`ISqlSafetyPolicy` / `IApprovalGate`)
+
+The agent and `execute-yaml-job` are **fail-closed**: when in doubt, the behavior *rejects* rather
+than executes. Every unlock flag is documented so nothing is implicit.
+
+- **Dry-run by default.** `execute-yaml-job` writes **nothing** unless `apply=true`. Even then a
+   write requires (a) the `--apply` operator consent, (b) an approving `IApprovalGate`, and
+   (c) a clean SQL safety check. Non-interactive contexts (MCP/agent) default to **deny** for
+   writes — a human `--apply` is the consent that unblocks.
+- **SQL safety policy** (`DefaultSqlSafetyPolicy`). Fails closed on:
+   - Destructive verbs: `DROP`, `DELETE`, `TRUNCATE`, `UPDATE`, `ALTER`, `INSERT`, `ATTACH`
+      → unblock with `--allow-destructive`.
+   - Network access: `LOAD httpfs` / `LOAD azure`, and `read_parquet`/`read_csv`/`read_json`
+     over `http(s)://`, `s3://`, `ftp://` or `gs://` → unblock with `--allow-network`.
+   - Pure `SELECT`-style reads always pass.
+- **Approval gate** (`DefaultApprovalGate`). A real write is approved only when `apply` is set
+   **and** either the context is interactive or an override predicate grants it. Non-interactive
+   ⇒ write denied (read-only).
+- **Determinism.** `--temperature 0 --seed N --repeat 3` replicates a validated plan and reports
+   variance (distinct-YAML count − 1); `0` ⇒ byte-for-byte reproducible.
+- **Non-destructive context.** Inspected schemas, sample rows and recent errors are cached in an
+   `AgentContextStore` and reloaded into the compacted window instead of the lossy one-line
+   summary; the full journal is always kept in the trajectory. KISS — no mandatory second LLM
+   call.
+- **Planner/executor split.** In `--mode plan` the `execute-yaml-job` tool is *removed from the
+   tool list* the model sees; the LLM cannot drive execution. Execution is a deterministic
+   engine step (`JobService.ExecutePipelineAsync` on the validated plan).
+- **Parallel tools.** Every tool call the model emits in a turn is executed (independent ones in
+   parallel via `Task.WhenAll`); `--sequential` forces one-at-a-time. Each call yields one
+   `tool` message correlated by call id.
+- **CI gate.** `tests/agentic/analyze-traces.sh --gate` fails when (a) unhandled MCP errors,
+   (b) determinism variance above threshold, or (c) a mission failed.
+   `tests/agentic/run-all.sh --gate` propagates it. See `.github/workflows/agentic-ci.yml`.
+
 

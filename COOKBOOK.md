@@ -741,8 +741,39 @@ When prompted, enter your data integration mission:
 
 The agent will:
 1. Inspect the source schema.
-2. Validate the YAML topology.
-3. Execute the pipeline.
-4. Render the DAG topology box and allow exporting a standalone `high_invoices.yaml` file for production automation.
+ 2. Validate the YAML topology.
+ 3. Execute the pipeline.
+ 4. Render the DAG topology box and allow exporting a standalone `high_invoices.yaml` file for production automation.
+
+### Guardrails: keep the agent safe and deterministic
+
+By default (no flags) the agent is **fail-closed** — it is deterministic, only *plans*, and writes
+nothing. Every unlock is explicit:
+
+```bash
+# Safest: plan only, deterministic, dry-run. The execute-yaml-job tool is never offered to the LLM.
+dtpipe agent "inspect csv:sales.csv and summarize totals"
+
+# Replicate a plan to prove determinism (variance must be 0 for a stable mission)
+dtpipe agent "..." --temperature 0 --seed 42 --repeat 3
+
+# Allow a real, guarded write (destructive SQL still denied unless allowed)
+dtpipe agent "load csv:orders.csv into pg" --mode execute --apply
+
+# Permitted only when you know the SQL is destructive/reaches the network
+dtpipe agent "..." --apply --allow-destructive --allow-network
+```
+
+The guardrails (`ISqlSafetyPolicy` / `IApprovalGate`):
+- **Dry-run by default** — `execute-yaml-job` writes nothing unless `--apply`.
+- **Destructive verbs** (`DROP`/`DELETE`/`TRUNCATE`/`UPDATE`/`ALTER`/`INSERT`/`ATTACH`) and
+  **network access** (`LOAD httpfs`/`azure`, remote `read_parquet`/`read_csv`) are denied unless
+  `--allow-destructive` / `--allow-network` are set.
+- **Planner mode** hides `execute-yaml-job` from the model; execution is a deterministic engine step.
+- **Non-destructive context** — inspected schemas/samples/errors survive compaction.
+- **Parallel tools** — every `ToolCall` is executed (independent ones in parallel; `--sequential` forces one at a time).
+
+See `REFERENCE.md` → *Agent Guardrails* for the full policy.
+
 
 

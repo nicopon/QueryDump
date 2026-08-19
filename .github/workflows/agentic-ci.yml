@@ -1,0 +1,83 @@
+name: Agentic CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# F7 — the agentic E2E suite as a CI gate. The fail-closed gate (analyze-traces.sh --gate)
+# runs on every change; the full LLM matrix only runs when OLLAMA_MODELS is provided (the
+# agent runner needs a locally-served Ollama model, which standard runners do not have).
+jobs:
+  gate-smoke:
+    name: F7 gate smoke (no LLM)
+    runs-on: ubuntu-latest
+    steps:
+       - name: Checkout
+         uses: actions/checkout@v4
+
+       - name: Setup .NET
+         uses: actions/setup-dotnet@v4
+         with:
+           dotnet-version: '10.0.300'
+
+       - name: Build + unit tests
+         run: ./build.sh
+
+       - name: Install jq
+         run: sudo apt-get install -y jq
+
+       - name: Run F7 gate smoke test
+         run: bash tests/agentic/test-gate-smoke.sh
+
+  agentic-matrix:
+    name: Agentic E2E gate - ${{ matrix.model }}
+    needs: gate-smoke
+    runs-on: ubuntu-latest
+     # The full LLM matrix needs a locally-served Ollama model, which standard runners do not
+     # provide. Run it on manual dispatch (or self-hosted runners with Ollama). The always-on
+     # gate is the gate-smoke job above.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    strategy:
+      fail-fast: false
+      matrix:
+         model: ["gemma4:12b-mlx", "gpt-oss:20b"]
+    env:
+         OLLAMA_URL: http://localhost:11434/api/chat
+    steps:
+       - name: Checkout
+         uses: actions/checkout@v4
+
+       - name: Setup .NET
+         uses: actions/setup-dotnet@v4
+         with:
+            dotnet-version: '10.0.300'
+
+       - name: Restore
+         run: dotnet restore
+
+       - name: Start Ollama
+         run: |
+            curl -fsSL https://ollama.com/install.sh | sh || true
+            service ollama start 2>/dev/null || /usr/local/bin/ollama serve &
+            sleep 5
+            ollama pull ${{ matrix.model }} || echo "ollama pull skipped (model unavailable)"
+
+       - name: Run agentic gate
+         env:
+           OLLAMA_MODEL: ${{ matrix.model }}
+           GATE_REPEAT: '3'
+         run: |
+            chmod +x tests/agentic/*.sh
+            bash tests/agentic/run-all.sh --gate --threshold=0 --max-mcp-errors=0 ${{ matrix.model }}
+         continue-on-error: false
+
+       - name: Upload trace artifacts
+         if: always()
+         uses: actions/upload-artifact@v4
+         with:
+            name: traces-${{ matrix.model }}
+            path: tests/agentic/artifacts/
+            if-no-files-found: ignore

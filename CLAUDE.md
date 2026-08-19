@@ -238,26 +238,45 @@ UUID canonical representation: `FixedSizeBinaryType(16)` + Field metadata `ARROW
 ### Core Architecture
 
 - `src/DtPipe/Cli/Commands/McpCommand.cs` — Registers `dtpipe mcp` command and starts `McpServerTool` loop on STDIO.
-- `src/DtPipe/Cli/Mcp/DtPipeMcpTools.cs` — Exposes tools: `list-providers`, `inspect`, `preview-data`, `validate-yaml-job`, `execute-yaml-job`, `help`, `get-adapter-help`, `get-transformer-help`, `register-yaml-job`.
+- `src/DtPipe/Cli/Mcp/DtPipeMcpTools.cs` — Exposes tools: `list-providers`, `inspect`, `preview-data`, `validate-yaml-job`, `execute-yaml-job`, `dry-run`, `help`, `get-adapter-help`, `get-transformer-help`, `register-yaml-job`. `execute-yaml-job` is **dry-run by default** and gated by the guardrails (§Agent Guardrails below).
 - `src/DtPipe/Cli/Mcp/IMcpHelpService.cs` & `McpHelpService.cs` — Dynamic reflection-based help generator.
+
+### Agent Hardening (F1–F7, non-negotiable)
+
+The agent/MCP execution layer is hardened and **fail-closed** — when in doubt it rejects rather than executes. Do not regress these invariants.
+
+- **F1 — Planner/Executor split**: `AgentMode` { `Plan` (default), `Execute`, `Autonomous` } drives a **tool allow-list** via `McpToolProvider.GetToolDefinitions(AgentMode)`. In `Plan` mode the `execute-yaml-job` tool is *removed from the tool list the model sees* and `PlannerSystemPrompt` forbids execution; execution is a deterministic engine step, not an LLM decision.
+- **F2 — Execution guardrails**: `src/DtPipe/Cli/Security/ISqlSafetyPolicy.cs` (`DefaultSqlSafetyPolicy`) classifies/forbids destructive verbs `TRUNCATE, DROP, DELETE, UPDATE, ALTER, INSERT, ATTACH` and network access (`LOAD httpfs/azure`, remote `read_parquet/read_csv` over a URL). `IApprovalGate` (`DefaultApprovalGate`) denies writes in non-interactive contexts. `execute-yaml-job` takes `apply`/`allowDestructive`/`allowNetwork`; a real write needs `apply` + approval + a clean safety check. **Default mode = deny.**
+- **F3 — Determinism**: `ILlmClient.ChatAsync(…, temperature, seed)` (default `0`+seed) and `--repeat N` replication; `AgentTrajectory.Determinism` is a `DeterminismReport` (variance = distinct-YAML − 1; `0` ⇒ reproducible).
+- **F4 — Non-destructive context**: `AgentContextStore` caches "fact" tool results (inspect/preview-data/suggest-pipeline/dry-run) keyed by args; `ConversationWindowManager.Compact(messages, store)` emits a FACTS block instead of a lossy one-liner; the full journal stays in the trajectory. KISS: no mandatory 2nd LLM call.
+- **F5 — Parallel tools**: the executor processes **all** `ToolCalls` in a turn (independent ones in parallel via `Task.WhenAll`; `--sequential` forces one-at-a-time). Each call yields one `tool` message correlated by call id.
+- **F6 — Single YAML path**: the `yamlContent` tool argument is the source of truth; the regex extraction (`ExtractYamlFromContent`) is a **logged, `[Obsolete]` fallback** used only when the argument is absent.
+- **F7 — Traces as CI gate**: `tests/agentic/analyze-traces.sh --gate` fails on unhandled MCP errors / determinism variance / a failed mission; `run-all.sh --gate` propagates. `.github/workflows/agentic-ci.yml` runs the build + gate; `test-gate-smoke.sh` exercises the gate without a LLM.
+
+New CLI options on `dtpipe agent`: `--mode`, `--temperature`, `--seed`, `--repeat`, `--sequential`, `--apply`, `--allow-destructive`, `--allow-network` — all optional; `dtpipe agent` with no flags = the safest behavior (mode `plan`, dry-run, deterministic).
 
 ### Mandatory Directives for MCP Development (Hard Rules)
 
 1. **Strictly Generic Help (SOLID / DRY)**:
-   - MCP help **must never** contain hardcoded connection strings, provider-specific connection examples, or hardcoded option lists in the service.
-   - All component descriptions, connection string formats, options, and YAML examples are owned by the components themselves via reflection on `[Description]`, `[ComponentHelp]`, and option properties across reader, writer, and transformer factories.
+    - MCP help **must never** contain hardcoded connection strings, provider-specific connection examples, or hardcoded option lists in the service.
+    - All component descriptions, connection string formats, options, and YAML examples are owned by the components themselves via reflection on `[Description]`, `[ComponentHelp]`, and option properties across reader, writer, and transformer factories.
 
 2. **Direct In-Memory Execution (KISS)**:
-   - MCP job execution tools (`execute-yaml-job`, `validate-yaml-job`) must parse and execute YAML content directly in-memory via `JobFileParser` and `JobService.ExecutePipelineAsync()`.
-   - Never generate temporary YAML files on disk or invoke shell CLI command string proxies.
+    - MCP job execution tools (`execute-yaml-job`, `validate-yaml-job`) must parse and execute YAML content directly in-memory via `JobFileParser` and `JobService.ExecutePipelineAsync()`.
+    - Never generate temporary YAML files on disk or invoke shell CLI command string proxies.
 
 3. **Auto-Exploration & Actionable Hints**:
-   - `inspect` on database providers without a query must perform automatic table/view discovery (`TryBuildTableDiscoveryQuery`) instead of throwing errors.
-   - Validation errors (e.g. invalid transformer names or missing DAG stream processors) must return actionable hints explaining the correct component name or YAML configuration pattern.
+    - `inspect` on database providers without a query must perform automatic table/view discovery (`TryBuildTableDiscoveryQuery`) instead of throwing errors.
+    - Validation errors (e.g. invalid transformer names or missing DAG stream processors) must return actionable hints explaining the correct component name or YAML configuration pattern.
+
+4. **Fail-Closed Guardrails (F2)**:
+    - `execute-yaml-job` is dry-run by default. A real write requires `apply` + an approving `IApprovalGate` + a clean `ISqlSafetyPolicy` verdict. Never weaken the default to `apply=true` or to allow destructive/network SQL.
+    - When a guardrail is ambiguous, **reject** (fail closed). Document every unlock flag (`--apply`, `--allow-destructive`, `--allow-network`).
 
 ### Agentic Benchmark & Trace E2E Suite (`tests/agentic/`)
 
-- `tests/agentic/run-all.sh [models...]` — Runs E2E mission benchmarks across multiple Ollama LLM models.
+- `tests/agentic/run-all.sh [models...] [--gate]` — Runs E2E mission benchmarks across multiple Ollama LLM models; `--gate` runs the fail-closed analyzer and propagates failure.
 - `tests/agentic/agent_runner.sh` — Drives single model evaluation with Chain-of-Thought reasoning prompt and generates Markdown trajectory traces under `tests/agentic/artifacts/traces/<model>/<mission>.md`.
-- `tests/agentic/analyze-traces.sh` — Automated diagnostic script to parse trace files and extract MCP errors, warnings, and top tool calls.
+- `tests/agentic/analyze-traces.sh [--gate]` — Parses traces; `--gate` fails (non-zero) on unhandled MCP errors, determinism variance over threshold, or a failed mission.
+- `tests/agentic/test-gate-smoke.sh` — F7 smoke test for the gate (no LLM/Docker required; runs in CI).
 - `tests/agentic/print-benchmark.sh` — Renders formatted benchmark comparison table.

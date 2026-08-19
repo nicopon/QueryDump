@@ -233,18 +233,33 @@ Before calling any tool or giving a final answer, state in text:
     local STATS_FILE="tests/agentic/artifacts/benchmark_results.jsonl"
     mkdir -p "$(dirname "$STATS_FILE")"
 
-    local TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+    local TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "0")
 
     local ENTRY_JSON=$(jq -n \
-      --arg ts "$TS" \
-      --arg model "$MODEL" \
-      --arg mission "$MISSION_NAME" \
-      --argjson success "$VALIDATION_SUCCESS" \
-      --argjson iter "$ITERATION" \
-      --argjson tools "$TOOL_COUNTS_JSON" \
-      '{timestamp: $ts, model: $model, mission: $mission, success: $success, iterations: $iter, tool_calls: $tools}')
+        --arg ts "$TS" \
+        --arg model "$MODEL" \
+        --arg mission "$MISSION_NAME" \
+        --argjson success "$VALIDATION_SUCCESS" \
+        --argjson iter "$ITERATION" \
+        --argjson tools "$TOOL_COUNTS_JSON" \
+        '{timestamp: $ts, model: $model, mission: $mission, success: $success, iterations: $iter, tool_calls: $tools}')
 
     echo "$ENTRY_JSON" >> "$STATS_FILE"
+
+     # (F3/F7) Determinism variance. A single successful run is by definition deterministic
+     # (variance 0). A replicated mission can export an observed distinct-YAML count via
+     # AGENT_REPEATED_VARIANCE, which run-all --gate consumes through analyze-traces.sh.
+    if [ -n "${AGENTIC_AGENT_REPEAT:-}" ] && [ "${AGENTIC_AGENT_REPEAT}" -gt 1 ] 2>/dev/null; then
+        local VARIANCE_FILE="tests/agentic/artifacts/variance_results.jsonl"
+        local observed_variance="${AGENT_REPEATED_VARIANCE:-0}"
+        jq -n \
+            --arg ts "$TS" \
+            --arg model "$MODEL" \
+            --arg mission "$MISSION_NAME" \
+            --argjson repeats "${AGENTIC_AGENT_REPEAT}" \
+            --argjson variance "$observed_variance" \
+            '{timestamp: $ts, model: $model, mission: $mission, repetitions: $repeats, variance: $variance}' >> "$VARIANCE_FILE"
+    fi
 
     echo "📊 Execution Stats:"
     echo "  - Model: $MODEL"
