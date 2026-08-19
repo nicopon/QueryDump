@@ -202,24 +202,15 @@ public class AgentTui
       /// Renders a single tool result (F5 parallel tool execution). Kept lightweight so that many
       /// independent calls produced in one turn can be rendered without heavy panels per call.
       /// </summary>
-    public void RenderToolResult(string toolName, string result, bool isError)
-      {
-        string color = isError ? "red" : "green";
-        string snippet = result ?? "{}";
-        if (snippet.Length > 200) snippet = snippet[..200] + "…";
-        _console.MarkupLine($"[dim]↳ {Markup.Escape(toolName)}{Markup.Escape((isError ? " [error]" : ""))}[/]: [bold {color}]{Markup.Escape(snippet)}[/]");
-      }
+     public void RenderToolResult(string toolName, string result, bool isError)
+        {
+         string color = isError ? "red" : "green";
+         string snippet = result ?? "{}";
+         if (snippet.Length > 200) snippet = snippet[..200] + "…";
+          _console.MarkupLine($"[dim]↳ {Markup.Escape(toolName)}{Markup.Escape((isError ? " [error]" : ""))}[/]: [bold {color}]{Markup.Escape(snippet)}[/]");
+        }
 
-    /// <summary>
-     /// Renders a single, non-silent notice that the deprecated regex YAML fallback (F6) is in use
-     /// because the <c>yamlContent</c> tool-call argument was absent.
-     /// </summary>
-    public void RenderFallbackNotice()
-      {
-        _console.MarkupLine("[yellow]⚠ YAML fallback: no 'yamlContent' tool argument — using deprecated regex extraction.[/]");
-      }
-
-    public void RenderPipelineDag(string yamlContent, IServiceProvider serviceProvider)
+     public void RenderPipelineDag(string yamlContent, IServiceProvider serviceProvider)
     {
         try
         {

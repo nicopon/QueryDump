@@ -250,7 +250,7 @@ The agent/MCP execution layer is hardened and **fail-closed** — when in doubt 
 - **F3 — Determinism**: `ILlmClient.ChatAsync(…, temperature, seed)` (default `0`+seed) and `--repeat N` replication; `AgentTrajectory.Determinism` is a `DeterminismReport` (variance = distinct-YAML − 1; `0` ⇒ reproducible).
 - **F4 — Non-destructive context**: `AgentContextStore` caches "fact" tool results (inspect/preview-data/suggest-pipeline/dry-run) keyed by args; `ConversationWindowManager.Compact(messages, store)` emits a FACTS block instead of a lossy one-liner; the full journal stays in the trajectory. KISS: no mandatory 2nd LLM call.
 - **F5 — Parallel tools**: the executor processes **all** `ToolCalls` in a turn (independent ones in parallel via `Task.WhenAll`; `--sequential` forces one-at-a-time). Each call yields one `tool` message correlated by call id.
-- **F6 — Single YAML path**: the `yamlContent` tool argument is the source of truth; the regex extraction (`ExtractYamlFromContent`) is a **logged, `[Obsolete]` fallback** used only when the argument is absent.
+- **F6 — Single YAML path**: the `yamlContent` tool argument is the **sole source** of the plan YAML; free-text content is never parsed into a plan.
 - **F7 — Traces as CI gate**: `tests/agentic/analyze-traces.sh --gate` fails on unhandled MCP errors / determinism variance / a failed mission; `run-all.sh --gate` propagates. `.github/workflows/agentic-ci.yml` runs the build + gate; `test-gate-smoke.sh` exercises the gate without a LLM.
 
 New CLI options on `dtpipe agent`: `--mode`, `--temperature`, `--seed`, `--repeat`, `--sequential`, `--apply`, `--allow-destructive`, `--allow-network` — all optional; `dtpipe agent` with no flags = the safest behavior (mode `plan`, dry-run, deterministic).

@@ -545,9 +545,9 @@ dtpipe agent [<prompt>] [options]
 > mode `plan`, temperature `0` + seed (deterministic), dry-run only, destructive SQL and network
 > access denied. A real write requires `--apply` **and** approval **and** a compliant SQL safety
 > check. The planner never sees the `execute-yaml-job` tool; execution is a deterministic engine
-> step. The regex YAML extraction is a logged fallback — the `yamlContent` tool argument is the
-> source of truth. Inspected schemas/samples/errors survive conversation compaction (non-destructive
-> context). See the **Agent Guardrails** section for the SQL safety policy detail.
+> step. The `yamlContent` tool argument is the sole source of the plan YAML. Inspected schemas/
+> samples/errors survive conversation compaction (non-destructive context). See the **Agent
+> Guardrails** section for the SQL safety policy detail.
 
 ---
 

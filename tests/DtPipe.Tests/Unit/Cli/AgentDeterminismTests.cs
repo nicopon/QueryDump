@@ -19,28 +19,30 @@ public class AgentDeterminismTests
             => Task.FromResult(ToolResult.Success("{}"));
     }
 
-    /// <summary>
-    /// A scripting fake that records the temperature/seed it was called with and returns a
-    /// fixed response (optionally carrying a YAML block in its content so the trajectory picks
-    /// up a generated plan).
-    /// </summary>
-     private sealed class ScriptedLlmClient : ILlmClient
-     {
+      /// <summary>
+      /// A scripting fake that records the temperature/seed it was called with and returns a
+      /// fixed response. When <c>toolYaml</c> is set, the response carries a 'validate-yaml-job'
+      /// tool call whose <c>yamlContent</c> argument is the plan (the F6 single path).
+      /// </summary>
+      private sealed class ScriptedLlmClient : ILlmClient
+       {
         public double? LastTemperature { get; private set; }
         public int? LastSeed { get; private set; }
         public int CallCount { get; private set; }
 
         private readonly string? _content;
+        private readonly string? _toolYaml;
 
-        public ScriptedLlmClient(string? content = null)
-         {
+        public ScriptedLlmClient(string? content = null, string? toolYaml = null)
+          {
             _content = content;
-         }
+            _toolYaml = toolYaml;
+          }
 
         public string ProviderName => "scripted";
 
         public Task<List<string>> ListModelsAsync(string baseUrl, CancellationToken ct = default)
-             => Task.FromResult(new List<string>());
+              => Task.FromResult(new List<string>());
 
         public Task<LlmResponse> ChatAsync(
             string baseUrl,
@@ -51,14 +53,24 @@ public class AgentDeterminismTests
             double temperature = 0.7,
             int? seed = null,
             CancellationToken ct = default)
-         {
+          {
             LastTemperature = temperature;
             LastSeed = seed;
             CallCount++;
-            var response = new LlmResponse(new ChatMessage("assistant", _content ?? "done"), true, null);
-            return Task.FromResult(response);
-          }
-     }
+
+            if (_toolYaml == null)
+            {
+               var response = new LlmResponse(new ChatMessage("assistant", _content ?? "done"), true, null);
+               return Task.FromResult(response);
+            }
+
+            var args = System.Text.Json.JsonDocument.Parse(
+                $"{{\"yamlContent\": {System.Text.Json.JsonSerializer.Serialize(_toolYaml)}}}").RootElement.Clone();
+            var toolCalls = new List<ToolCall> { new ("call-1", "validate-yaml-job", args) };
+            var toolResponse = new LlmResponse(new ChatMessage("assistant", _content ?? "done", null, toolCalls), true, null);
+            return Task.FromResult(toolResponse);
+           }
+       }
 
     private static AgentExecutor BuildExecutor(ScriptedLlmClient llm)
        {
@@ -112,12 +124,13 @@ public class AgentDeterminismTests
         Assert.True(report.IsDeterministic);
     }
 
-     [Fact]
+       [Fact]
     public async Task Repeat_With_Identical_Yaml_Blocks_Reports_Zero_Variance()
-      {
+        {
         string yaml = "input: csv:a.csv\noutput: csv:b.csv\n";
-        string content = "here is the plan:\n" + "```yaml\n" + yaml + "```\n";
-        var llm = new ScriptedLlmClient(content: content);
+             // With the single YAML path (F6), the plan arrives through the yamlContent tool
+             // argument, not free-text content.
+        var llm = new ScriptedLlmClient(toolYaml: yaml);
         var executor = BuildExecutor(llm);
 
         var options = new AgentOptions { Repeat = 3 };
@@ -128,5 +141,5 @@ public class AgentDeterminismTests
         Assert.Single(report.DistinctYaml);
         Assert.Equal(0, report.Variance);
         Assert.True(report.IsDeterministic);
-      }
+        }
 }

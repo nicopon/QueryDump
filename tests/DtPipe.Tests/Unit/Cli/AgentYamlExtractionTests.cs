@@ -10,8 +10,8 @@ using Xunit;
 namespace DtPipe.Tests.Unit.Cli;
 
 /// <summary>
-/// F6 tests: the single YAML path. The <c>yamlContent</c> tool-call argument is the source of
-/// truth and always wins; the regex extraction is used only when the argument is absent.
+/// F6 tests: the single YAML path. The <c>yamlContent</c> tool-call argument is the sole source of
+/// the plan YAML; free-text content is never parsed.
 /// </summary>
 public class AgentYamlExtractionTests
 {
@@ -78,44 +78,44 @@ public class AgentYamlExtractionTests
       private static LlmResponse TextOnly(string content)
          => new(new ChatMessage("assistant", content), true, null);
 
-      [Fact]
-    public async Task YamlContent_Argument_Takes_Priority_Over_Regex()
-       {
+    [Fact]
+    public async Task YamlContent_Argument_Is_The_Sole_Source()
+        {
         string argYaml = "input: from-arg.csv\noutput: out-arg.csv\n";
         string contentYaml = "input: from-content.csv\noutput: out-content.csv\n";
         string content = "here is a skeleton:\n" + "```yaml\n" + contentYaml + "```\n";
 
         var provider = new CountingToolProvider();
         var llm = new QueuedLlmClient(new[]
-          {
-           // A tool call whose argument carries the authoritative YAML, while the same message
-           // content also contains a (different) fenced block that must be ignored.
+           {
+            // A tool call whose argument carries the plan, while the same message content also
+            // contains a (different) fenced block that must be ignored entirely.
            WithToolCall(content, "validate-yaml-job",
-             $"{{\"yamlContent\": {System.Text.Json.JsonSerializer.Serialize(argYaml)}}}"),
+              $"{{\"yamlContent\": {System.Text.Json.JsonSerializer.Serialize(argYaml)}}}"),
            TextOnly("done")
-          });
+           });
 
         var executor = BuildExecutor(provider, llm);
         await executor.RunTurnAsync("mission", "model", "http://localhost:11434", maxIterations: 5);
 
         Assert.Equal(argYaml, executor.Trajectory.LastGeneratedYaml);
-       }
+        }
 
-      [Fact]
-    public async Task Regex_Fallback_Used_Only_When_YamlContent_Arg_Absent()
-       {
+    [Fact]
+    public async Task FreeTextYamlBlock_Is_Ignored()
+        {
         string contentYaml = "input: from-content.csv\noutput: out-content.csv\n";
         string content = "skeleton:\n" + "```yaml\n" + contentYaml + "```\n";
 
         var provider = new CountingToolProvider();
-         // No tool call at all: only the regex fallback can produce a YAML.
+           // No tool call: a fenced YAML block in free text must not become a plan anymore.
         var llm = new QueuedLlmClient(new[] { TextOnly(content) });
 
         var executor = BuildExecutor(provider, llm);
         await executor.RunTurnAsync("mission", "model", "http://localhost:11434", maxIterations: 5);
 
-        Assert.Equal(contentYaml.Trim(), executor.Trajectory.LastGeneratedYaml);
-      }
+        Assert.Null(executor.Trajectory.LastGeneratedYaml);
+       }
 
        [Fact]
     public async Task No_Yaml_Produces_No_Plan()

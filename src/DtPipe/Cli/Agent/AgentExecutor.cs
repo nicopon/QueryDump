@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using DtPipe.Cli.Mcp;
@@ -111,10 +110,8 @@ public class AgentExecutor
            // F1: the LLM only sees the tools allowed for the current mode (in PLAN mode,
           // 'execute-yaml-job' is filtered out so the model cannot drive execution).
         var availableTools = _toolProvider.GetToolDefinitions(opts.Mode);
-        string? producedYaml = null;    // resolved plan: yamlContent argument, else regex fallback
-        string? argYaml = null;         // from the yamlContent tool-call argument (source of truth, F6)
-        string? contentYaml = null;      // regex extraction from free-text content (deprecated fallback)
-        bool regexFallbackNoticed = false;  // guards a single, non-logged-noise notice when the fallback is used
+        string? producedYaml = null;     // resolved plan, sourced from the yamlContent tool-call argument
+        string? argYaml = null;          // from the yamlContent tool-call argument (the sole source, F6)
 
         bool success = false;
         int turnIterations = 1;
@@ -141,17 +138,12 @@ public class AgentExecutor
                              temperature: opts.Temperature, seed: opts.Seed, ct);
 
                         if (string.IsNullOrEmpty(response.Error))
-                           {
-                     var message = response.Message;
-                              messages.Add(message);
-                              currentReasoning = message.Content;
+                            {
+                      var message = response.Message;
+                               messages.Add(message);
+                               currentReasoning = message.Content;
 
-                            #pragma warning disable CS0618 // ExtractYamlFromContent is the logged, deprecated regex fallback (F6)
-                             contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
-                            #pragma warning restore CS0618
-                              producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
-
-                             if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+                              if (message.ToolCalls != null && message.ToolCalls.Count > 0)
                                 {
                                  currentToolName = message.ToolCalls[0].Name;
                                 }
@@ -166,18 +158,13 @@ public class AgentExecutor
                         availableTools, 16384,
                     temperature: opts.Temperature, seed: opts.Seed, ct);
 
-                 if (string.IsNullOrEmpty(response.Error))
-                     {
-                     var message = response.Message;
-                      messages.Add(message);
-                      currentReasoning = message.Content;
+                  if (string.IsNullOrEmpty(response.Error))
+                       {
+                      var message = response.Message;
+                       messages.Add(message);
+                       currentReasoning = message.Content;
 
-                     #pragma warning disable CS0618 // ExtractYamlFromContent is the logged, deprecated regex fallback (F6)
-                     contentYaml = ExtractYamlFromContent(message.Content, contentYaml);
-                     #pragma warning restore CS0618
-                      producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
-
-                       if (message.ToolCalls != null && message.ToolCalls.Count > 0)
+                        if (message.ToolCalls != null && message.ToolCalls.Count > 0)
                            {
                           currentToolName = message.ToolCalls[0].Name;
                              }
@@ -216,8 +203,8 @@ public class AgentExecutor
              // same order as the calls so each "tool" message stays correlated with its call id.
              var calls = lastMsg.ToolCalls!;
 
-                     // F6: the yamlContent tool-call argument is the source of truth. Collect it
-                  // across all calls before resolving the plan so it always wins over the regex.
+                       // F6: the yamlContent tool-call argument is the sole source of the plan YAML.
+                    // Collect it across all calls so the last one wins.
              foreach (var call in calls)
                {
                  if (call.Arguments.ValueKind == JsonValueKind.Object &&
@@ -272,7 +259,7 @@ public class AgentExecutor
                   RecordFactFor(call, toolResultRaw, outcome.IsError);
                  }
 
-             producedYaml = ResolveYaml(argYaml, contentYaml, producedYaml, ref regexFallbackNoticed);
+             producedYaml = argYaml;
              turnIterations++;
            }
 
@@ -311,74 +298,16 @@ public class AgentExecutor
          }
 
         return new DeterminismReport
-         {
+          {
             Repetitions = repetitions,
             DistinctYaml = distinct
-         };
-     }
+          };
+      }
 
-     /// <summary>
-     /// Extracts a YAML job block from free-text agent content. This is the <b>deprecated
-     /// fallback</b> only: the <c>yamlContent</c> tool-call argument is the source of truth (F6).
-     /// Returns the most recently extracted block, or <paramref name="current"/> when no block is
-     /// found.
-     /// </summary>
-     [System.Obsolete("Use the yamlContent tool-call argument instead; regex extraction is a logged fallback.")]
-     private static string? ExtractYamlFromContent(string? content, string? current)
-        {
-        if (string.IsNullOrWhiteSpace(content))
-            return current;
-
-        var match = Regex.Match(content, @"```yaml\s*(?<yaml>[\s\S]*?)\s*```", RegexOptions.IgnoreCase);
-        if (match.Success)
-          {
-           var extracted = match.Groups["yaml"].Value.Trim();
-           if (!string.IsNullOrWhiteSpace(extracted) && (extracted.Contains("input:") || extracted.Contains("output:")))
-             {
-             return extracted;
-             }
-          }
-
-        return current;
-        }
-
-     /// <summary>
-     /// Resolves the plan YAML with the single-path precedence required by F6: the
-     /// <c>yamlContent</c> tool-call argument wins; the regex-extracted content is only used when
-     /// the argument is absent. When the regex fallback is actually used, a single non-silent
-     /// notice is logged so the deprecated path is never silent.
-     /// </summary>
-     private string? ResolveYaml(string? argYaml, string? contentYaml, string? producedYaml, ref bool noticeFallback)
-        {
-        if (!string.IsNullOrWhiteSpace(argYaml))
-            {
-             producedYaml = argYaml;
-             return producedYaml;
-            }
-
-        if (!string.IsNullOrWhiteSpace(contentYaml))
-            {
-             if (contentYaml != producedYaml)
-                 {
-                 if (!noticeFallback)
-                    {
-                     _tui.RenderFallbackNotice();
-                     noticeFallback = true;
-                     }
-
-                     producedYaml = contentYaml;
-                  }
-
-              return producedYaml;
-            }
-
-          return producedYaml;
-           }
-
-       /// <summary>
-        /// Records a tool result as a surviving "fact" when the tool is one that produces reusable
-        /// knowledge (F4). Only fact-producing tools are cached; their result key is derived from
-        /// the call's arguments so re-inspecting the same target overwrites the previous fact.
+        /// <summary>
+          /// Records a tool result as a surviving "fact" when the tool is one that produces reusable
+          /// knowledge (F4). Only fact-producing tools are cached; their result key is derived from
+          /// the call's arguments so re-inspecting the same target overwrites the previous fact.
         /// </summary>
      private void RecordFactFor(ToolCall call, string result, bool isError)
          {
