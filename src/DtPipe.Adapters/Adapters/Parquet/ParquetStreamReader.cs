@@ -78,10 +78,10 @@ public class ParquetStreamReader : IColumnarStreamReader
 
 		foreach (var field in schema.Fields)
 		{
-			if (field is DataField dataField)
-			{
-				columns.Add(new PipeColumnInfo(dataField.Name, dataField.ClrType, dataField.IsNullable));
-			}
+ 			if (field is DataField dataField)
+ 						{
+ 						columns.Add(new PipeColumnInfo(dataField.Name, NormalizeClrType(dataField.ClrType), dataField.IsNullable));
+ 						}
 		}
 
 		Columns = columns;
@@ -118,8 +118,8 @@ public class ParquetStreamReader : IColumnarStreamReader
 
 				foreach (var field in _reader.Schema.DataFields)
 				{
-					var columnData = await ReadColumnDataAsArrayAsync(rowGroupReader, field, ct);
-					arrays.Add(DtPipe.Core.Infrastructure.Arrow.ArrowArrayFactory.Create(columnData, field.ClrType, field.IsNullable));
+ 						var columnData = await ReadColumnDataAsArrayAsync(rowGroupReader, field, ct);
+ 						arrays.Add(DtPipe.Core.Infrastructure.Arrow.ArrowArrayFactory.Create(columnData, NormalizeClrType(field.ClrType), field.IsNullable));
 				}
 
 				yield return new RecordBatch(schema, arrays, rowCount);
@@ -216,10 +216,10 @@ public class ParquetStreamReader : IColumnarStreamReader
 		}
 	}
 
-	private static async Task<System.Array> ReadColumnDataAsArrayAsync(ParquetRowGroupReader rowGroupReader, DataField field, CancellationToken ct)
-	{
-		int rowCount = (int)rowGroupReader.RowCount;
-		Type baseType = Nullable.GetUnderlyingType(field.ClrType) ?? field.ClrType;
+ 	private static async Task<System.Array> ReadColumnDataAsArrayAsync(ParquetRowGroupReader rowGroupReader, DataField field, CancellationToken ct)
+ 		{
+ 		int rowCount = (int)rowGroupReader.RowCount;
+ 		Type baseType = NormalizeClrType(field.ClrType);
 
 		if (baseType == typeof(string))
 		{
@@ -258,13 +258,26 @@ public class ParquetStreamReader : IColumnarStreamReader
 	}
 
 
-	private static async Task<T?[]> ReadTypedAsync<T>(ParquetRowGroupReader rowGroupReader, DataField field, int rowCount, CancellationToken ct)
-		where T : struct
-	{
-		var data = new T?[rowCount];
-		await rowGroupReader.ReadAsync<T>(field, data, cancellationToken: ct);
-		return data;
-	}
+ 	private static async Task<T?[]> ReadTypedAsync<T>(ParquetRowGroupReader rowGroupReader, DataField field, int rowCount, CancellationToken ct)
+ 		where T : struct
+ 		{
+ 		var data = new T?[rowCount];
+ 		await rowGroupReader.ReadAsync<T>(field, data, cancellationToken: ct);
+ 		return data;
+ 		}
+
+ 	// Parquet.Net 6.1.0 reports string columns as ReadOnlyMemory<char> and binary columns as
+ 	// ReadOnlyMemory<byte> in DataField.ClrType instead of string / byte[]. Map them back to the
+ 	// canonical DtPipe CLR types so schema creation and the type-dispatch switch below behave as before.
+ 	internal static Type NormalizeClrType(Type clrType)
+ 			{
+ 		var type = Nullable.GetUnderlyingType(clrType) ?? clrType;
+ 		if (type == typeof(ReadOnlyMemory<char>))
+ 			return typeof(string);
+ 		if (type == typeof(ReadOnlyMemory<byte>))
+ 			return typeof(byte[]);
+ 		return type;
+ 			}
 
 	public async ValueTask DisposeAsync()
 	{

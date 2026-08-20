@@ -50,9 +50,9 @@ public sealed class ParquetDataWriter(string outputPath) : IColumnarDataWriter, 
 			var schema = reader.Schema;
 			var columns = new List<TargetColumnInfo>();
 
-			foreach (var field in schema.DataFields)
-			{
-				Type clrType = field.ClrNullableIfHasNullsType;
+ 			foreach (var field in schema.DataFields)
+ 				{
+ 				Type clrType = ParquetStreamReader.NormalizeClrType(field.ClrNullableIfHasNullsType);
 
 				columns.Add(new TargetColumnInfo(
 					field.Name,
