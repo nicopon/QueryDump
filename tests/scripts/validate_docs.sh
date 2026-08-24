@@ -33,26 +33,58 @@ fi
 echo "--- [1] Documented flags present in --help ---"
 
 DOC_FILES=("$PROJECT_ROOT/README.md" "$PROJECT_ROOT/COOKBOOK.md")
-"$DTPIPE" --help > "$TMP_DIR/help.tmp" 2>&1
 
-# Flags valid but not enumerated in --help (dynamic provider options, subcommands, dotnet-tool flags)
-ALLOW_LIST="--project --version --help --fake-list --secrets --columnar-fast-path --compute-types --linux-pipes --migration --install --table --strategy --key --sampling-rate --sampling-seed --export-job --auto-migrate --strict-schema --metrics-path --unsafe-query --insert-mode --sql-processors --no-schema-validation --pre-exec --post-exec --finally-exec --from --ref --alias"
+# Build a "help universe" from the WHOLE command tree, not just the root.
+# We walk the subcommand graph generically (no hardcoded names): the root help
+# lists subcommands under "SUBCOMMANDS:"; each subcommand's help (System.CommandLine)
+# lists further commands under "Commands:". A command path is expanded once by
+# hashing its help output — a path that falls back to the root help (e.g. `secret
+# set --help`) rehashes to the root's content and is skipped, so the walk terminates.
+UNIVERSE="$TMP_DIR/help_universe.txt"; : > "$UNIVERSE"
+SEEN="$TMP_DIR/seen_hashes.txt";     : > "$SEEN"
+MAX_DEPTH=4
+queue=("0|")
+while [ ${#queue[@]} -gt 0 ]; do
+    entry="${queue[0]}"; queue=("${queue[@]:1}")
+    depth="${entry%%|*}"; path="${entry#*|}"
+    out="$("$DTPIPE" $path --help 2>&1 || true)"
+    h="$(printf '%s' "$out" | { command -v shasum >/dev/null 2>&1 && shasum || md5; } 2>/dev/null | awk '{print $1}')"
+    [ -z "$h" ] && h="$$-$path"
+    grep -qxF "$h" "$SEEN" && continue
+    echo "$h" >> "$SEEN"
+    printf '%s\n' "$out" >> "$UNIVERSE"
+    [ "$depth" -ge "$MAX_DEPTH" ] && continue
+    while IFS= read -r child; do
+        [ -z "$child" ] && continue
+        [ "$child" = "-" ] && continue
+        queue+=("$((depth+1))|${path:+$path }$child")
+    done < <(printf '%s\n' "$out" | awk '
+        /^(SUBCOMMANDS:|Commands:)$/ { in_section = 1; next }
+        /^[^ ]/   { in_section = 0 }
+        /^$/      { in_section = 0 }
+        in_section && NF { print $1 }')
+done
+
+# Tokens that are command names, not flags (--install/--uninstall are completion
+# subcommands), plus dotnet-tool-only flags and dynamic provider options that the
+# help intentionally does not enumerate.
+ALLOW_LIST="--project --install --uninstall --fake-list --secrets --columnar-fast-path --linux-pipes --migration --sql-processors"
 FAILED=0
 
 for doc in "${DOC_FILES[@]}"; do
     [ -f "$doc" ] || continue
-    echo "  Checking $(basename "$doc")..."
+     echo "  Checking $(basename "$doc")..."
     FLAGS=$(grep -oE '\-\-[a-z0-9\-]+' "$doc" | grep -vE "^(--|---)$" | sort -u)
     for flag in $FLAGS; do
-        [[ $ALLOW_LIST =~ $flag ]] && continue
-        if ! grep -qF -- "$flag" "$TMP_DIR/help.tmp"; then
-            echo -e "${RED}    [FAIL] '$flag' in $(basename "$doc") not found in --help${NC}"
+        [[ $ALLOW_LIST =~ (^|[[:space:]])$flag([[:space:]]|$) ]] && continue
+        if ! grep -qF -- "$flag" "$UNIVERSE"; then
+             echo -e "${RED}     [FAIL] '$flag' in $(basename "$doc") not found in --help${NC}"
             FAILED=1
         fi
     done
 done
 
-rm -f "$TMP_DIR/help.tmp"
+rm -f "$UNIVERSE" "$SEEN"
 [ $FAILED -eq 0 ] && pass "All documented flags found in --help" || fail "Some flags missing from --help (see above)"
 
 # ----------------------------------------

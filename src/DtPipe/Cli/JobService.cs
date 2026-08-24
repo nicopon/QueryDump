@@ -49,16 +49,25 @@ public class JobService
 	}
 
 	public RootCommand BuildSubcommands()
-	{
+		{
 		var rootCommand = new RootCommand("A simple, self-contained CLI for performance-focused data streaming & anonymization");
-		rootCommand.Subcommands.Add(new InspectCommand(_serviceProvider));
-		rootCommand.Subcommands.Add(new ProvidersCommand(_serviceProvider));
-		rootCommand.Subcommands.Add(new CompletionCommand());
-		rootCommand.Subcommands.Add(new SecretCommand(_console, _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>()));
-		rootCommand.Subcommands.Add(new McpCommand(_serviceProvider));
-		rootCommand.Subcommands.Add(new AgentCommand(_serviceProvider));
+		foreach (var sub in CreateSubcommands())
+			rootCommand.Subcommands.Add(sub);
 		return rootCommand;
 	}
+
+	public IReadOnlyList<Command> Subcommands => CreateSubcommands();
+
+	private IReadOnlyList<Command> CreateSubcommands()
+		=> new Command[]
+		{
+			new InspectCommand(_serviceProvider),
+			new ProvidersCommand(_serviceProvider),
+			new CompletionCommand(),
+			new SecretCommand(_console, _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>()),
+			new McpCommand(_serviceProvider),
+			new AgentCommand(_serviceProvider),
+		};
 
 	public async Task<int> ExecutePipelineAsync(Dictionary<string, JobDefinition> jobs, JobDagDefinition dag, Dictionary<string, Pipeline.CliJobContext> contexts, Pipeline.GlobalOptions globals, CancellationToken ct)
 	{

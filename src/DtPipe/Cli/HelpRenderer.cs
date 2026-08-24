@@ -1,3 +1,4 @@
+using System.CommandLine;
 using DtPipe.Cli.Infrastructure;
 using DtPipe.Cli.Pipeline;
 using DtPipe.Core.Abstractions;
@@ -29,13 +30,14 @@ public static class HelpRenderer
         console.WriteLine("  Run 'dtpipe providers' to list all supported prefixes.");
         console.WriteLine();
 
-        // Subcommands
-        console.WriteLine("SUBCOMMANDS:");
-        console.WriteLine("  inspect        Inspect a data source schema");
-        console.WriteLine("  providers      List available providers");
-        console.WriteLine("  completion     Shell completion management");
-        console.WriteLine("  secret         Manage keyring secrets");
-        console.WriteLine();
+         // Subcommands (derived from the command registry — single source of truth)
+         console.WriteLine("SUBCOMMANDS:");
+         foreach (var cmd in sp.GetRequiredService<JobService>().Subcommands)
+          {
+             var padded = cmd.Name?.PadRight(16) ?? "";
+             console.WriteLine($"  {padded}{cmd.Description ?? ""}");
+          }
+         console.WriteLine();
 
         // Structural / global flags from CoreFlagRegistry
         console.WriteLine("GLOBAL OPTIONS:");

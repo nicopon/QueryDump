@@ -73,8 +73,8 @@ class Program
 			if (args.Length > 0 && args[0] == "[suggest]")
 				return HandleSuggest(args, serviceProvider);
 
-			// 2. Detect Subcommand vs Pipeline
-			if (args.Length > 0 && IsSubcommand(args[0]))
+				// 2. Detect Subcommand vs Pipeline
+			if (args.Length > 0 && IsSubcommand(jobService, args[0]))
 			{
 				var rootCommand = jobService.BuildSubcommands();
 				return await rootCommand.Parse(args).InvokeAsync();
@@ -117,10 +117,10 @@ class Program
 		}
 	}
 
-	private static bool IsSubcommand(string arg)
-	{
-		var subs = new[] { "inspect", "providers", "completion", "secret", "mcp", "agent" };
-		return subs.Contains(arg.ToLowerInvariant());
+	private static bool IsSubcommand(JobService jobService, string arg)
+		{
+		var names = jobService.Subcommands.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		return names.Contains(arg);
 	}
 
 	/// <summary>
