@@ -6,7 +6,7 @@ namespace DtPipe.Core.Options;
 /// <summary>
 /// Registry to hold specific option instances, populated from CLI or configuration.
 /// </summary>
-public class OptionsRegistry
+public class OptionsRegistry : IOptionsProvider
 {
 	private readonly AsyncLocal<Dictionary<Type, object>> _options = new();
 	private readonly ILogger? _logger;
