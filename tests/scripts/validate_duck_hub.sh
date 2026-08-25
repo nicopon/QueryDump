@@ -180,4 +180,33 @@ else
     echo "SKIP: Azurite container (port 10000) not reachable."
 fi
 
+# ------------------------------------------------------------------------------
+# N. Test --duck-init with keyring:// resolution (in-memory DuckDB)
+# ------------------------------------------------------------------------------
+echo -e "\n--- Test N: --duck-init keyring:// resolution ---"
+SECRET_ALIAS="dtpipe_duckhub_init_test"
+INIT_TABLE="keyring_init_probe"
+WRITE_TABLE="keyring_write_target"
+
+# Stub secret (fake keyring keeps the test hermetic; real keyring also works).
+export DTPIPE_UNSAFE_INSECURE_FAKE_KEYRING=1
+if ! "$DTPIPE" secret set "$SECRET_ALIAS" "CREATE TABLE IF NOT EXISTS ${INIT_TABLE} (Id INTEGER)" > /dev/null 2>&1; then
+    echo "SKIP: could not store stub secret (keyring unavailable)."
+else
+    # Init creates INIT_TABLE; the write targets a different table. Exit 0 proves the
+    # secret was resolved (an unresolved keyring:// literal would fail DuckDB parsing).
+    if "$DTPIPE" -i "generate:3" \
+        -o "duck::memory:" \
+        --table "$WRITE_TABLE" \
+        --duck-init "keyring://${SECRET_ALIAS}" \
+        --no-stats > /dev/null 2>&1; then
+        echo "  -> --duck-init keyring:// resolution: PASSED"
+    else
+        echo "FAIL: pipeline with --duck-init keyring:// exited non-zero."
+        "$DTPIPE" secret delete "$SECRET_ALIAS" > /dev/null 2>&1 || true
+        exit 1
+    fi
+    "$DTPIPE" secret delete "$SECRET_ALIAS" > /dev/null 2>&1 || true
+fi
+
 echo -e "\n=== All DuckDB Extender & Hub Integration Tests Completed Successfully ==="

@@ -277,7 +277,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
             if (!_initSqlApplied)
             {
                 _initSqlApplied = true;
-                await DuckInitSqlHelper.RunAsync((DuckDBConnection)_connection, _options.InitSql, _resolver, ct);
+                await DuckInitSqlRunner.RunAsync((System.Data.Common.DbConnection)_connection, _options.InitSql, _resolver, ct);
             }
         }
     }

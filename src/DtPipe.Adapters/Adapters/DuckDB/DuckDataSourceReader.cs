@@ -134,7 +134,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 			await limitCmd.ExecuteNonQueryAsync(ct);
 		}
 
-		await DuckInitSqlHelper.RunAsync(_connection, _initSql, _resolver, ct);
+		await DuckInitSqlRunner.RunAsync(_connection, _initSql, _resolver, ct);
 
 		_reader = (DuckDBDataReader)await _command.ExecuteReaderAsync(ct);
 		Columns = ExtractColumns(_reader);

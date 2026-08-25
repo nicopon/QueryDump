@@ -91,7 +91,7 @@ public sealed class DuckDBSqlProcessor : IColumnarStreamReader, IDisposable
                 await cmd.ExecuteNonQueryAsync(ct);
             }
 
-            await RunInitSqlAsync(_conn, _initSql, _resolver, ct);
+            await DuckInitSqlRunner.RunAsync(_conn, _initSql, _resolver, ct);
 
             ValidateAliases();
 
@@ -550,18 +550,6 @@ public sealed class DuckDBSqlProcessor : IColumnarStreamReader, IDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────
-
-    private static async Task RunInitSqlAsync(DuckDBConnection conn, string? initSql, IStringContentResolver? resolver, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(initSql)) return;
-
-        var sql = await (resolver ?? DefaultStringContentResolver.Instance).ResolveAsync(initSql, ct);
-        if (string.IsNullOrWhiteSpace(sql)) return;
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        await cmd.ExecuteNonQueryAsync(ct);
-    }
 
     private static ReadOnlyMemory<object?[]> ConvertBatchToRows(RecordBatch batch)
         => SqlProcessorHelpers.ConvertBatchToRows(batch);
