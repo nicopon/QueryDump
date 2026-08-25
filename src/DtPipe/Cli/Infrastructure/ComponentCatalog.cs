@@ -17,7 +17,7 @@ public sealed class ComponentCatalog
     public IReadOnlyList<CatalogEntry> StreamTransformers { get; }
     public IReadOnlyList<CatalogEntry> Transformers { get; }
 
-    private ComponentCatalog(
+    internal ComponentCatalog(
         List<CatalogEntry> readers,
         List<CatalogEntry> writers,
         List<CatalogEntry> streamTransformers,
