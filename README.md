@@ -84,27 +84,16 @@ dtpipe --job nightly.yaml --limit 1000
 ### Incremental loading (cursor-driven)
 
 ```bash
-# First run: Full load, initializes the state file with the max updated_at cursor value
+# Full load on first run (state file does not exist → uses default 1970-01-01)
 dtpipe \
   -i "pg:Host=localhost;Database=prod" \
   --query "SELECT * FROM users WHERE updated_at >= '${{cursor://state.json|1970-01-01}}'" \
-  -o "sqlite:Data Source=dw.db" \
-  --table "users" \
-  --strategy Recreate \
-  --key id \
-  --cursor "updated_at" \
-  --state "state.json"
+  -o "sqlite:Data Source=dw.db" --table "users" --strategy Recreate --key id \
+  --cursor "updated_at" --state "state.json"
 
-# Subsequent runs: Incremental load, only retrieves newer records
-dtpipe \
-  -i "pg:Host=localhost;Database=prod" \
-  --query "SELECT * FROM users WHERE updated_at > '${{cursor://state.json}}'" \
-  -o "sqlite:Data Source=dw.db" \
-  --table "users" \
-  --strategy Upsert \
-  --key id \
-  --cursor "updated_at" \
-  --state "state.json"
+# Subsequent runs: cursor is resolved from state.json, only newer rows are fetched (switch to Upsert)
+# See REFERENCE.md#incremental-loading for full flag table and state file format,
+# and COOKBOOK.md#incremental-loading for the complete recipe.
 ```
 
 ### Database Resilience (Retry Policy)
@@ -114,7 +103,7 @@ dtpipe \
 dtpipe \
   -i "pg:Host=localhost;Database=prod" \
   --query "SELECT * FROM sales" \
-  -o "duck+pg:Host=remote_db;Database=analytics" \
+  -o "mssql:Server=remote_db;Database=analytics" \
   --retry
 ```
 
@@ -142,41 +131,29 @@ dtpipe agent "Inspect csv:invoices.csv, anonymize email, and output to jsonl:use
 
 ## Providers
 
-DtPipe detects providers from file extensions (`.csv`, `.parquet`…) or explicit prefixes.
-Explicit prefixes are recommended to avoid ambiguity.
+DtPipe detects providers from file extensions (`.csv`, `.parquet`…) or explicit prefixes — explicit prefixes are recommended to avoid ambiguity. **Full table with capabilities, query requirements and Stdin/Stdout support: [REFERENCE.md#providers](./REFERENCE.md#providers).**
 
-| Provider | Input | Output | Prefix |
-|:---|:---:|:---:|:---|
-| **DuckDB** | ✅ | ✅ | `duck:` |
-| **DuckDB Hub** | ✅ | ✅ | `duck+{provider}:` (`duck+mysql:`, `duck+pg:`, `duck+sqlite:`, `duck+s3:`) |
-| **SQLite** | ✅ | ✅ | `sqlite:` |
-| **PostgreSQL** | ✅ | ✅ | `pg:` |
-| **Oracle** | ✅ | ✅ | `ora:` |
-| **SQL Server** | ✅ | ✅ | `mssql:` |
-| **CSV** | ✅ | ✅ | `csv:` / `.csv` |
-| **JsonL** | ✅ | ✅ | `jsonl:` / `.jsonl` |
-| **XML** | ✅ | — | `xml:` / `.xml` |
-| **Apache Arrow** | ✅ | ✅ | `arrow:` / `.arrow` |
-| **Parquet** | ✅ | ✅ | `parquet:` / `.parquet` |
-| **Data Gen** | ✅ | — | `generate:N` |
-| **Null** | — | ✅ | `null:` |
-| **Checksum** | — | ✅ | `checksum:` |
+| Provider family | Examples | Prefix |
+|:---|:---|:---|
+| **Databases** | PostgreSQL, SQLite, DuckDB, SQL Server, Oracle | `pg:`, `sqlite:`, `duck:`, `mssql:`, `ora:` |
+| **Files** | CSV, JsonL, Parquet, Arrow, XML | `csv:`, `jsonl:`, `parquet:`, `arrow:`, `xml:` |
+| **Special** | Data Gen (source), Null/Checksum (sink), DuckDB Hub | `generate:N`, `null:`, `duck+{provider}:` |
 
 > Use `keyring://alias` anywhere a connection string is expected. DtPipe resolves it from the OS keychain at runtime. Run `dtpipe secret set prod-db "pg:..."` to store a secret.
 
-> DtPipe's native providers cover common sources and destinations. For everything
-> else — object storage (S3, GCS, Azure Blob), Iceberg, MySQL/MariaDB, HTTP APIs,
-> spatial formats — DuckDB's extension ecosystem serves as a connector multiplier.
-> Load an extension with `--duck-init` on a DuckDB reader, writer, or `--sql` branch
-> to reach any source or destination DuckDB supports natively. No additional adapters required.
+> For object storage (S3, GCS, Azure Blob), Iceberg, MySQL/MariaDB, HTTP APIs, spatial formats — use DuckDB's extension ecosystem as a connector multiplier. Load an extension with `--duck-init` on any DuckDB reader, writer, or `--sql` branch — no additional adapter required. See [REFERENCE.md#provider-specific-options](./REFERENCE.md#provider-specific-options) and [COOKBOOK.md#duckdb-extensions-and-cloud-storage](./COOKBOOK.md#duckdb-extensions-and-cloud-storage).
 
 ---
 
 ## Key Concepts
 
-Transformers (`--fake`, `--mask`, `--compute`, `--filter`, …) chain left-to-right. When source and destination are both columnar (Parquet, DuckDB, Arrow), data flows through without row conversion. Multiple `--input` sources with `--from`, `--sql`, or `--merge` form a DAG executed concurrently. Any CLI command can be saved to a YAML job file with `--export-job` and replayed with `--job`.
+*   **Providers — where data comes from and goes to.** DtPipe reads from databases (`pg:`, `mssql:`, `ora:`, `sqlite:`, `duck:`) and files (`csv:`, `parquet:`, `jsonl:`…), and writes to the same set. The provider is inferred from the file extension or an explicit prefix. See [Providers](./REFERENCE.md#providers) for the full list.
+*   **Transformers — what happens in between.** Flags like `--fake`, `--mask`, `--compute`, `--filter`, `--rename` are chained left-to-right on every row. Example: anonymize, then derive a column, then filter: `--fake "email:internet.email" --compute "fullName:row.first+' '+row.last" --filter "row.age>=18"`. See [COOKBOOK.md](./COOKBOOK.md#schema-transformations).
+*   **DAG pipelines — combine or split streams.** Use `--alias` to name a source, then `--from` / `--ref` / `--sql` / `--merge` to join, union or fan-out without temp files. Typical uses: enrich a stream with a lookup table, or write one source to two sinks at once. See [DAG Syntax](./REFERENCE.md#dag-syntax) and [DAG recipes](./COOKBOOK.md#dag-pipelines-multi-source).
+*   **YAML jobs — make it repeatable.** Any CLI pipeline can be saved with `--export-job pipeline.yaml` and replayed with `dtpipe --job pipeline.yaml` (CI/CD, cron, overrides via CLI). See [YAML Job Schema](./REFERENCE.md#yaml-job-file-schema).
+*   **Secrets — keep credentials out of shell history.** `dtpipe secret set prod-db "pg:..."` stores in the OS keychain; reference as `keyring://prod-db` or `${{keyring://alias}}` anywhere a connection string is expected. See [Secret Management](./REFERENCE.md#secret-management).
 
-**DuckDB is a remarkable engine** — fast, self-contained, with a rich SQL dialect and a thriving extension ecosystem. DtPipe uses it as a first-class component precisely because of that quality. When DuckDB alone covers your use case, use it directly. DtPipe adds value in the scenarios it wasn't designed for: anonymizing or masking data in transit, routing one source to multiple destinations concurrently, writing to target databases with strategies like upsert, auto-migrate, or bulk insert, reading from Oracle, SQL Server, or XML streams, and packaging pipelines as repeatable YAML jobs with integrated secret management. DtPipe contributes the pipeline layer; DuckDB contributes the SQL engine.
+> **Why DuckDB?** DuckDB is fast, self-contained and speaks rich SQL — DtPipe embeds it as its SQL engine (`--sql`, `duck:`). When DuckDB alone covers your use case, use it directly. DtPipe adds value where DuckDB stops: anonymization/masking in transit, concurrent fan-out, database write strategies (upsert, auto-migrate, bulk), Oracle/SQL Server/XML sources, and repeatable YAML jobs with secret management.
 
 ---
 

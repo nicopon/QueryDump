@@ -5,6 +5,8 @@ Recipes and end-to-end scenarios. For the full option reference, see [REFERENCE.
 > [!IMPORTANT]
 > **Database Connection Strings**: All database configurations in these recipes use standard **ADO.NET connection strings** (e.g. `pg:Host=localhost;Database=mydb;...` rather than Python/SQLAlchemy connection URIs). If you are coming from Python or SQLAlchemy, refer to the [Database Connection Strings translation guide in REFERENCE.md](./REFERENCE.md#database-connection-strings-adonet-format) for formatting help.
 
+> **Docs map:** [README.md](./README.md) — quick start · [REFERENCE.md](./REFERENCE.md) — full CLI & YAML reference · [EXTENDING.md](./EXTENDING.md) — new adapters/transformers
+
 **Table of Contents**
 - [Basic Transfers](#basic-transfers)
 - [Anonymization Before Export](#anonymization-before-export)
@@ -15,6 +17,7 @@ Recipes and end-to-end scenarios. For the full option reference, see [REFERENCE.
 - [DAG Pipelines (Multi-Source)](#dag-pipelines-multi-source)
 - [Standard Streams and Automation](#standard-streams-and-automation)
 - [Incremental Loading](#incremental-loading)
+- [AI Agent Integration](#ai-agent-integration)
 
 ---
 
@@ -382,9 +385,10 @@ for every cloud store or SaaS format, DtPipe delegates to DuckDB's extension eco
 making DuckDB an on-demand connector for sources and destinations it can't reach natively.
 Load an extension with `--duck-init` on any DuckDB branch (reader, writer, or `--sql` processor)
 to read remote files directly in a query, write to a DuckDB-supported target, or join local
-data with remote sources. The examples below cover S3, Azure Blob, and local DuckDB files.
+data with remote sources. The examples below cover S3 and env-var patterns (Azure, inline and
+DuckDB-file variants use the same mechanism).
 `--duck-init` value forms: `keyring://alias`, `${{keyring://alias}}`, `${{ENV_VAR}}`,
-`@/path/file.sql` — composable, full syntax in [REFERENCE.md](./REFERENCE.md#duckdb-options).
+`@/path/file.sql` — composable, full syntax in [REFERENCE.md#value-resolution](./REFERENCE.md#value-resolution) and [REFERENCE.md#provider-specific-options](./REFERENCE.md#provider-specific-options).
 
 ### DuckDB Hub connections (`duck+{provider}:`)
 
@@ -420,23 +424,6 @@ dtpipe \
   -o result.parquet
 ```
 
-### Inline keyring secrets (mix multiple credentials)
-
-```bash
-# Store individual values
-dtpipe secret set s3-region "eu-west-1"
-dtpipe secret set s3-key "AKIAIOSFODNN7EXAMPLE"
-dtpipe secret set s3-secret "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-
-# Reference them inline
-dtpipe \
-  -i orders.parquet --alias local \
-  --from local \
-  --duck-init "INSTALL httpfs; LOAD httpfs; SET s3_region='${{keyring://s3-region}}'; SET s3_access_key_id='${{keyring://s3-key}}'; SET s3_secret_access_key='${{keyring://s3-secret}}';" \
-  --sql "SELECT l.*, r.category FROM local l JOIN read_parquet('s3://bucket/reference.parquet') r ON l.product_id = r.id" \
-  -o enriched.parquet
-```
-
 ### Credentials from environment variables (CI/CD)
 
 ```bash
@@ -453,36 +440,10 @@ dtpipe \
   -o result.parquet
 ```
 
-### Azure Blob Storage
-
-```bash
-dtpipe secret set azure-init "INSTALL azure; LOAD azure; SET azure_storage_connection_string='DefaultEndpointsProtocol=https;...';"
-
-dtpipe \
-  -i data.parquet --alias src \
-  --from src \
-  --duck-init "keyring://azure-init" \
-  --sql "SELECT * FROM src JOIN read_parquet('azure://container/ref.parquet') r ON src.id = r.id" \
-  -o result.parquet
-```
-
-### Write a DuckDB file with cloud credentials pre-loaded
-
-```bash
-dtpipe \
-  -i "pg:Host=prod;Database=app" --query "SELECT * FROM orders" \
-  -o "duck:output.duckdb" --table orders \
-  --duck-init "keyring://azure-init"
-```
-
-### Read from a DuckDB file with an extension
-
-```bash
-dtpipe \
-  -i "duck:warehouse.duckdb" --query "SELECT * FROM spatial_data" \
-  --duck-init "LOAD spatial" \
-  -o result.parquet
-```
+> **Other `duck-init` patterns** — same mechanism, different secret shape. See [REFERENCE.md#provider-specific-options](./REFERENCE.md#provider-specific-options) and [REFERENCE.md#value-resolution](./REFERENCE.md#value-resolution) for the full `keyring://` / `${{keyring://…}}` / `${{ENV}}` / `@file` composable syntax.
+> - Database credentials (main use — inline in the connection string, not `duck-init`): `dtpipe -i "pg:Host=prod;Database=app;Username=${{keyring://pg-user}};Password=${{keyring://pg-pass}}" --query "SELECT * FROM orders" -o out.parquet`
+> - Azure: `INSTALL azure; LOAD azure; SET azure_storage_connection_string='…'` (same `keyring://azure-init` pattern)
+> - DuckDB file I/O: `--duck-init "LOAD spatial"` on a `duck:` reader/writer, or pre-load cloud creds on a `duck:` writer (`-o duck:output.duckdb --duck-init "keyring://azure-init"`).
 
 ### YAML job with duck-init
 
@@ -661,7 +622,7 @@ dtpipe -i "pg:..." --query "SELECT * FROM large_table" \
 
 ## Incremental Loading
 
-Incremental loading enables transfer of only changed/new rows. DtPipe handles this dynamically using cursor tracking and query interpolation.
+Incremental loading enables transfer of only changed/new rows. DtPipe handles this dynamically using cursor tracking and query interpolation. **Canonical flag table, state file format and `${{cursor://…}}` resolution rules: [REFERENCE.md#incremental-loading](./REFERENCE.md#incremental-loading) and [REFERENCE.md#value-resolution](./REFERENCE.md#value-resolution).**
 
 ### Scenario: incremental sync of a postgres table to sqlite
 

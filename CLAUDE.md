@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Docs map:** end-user CLI/YAML syntax, flag semantics, and recipes live in [README.md](./README.md), [COOKBOOK.md](./COOKBOOK.md), and [REFERENCE.md](./REFERENCE.md) — this file covers internals only (call chains, class ownership, invariants) and links out rather than restating them.
+
 ## Language
 
 All code, comments, commit messages, and documentation **must** be written in English. This is a hard requirement — no exceptions.
@@ -19,9 +21,6 @@ For targeted builds during development:
 ```bash
 dotnet build DtPipe.sln
 dotnet run --project src/DtPipe -- --help
-```
-
-```bash
 dtpipe --help
 ```
 
@@ -38,23 +37,21 @@ For unit tests only (no Docker required):
 
 ```bash
 dotnet test tests/DtPipe.Tests/DtPipe.Tests.csproj --filter "FullyQualifiedName~.Unit."
-
-# Run a single test by name
 dotnet test tests/DtPipe.Tests/ --filter "FullyQualifiedName~CliDagParserTests"
 ```
 
-`test_local.sh` sets `DTPIPE_TEST_REUSE_INFRA=true` to tell tests to connect to the fixed-port containers started by `tests/infra/start_infra.sh`. Use `tests/infra/stop_infra.sh` to tear them down. Shell-based integration scripts are also available in `tests/scripts/`.
+`test_local.sh` sets `DTPIPE_TEST_REUSE_INFRA=true` to connect to fixed-port containers started by `tests/infra/start_infra.sh`. Use `tests/infra/stop_infra.sh` to tear them down. Shell-based integration scripts are also in `tests/scripts/`.
 
 ### Engine Change Obligations
 
-Any change to `DagOrchestrator` **must** be covered by a unit test in `DagOrchestratorTests.cs`, and any change to `LinearPipelineService` **must** be covered in `OrderedPipelineTests.cs`. Both validate behavior without going through the CLI.
+Any change to `DagOrchestrator` **must** be covered in `DagOrchestratorTests.cs`, and any change to `LinearPipelineService` in `OrderedPipelineTests.cs`. Both validate without the CLI.
 
-Before committing engine changes, verify the three canonical cases pass:
+Before committing engine changes, verify the three canonical cases:
 1. Linear pipeline (single branch, no memory channel)
 2. Two-branch DAG (independent branches)
 3. DAG with SQL processor (`--from` + `--sql`)
 
-The golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical reference shapes. `CliDagParser_GoldenTests.cs` verifies that `CliDagParser.Parse(args)` produces exactly those structures. If you add a new DAG topology, add a corresponding golden definition and a round-trip JSON test in `JobDagDefinition_JsonTests.cs`.
+Golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical shapes. `CliDagParser_GoldenTests.cs` verifies `CliDagParser.Parse(args)` produces them. Add a new topology → add a golden definition + round-trip test in `JobDagDefinition_JsonTests.cs`.
 
 ## Architecture Overview
 
@@ -71,212 +68,141 @@ The golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical reference
 | `src/Apache.Arrow.Serialization` | Standalone CLR↔Arrow type map + POCO serializer; zero DtPipe deps, no external deps beyond `Apache.Arrow` |
 | `tests/DtPipe.Tests` | xunit.v3 unit and integration tests |
 
-#### File placement conventions
-
-- `DtPipe.Core` contains **only** abstractions, models, and the generic DAG/pipeline engine — no concrete implementations.
-- Each concrete transformer in `DtPipe.Transformers` lives in its own subdirectory (`Row/Expand/`, `Arrow/Filter/`…) with a matching sub-namespace (`DtPipe.Transformers.Row`, `DtPipe.Transformers.Arrow`…).
-- Each concrete stream processor in `DtPipe.Processors` follows the same pattern: one subdirectory per processor (`DuckDB/`, `Merge/`, `Sql/`…) with a matching sub-namespace (`DtPipe.Processors.DuckDB`, `DtPipe.Processors.Merge`, `DtPipe.Processors.Sql`…).
-- Readers and writers in `DtPipe.Adapters` are grouped by technology under `Adapters/<Name>/`.
-- AI Agent classes live under `src/DtPipe/Cli/Agent/` (`AgentExecutor`, `AgentTui`, `OllamaClient`, `AgentSystemPrompt`, `AgentTrajectory`).
+File placement: `DtPipe.Core` = abstractions/models/engine only. Each transformer in `DtPipe.Transformers` lives in its own subdirectory (`Row/Expand/`, `Arrow/Filter/`…) with matching sub-namespace. Each stream processor in `DtPipe.Processors` follows the same pattern (`DuckDB/`, `Merge/`…). Readers/writers under `DtPipe.Adapters/Adapters/<Name>/`. AI Agent classes under `src/DtPipe/Cli/Agent/`.
 
 ### Core Data Flow
 
-The fundamental pipeline: `IStreamReader` → `IDataTransformer[]` → `IDataWriter`.
+```mermaid
+flowchart LR
+    args["string[] args"] --> lexer["PipelineLexer.Parse"]
+    lexer --> converter["PipelineToJobConverter"]
+    converter --> dag["DagOrchestrator"]
+    dag --> linear["LinearPipelineService"]
+    linear --> export["ExportService.RunExportAsync"]
+    export --> executor["PipelineExecutor"]
+    executor --> writer["IDataWriter"]
+```
 
-1. `JobService.BuildSubcommands()` registers named subcommands (`inspect`, `providers`, `completion`, `secret`, `mcp`, `agent`) into the `System.CommandLine` root command. Named subcommands are dispatched before pipeline parsing.
-2. On pipeline execution, `FlagRegistryFactory.Build(serviceProvider)` assembles a `FlagRegistry` from all registered providers (via `[ComponentOption]` attributes) and stream processor trigger flags. `PipelineLexer.Parse(args)` then splits raw args into a `ParsedPipeline` (a list of `BranchSpec` records). `PipelineToJobConverter.Convert(parsed, streamTransformerFactories)` maps that to a `(Dictionary<string, JobDefinition>, JobDagDefinition)` pair.
-3. For linear pipelines, `LinearPipelineService` drives execution through `ExportService.RunExportAsync()`.
-4. For DAG pipelines, `DagOrchestrator` spawns concurrent `Task`s per branch, wiring them via in-memory `Channel<T>` for zero-copy data flow.
+`DagOrchestrator` spawns this same chain once per branch, concurrently — even a single-branch (linear) run goes through it once. Fundamental pipeline: `IStreamReader` → `IDataTransformer[]` → `IDataWriter`.
 
-`PipelineEngine` (`DtPipe.Core`) is a headless, CLI-free engine for programmatic use. It accepts `IStreamReader + IRowDataWriter + IDataTransformer[]` and drives the full pipeline without DI or CLI dependencies.
+1. `JobService.BuildSubcommands()` registers named subcommands (`inspect`, `providers`, `completion`, `secret`, `mcp`, `agent`) into `System.CommandLine`.
+2. `FlagRegistryFactory.Build(serviceProvider)` assembles a `FlagRegistry` from `[ComponentOption]` providers + stream processor trigger flags. `PipelineLexer.Parse(args)` → `ParsedPipeline` (`BranchSpec[]`). `PipelineToJobConverter.Convert(parsed, …)` → `(Dictionary<string, JobDefinition>, JobDagDefinition)`.
+3. Linear: `LinearPipelineService` → `ExportService.RunExportAsync()` → `PipelineExecutor`.
+4. DAG: `DagOrchestrator` spawns concurrent `Task`s per branch via `Channel<T>` for zero-copy data flow. The kernel is `PipelineExecutor.ExecuteSegmentedPipelineAsync`.
 
 ### Provider Pattern
 
-Every adapter implements `IProviderDescriptor<TService>` and is registered in `Program.cs` via `RegisterReader<T>()` / `RegisterWriter<T>()` / `RegisterStreamTransformer<T>()`. The `CliProviderFactory<T>` wraps descriptors into CLI contributors: `CliOptionBuilder.GenerateFlagDefsForType(OptionsType)` reflects on `[ComponentOption]` attributes and produces `FlagDef` entries for the `FlagRegistry`. At execution time, `FlagBinder.Bind(optionsInstance, args, registry)` maps the raw CLI args to the options object. Provider-specific options are stored in `OptionsRegistry` (keyed by type) and scoped per DI scope.
+Every adapter implements `IProviderDescriptor<TService>` and is registered in `Program.cs` via `RegisterReader<T>()` / `RegisterWriter<T>()` / `RegisterStreamTransformer<T>()`. `CliProviderFactory<T>` wraps descriptors: `CliOptionBuilder.GenerateFlagDefsForType(OptionsType)` reflects on `[ComponentOption]` → `FlagDef` entries. At execution `FlagBinder.Bind(optionsInstance, args, registry)` maps CLI args to the options object. Provider options live scoped in `OptionsRegistry` (keyed by type).
 
 ### DAG Pipeline
 
-`PipelineLexer` (`DtPipe.Cli.Pipeline`) tokenises raw args into a `ParsedPipeline` whose `Branches` list contains `BranchSpec` records (each carrying stage-scoped arg slices: `ReaderArgs`, `PipelineArgs`, `WriterArgs`). `PipelineToJobConverter` then maps each `BranchSpec` to a `BranchDefinition` (the core DAG model). Three tokens trigger an implicit branch split:
-- `-i` / `--input` — when an input or a job file was already seen in the current branch (new data source)
-- `--from <alias[,alias...]>` — when a `--from`, `--input`, or `--job` was already seen in the current branch. The first `--from` in a completely fresh branch (no prior input) stays in the current branch.
-- `--job` / `-j <file>` — when a job file or an input was already seen in the current branch (new YAML job)
+`PipelineLexer` (`DtPipe.Cli.Pipeline`) tokenises args into `ParsedPipeline` (`BranchSpec` with `ReaderArgs`/`PipelineArgs`/`WriterArgs`). Three tokens trigger an implicit branch split:
+- `-i` / `--input` — when an input or job file was already seen in the current branch
+- `--from <alias[,alias...]>` — when a `--from`, `--input`, or `--job` was already seen; first `--from` in a fresh branch stays in current branch
+- `--job` / `-j <file>` — when a job file or input was already seen
 
-Neither `--sql` nor boolean processor flags (e.g. `--merge`) trigger a split. Each stream processor registers its trigger flags via `IStreamTransformerFactory.CliTriggerFlags`, which `FlagRegistryFactory` uses to populate the `FlagRegistry`. The canonical processor syntax is:
+Neither `--sql` nor boolean processor flags (e.g. `--merge`) trigger a split. Each processor declares trigger flags via `IStreamTransformerFactory.CliTriggerFlags`.
+
+Canonical processor grammar (see `REFERENCE.md#dag-syntax` for per-flag semantics, topologies, and examples — not restated here):
 
 ```
 --from <alias[,alias...]> [--ref <alias[,alias...]>] (--sql "<query>" | --<processor>) [--alias <name>] [-o <dest>]
 ```
 
-- `--from a,b,c` declares one or more streaming main sources (comma-separated). Fan-out consumers use a single alias; multi-stream processors (e.g. merge) use multiple aliases.
-- `--ref a,b` declares materialized reference sources (preloaded before query execution, comma-separated). Used by SQL JOIN branches.
-- `--sql "<query>"` runs an inline SQL query. Default engine: DuckDB (standard SQL, no build step).
-- `--merge` (and future boolean flags) declares the processor explicitly by name.
 - `--job <file>` / `-j <file>` loads a YAML pipeline job file; `PipelineToJobConverter` reads it and applies any additional CLI flags as overrides.
-- `--export-job <file>` serialises the current CLI pipeline to a YAML job file via `JobFileWriter` and exits without running the pipeline.
+- `--export-job <file>` serializes the current CLI pipeline to a YAML job file via `JobFileWriter` and exits without running the pipeline.
 
-Branches communicate via `IMemoryChannelRegistry` (either native `Channel<IReadOnlyList<object?[]>>` or Arrow `Channel<RecordBatch>`). The `MappedMemoryChannelRegistry` handles logical-to-physical alias resolution for fan-out (broadcast/tee) scenarios. A `BranchChannelContext` injected per branch carries an `AliasMap` that translates logical aliases (as written in CLI args) to physical channel names (including fan-out sub-channels like `s__fan_0`). This mapping is populated by `DagOrchestrator` and is transparent to all downstream components including processors.
+Branches communicate via `IMemoryChannelRegistry` (`Channel<IReadOnlyList<object?[]>>` or Arrow `Channel<RecordBatch>`). Fan-out (broadcast/tee) is resolved via `BranchChannelContext.AliasMap` (logical alias → physical channel including `s__fan_0` sub-channels), populated by `DagOrchestrator` and consumed directly by factories (e.g. `DuckDBSqlTransformerFactory.cs:71`).
 
-Canonical topologies (Linear, SQL, JOIN, Merge, Fan-out, Diamond, Join→fan-out) are documented with full CLI patterns in `REFERENCE.md`.
+> `--ref` is intentionally materialized (cost-based query planning) — rationale and per-flag semantics: `REFERENCE.md#dag-syntax`.
 
 ### SQL Processors
 
-`CompositeSqlTransformerFactory` is the entry point registered in DI. The primary engine is:
-
-**DuckDB (default)** — `DuckDBSqlTransformerFactory` / `DuckDBSqlProcessor`:
-- Pure C# via DuckDB.NET. No native bridge build required.
-- Input (`--from`): zero-copy Arrow C Data Interface via `duckdb_arrow_scan`.
-- Output: lazy streaming via `duckdb_execute_prepared_streaming` + `duckdb_fetch_chunk` + `duckdb_data_chunk_to_arrow`. Arrow extension types (UUID, etc.) preserved via `arrow_lossless_conversion = true`.
-- Schema inferred from prepared statement before execution — no extra query round-trip.
-- Standard SQL dialect, rich function library (window functions, CTEs, JSON, etc.). Queries testable externally with the DuckDB CLI.
-- `--duck-init "SQL"` (optional): runs on the in-memory connection after the two hardcoded `SET` statements and before Arrow stream registration. Use to load extensions (`LOAD httpfs`), set session variables (S3/Azure credentials), or define macros/views that the query depends on. Extracted from `branchArgs` by `DuckDBSqlTransformerFactory` and passed as the `initSql` optional parameter of `DuckDBSqlProcessor`.
-
-The same `--duck-init` option is available on `DuckDataSourceReader` (runs after `PRAGMA memory_limit/threads`) and `DuckDbDataWriter` (runs once after connection open, guarded by `_initSqlApplied`). Each DuckDB component has its own connection — `--duck-init` must be specified separately on each branch that needs it. The helper logic is in `DuckInitSqlHelper` (Adapters) and a private static `RunInitSqlAsync` (Processor).
-
-**DuckDB Hub (`duck+{provider}:`)** connection strings (`duck+mysql:`, `duck+pg:`, `duck+sqlite:`, `duck+s3:`) are parsed by `DuckHubConnectionParser.cs`. They automatically handle `INSTALL`, `LOAD`, and `ATTACH` extension commands, setting the default target schema to the attached alias.
-
-**Database Retry Policy (`--retry`)** uses Polly v8 (`DatabaseRetryPolicy.cs`) to retry transient database connection and timeout errors with exponential backoff and jitter.
-
-**MCP Server & AI Agent**: `dtpipe mcp` exposes tools (`dry-run`, `suggest-pipeline`, `list-cursors`, `execute-yaml-job`, schema inspection) via STDIO. `dtpipe agent` runs an interactive loop with auto-discovered local Ollama or OpenAI models (`OpenAiClient.cs`, `OllamaClient.cs`, `ConversationWindowManager.cs`).
-
-**`--duck-init` value resolution** is handled by `IStringContentResolver` (`DtPipe.Core.Security`). The CLI uses `CliStringContentResolver` (`DtPipe/Cli/Security/`); headless contexts use `DefaultStringContentResolver`. Resolution order: (1) `@file` or `keyring://` replaces the whole value, then (2) `${{ENV_VAR}}` and `${{keyring://alias}}` are substituted inline. Steps are composable. This resolver is also used by `--compute` and `--expand` (via `DefaultStringContentResolver.Instance`, env vars + `@file` only). Full syntax documented in `REFERENCE.md`.
-
-Logical SQL table names come from the branch args (`--from`/`--ref`). Physical channel aliases are resolved by `DagOrchestrator` before the processor is created, via `BranchChannelContext.AliasMap` — processors never need to know about fan-out sub-channel naming (`__fan_N` suffixes).
-
-**`--ref` materialization is intentional.** Secondary sources declared via `--ref` are fully read into memory before query execution. This is required for both engines to build a cost-based execution plan — streaming both main and reference tables simultaneously prevents join optimization. Only the source declared via `--from` (the main) uses a true streaming path. Keep `--ref` tables at manageable size; for large lookups, pre-filter upstream.
+`CompositeSqlTransformerFactory` is the DI entry point for `--sql` branches. The default (and currently only) engine is DuckDB — `DuckDBSqlTransformerFactory` / `DuckDBSqlProcessor`: zero-copy Arrow C Data Interface on read (`--from`), lazy streaming fetch (`duckdb_execute_prepared_streaming` + `duckdb_fetch_chunk`) on write, schema inferred from the prepared statement before execution. `DuckHubConnectionParser` parses `duck+{provider}:` connection strings and auto-issues `INSTALL`/`LOAD`/`ATTACH`. `--retry` uses Polly v8 (`DatabaseRetryPolicy`). `--duck-init`/`--compute`/`--expand` value resolution goes through `IStringContentResolver` (`CliStringContentResolver` for the CLI, `DefaultStringContentResolver` for headless contexts). The init-SQL runner is duplicated verbatim between `DuckInitSqlHelper` (Adapters) and a private `RunInitSqlAsync` (Processors) — Processors can't reference Adapters, so don't add a third copy; if consolidating, promote it to a neutral shared location instead. User-facing flag syntax and examples: `REFERENCE.md#provider-specific-options`, `COOKBOOK.md#sql-processors-and-joins`.
 
 ### Transformer Pipeline
 
-Transformers implement `IDataTransformer` with three methods: `InitializeAsync` (schema propagation), `Transform` (per-row), and `Flush` (end-of-stream for stateful transformers). `PipelineSegmenter` groups consecutive columnar-capable transformers into segments to enable Arrow zero-copy bridging between row and columnar processing modes.
+`IDataTransformer` has `InitializeAsync` (schema), `Transform` (per-row), `Flush` (end-of-stream). `PipelineSegmenter` groups consecutive columnar-capable transformers into segments for Arrow zero-copy bridging between row and columnar modes.
 
 ### Key Interfaces
 
 - `IStreamReader` / `IColumnarStreamReader` — open + stream batches
-- `IDataWriter` / `IRowDataWriter` / `IColumnarDataWriter` — write contracts (row-based and columnar)
-- `IDataTransformer` / `IDataTransformerFactory` — transform rows; factory creates from CLI config or YAML
-- `IStreamTransformerFactory` — multi-input stream processors; declares `MinStreams`/`MaxStreams`, `MinLookups`/`MaxLookups`, and `CliTriggerFlags` (used by `FlagRegistryFactory`); `Create(branchArgs, ctx, serviceProvider)` receives `BranchChannelContext` for alias resolution
-- `ICliContributor` — contributes CLI options and can intercept command handling
-- `OptionsRegistry` — scoped key-value store for provider-specific parsed options
+- `IDataWriter` / `IRowDataWriter` / `IColumnarDataWriter` — write contracts
+- `IDataTransformer` / `IDataTransformerFactory` — row transforms
+- `IStreamTransformerFactory` — multi-input processors; `Create(branchArgs, ctx, serviceProvider)` receives `BranchChannelContext` for alias resolution
+- `ICliContributor` / `OptionsRegistry` — CLI contribution + scoped option store
 
 ## Debug Mode
-
-Set `DEBUG=1` to enable verbose branch-level logging to stderr:
 
 ```bash
 DEBUG=1 dtpipe --input pg:"..." --output csv:out.csv
 ```
+Verbose branch-level logging to stderr.
 
 ## Pipeline Design Principles
 
 ### No magic conversions in the engine core
 
-The DtPipe engine (Core, Processors, DAG orchestrator) must **never** perform implicit type conversions to work around limitations or specificities of a particular adapter (reader or writer). Adapter-specific behavior belongs in the adapter, not the engine.
+The engine (Core, Processors, DAG orchestrator) must **never** perform implicit type conversions to work around an adapter limitation. Adapter-specific behavior belongs in the adapter.
 
-When a type mismatch arises between two pipeline stages (e.g. a CSV source produces a generic `string` column for what is logically a UUID, while a downstream SQL step joining it with a Parquet or database source expects a typed UUID column), the correct remediation is one of the following — in order of preference:
+When a type mismatch arises (e.g. CSV `string` UUID vs Parquet `FixedSizeBinary(16)` UUID), prefer in order:
+1. **Adapter parameterization** — e.g. `--column-type "Id:uuid"` on CSV reader
+2. **Pipeline transformer** — e.g. `--compute` to parse the string column
+3. **SQL processor** — e.g. `CAST(base64_decode(id) AS UUID)` in `--sql`
 
-1. **Adapter parameterization** — Add configuration to the source adapter that allows the user to declare the logical type of one or more columns and apply explicit parsing at read time. Example: a `--column-type "Id:uuid"` option on the CSV reader that parses Base64 or UUID-formatted strings into `byte[16]` during ingestion.
+Forbidden:
+- Detecting a source format and silently converting in a type mapper/schema factory
+- Changing `ArrowTypeMapper` / `PipeColumnInfo` to compensate for an adapter
+- Branching in `ExportService`/`PipelineExecutor`/`DagOrchestrator` on adapter identity
 
-2. **Pipeline transformer** — Insert an existing or new DtPipe transformer between the source and the SQL step to convert the column to the expected format. Example: a `--compute` expression that parses a string column into a typed UUID representation.
-
-3. **SQL processor capabilities** — Use the SQL engine's native casting and formatting functions directly in the query. Example: `CAST(base64_decode(id) AS UUID)` in the `--sql` expression.
-
-What is explicitly **forbidden**:
-- Detecting a specific source format (e.g. "this string looks like a Base64-encoded UUID") and silently converting it inside a consumer, type mapper, or schema factory.
-- Changing the Arrow schema or type mapping in `AdoToArrow`, `ArrowTypeMapper`, or `PipeColumnInfo` to compensate for a specific adapter's output format.
-- Inserting conditional branches in `ExportService`, `PipelineExecutor`, or `DagOrchestrator` based on adapter identity.
-
-The canonical Arrow representation of a UUID in DtPipe is `FixedSizeBinaryType(16)` with Field metadata `ARROW:extension:name = arrow.uuid` and RFC 4122 big-endian byte order (use `ArrowTypeMapper.ToArrowUuidBytes` / `FromArrowUuidBytes`). Any adapter that produces UUID values must emit them in this format, or the user must insert an explicit conversion step.
+Canonical UUID: `FixedSizeBinaryType(16)` + Field metadata `ARROW:extension:name = arrow.uuid`, RFC 4122 big-endian (`ArrowTypeMapper.ToArrowUuidBytes` / `FromArrowUuidBytes`).
 
 ## Apache.Arrow.Serialization
 
-`src/Apache.Arrow.Serialization/` is a **standalone library** with no DtPipe dependencies (only `Apache.Arrow`). Dependency graph:
+Standalone library with no DtPipe deps (only `Apache.Arrow`):
 
 ```
-Apache.Arrow.Serialization   ← standalone, no DtPipe deps
+Apache.Arrow.Serialization ← standalone
+       ↑ 
+Apache.Arrow.Ado          ← uses ArrowTypeResult
        ↑
-Apache.Arrow.Ado             ← uses ArrowTypeResult
-       ↑
-DtPipe.Core                  ← ArrowTypeMapper is a facade over ArrowTypeMap
-       ↑
-DtPipe.Adapters, DtPipe.Processors, …
+DtPipe.Core               ← ArrowTypeMapper is facade over ArrowTypeMap
 ```
 
-`ArrowTypeMap` (`Mapping/ArrowTypeMap.cs`) is the canonical CLR↔Arrow mapping; `ArrowTypeMapper` in `DtPipe.Core` is a pure facade.
-
-`FixedSizeBinaryArrayBuilder` (`Reflection/FixedSizeBinaryArrayBuilder.cs`) is an intentional copy of the same class in `DtPipe.Core` — kept separate to avoid a circular dependency. **Keep both files in sync.**
-
-See `EXTENDING.md` for `ArrowSerializer`, `ArrowDeserializer`, and `ArrowReflectionEngine` usage.
-
----
+`ArrowTypeMap` (`Mapping/ArrowTypeMap.cs`) is the canonical CLR↔Arrow map; `ArrowTypeMapper` in Core is a facade. `FixedSizeBinaryArrayBuilder` lives only in `Apache.Arrow.Serialization/Reflection/FixedSizeBinaryArrayBuilder.cs` — Core consumes it via project reference (single definition). See `EXTENDING.md` for `ArrowSerializer`/`ArrowDeserializer` usage.
 
 ## Adding a New Adapter
 
-See `EXTENDING.md` for the full adapter and transformer patterns. Key rules:
-
-- **Row writers**: use `ColumnConverterFactory.Build(sourceClrType, targetClrType)` once per column during init; never call `ValueConverter.ConvertValue()` per-cell.
+See `EXTENDING.md` for full patterns. Key rules:
+- **Row writers**: build `ColumnConverterFactory.Build(sourceClrType, targetClrType)` once per column at init; never per-cell `ValueConverter.ConvertValue()`.
 - **Columnar writers**: implement `IColumnarDataWriter`; use `ArrowTypeMapper.GetValueForField(array, field, i)` when a `Field` is available.
-- **Text readers**: implement `IColumnTypeInferenceCapable` so `--auto-column-types` works automatically.
+- **Text readers**: implement `IColumnTypeInferenceCapable` for `--auto-column-types`.
 
 ### Arrow ↔ CLR mapping: no heuristics
 
-**Firm rule: `ArrowTypeMapper.GetClrType(IArrowType)` never infers a semantic CLR type from the storage type alone.** Ambiguous types (e.g. `FixedSizeBinary`) map to the most generic CLR type (`byte[]`). Semantic resolution requires `ArrowTypeMapper.GetClrTypeFromField(Field)` (checks extension metadata).
+`ArrowTypeMapper.GetClrType(IArrowType)` never infers semantic type from storage alone (`FixedSizeBinary` → `byte[]`). Use `GetClrTypeFromField(Field)` (checks extension metadata).
 
 Key APIs:
 - `GetLogicalType(Type)` → `ArrowTypeResult` (`.ArrowType` + `.Metadata`)
-- `GetField(name, clrType, nullable)` → `Field` with metadata embedded — use instead of `new Field(...)`
-- `GetClrTypeFromField(Field)` → `Type` — use wherever a `Field` is available
-- `GetValueForField(array, field, i)` → `object?` — respects extension metadata (e.g. `arrow.uuid` → `Guid`)
-- `GetClrType(IArrowType)` / `GetValue(array, i)` — storage-only, no metadata
+- `GetField(name, clrType, nullable)` → `Field` with metadata — use instead of `new Field(...)`
+- `GetClrTypeFromField(Field)` / `GetValueForField(array, field, i)` — metadata-aware (e.g. `arrow.uuid` → `Guid`)
+- `GetClrType(IArrowType)` / `GetValue(array, i)` — storage-only
 
-UUID canonical representation: `FixedSizeBinaryType(16)` + Field metadata `ARROW:extension:name = arrow.uuid`, RFC 4122 big-endian. Use `ArrowTypeMapper.ToArrowUuidBytes` / `FromArrowUuidBytes`.
+## MCP Server & Agentic Integration
 
----
+`dtpipe mcp` (STDIO) exposes schema-discovery, validation, and execution tools for AI assistants (`execute-yaml-job` is dry-run by default). Don't enumerate tool names here — see `REFERENCE.md#mcp-server` (canonical, up-to-date tool table) and `REFERENCE.md#agent-guardrails` for full options. `dtpipe agent` runs an interactive loop with Ollama/OpenAI (`AgentExecutor`, `AgentTui`, `OllamaClient`).
 
-## MCP Server Subsystem & Agentic Integration
+Hardening invariants (F1–F7, fail-closed, non-negotiable — details in `REFERENCE.md#agent-guardrails`):
+- **F1 Planner/Executor split** — `--mode plan` (default) hides `execute-yaml-job` from the model.
+- **F2 Guardrails** — `ISqlSafetyPolicy` (destructive verbs / network) + `IApprovalGate`; `apply` + approval + clean check required for writes.
+- **F3 Determinism** — `temperature 0 + seed` and `--repeat N`; `DeterminismReport` variance = distinct-YAML − 1.
+- **F4 Non-destructive context** — fact cache + `ConversationWindowManager.Compact`.
+- **F5 Parallel tools** — all `ToolCalls` per turn executed (`Task.WhenAll`; `--sequential` forces serial).
+- **F6 Single YAML path** — `yamlContent` tool arg is sole plan source.
+- **F7 CI gate** — `tests/agentic/analyze-traces.sh --gate` fails on MCP errors / variance / failed mission.
 
-`dtpipe` embeds a native **Model Context Protocol (MCP)** server (`dtpipe mcp`) allowing AI assistants (Cursor, Claude Desktop, Antigravity, VS Code MCP) to discover capabilities, inspect schemas, validate, and execute pipelines autonomously.
-
-### Core Architecture
-
-- `src/DtPipe/Cli/Commands/McpCommand.cs` — Registers `dtpipe mcp` command and starts `McpServerTool` loop on STDIO.
-- `src/DtPipe/Cli/Mcp/DtPipeMcpTools.cs` — Exposes tools: `list-providers`, `inspect`, `preview-data`, `validate-yaml-job`, `execute-yaml-job`, `dry-run`, `help`, `get-adapter-help`, `get-transformer-help`, `register-yaml-job`. `execute-yaml-job` is **dry-run by default** and gated by the guardrails (§Agent Guardrails below).
-- `src/DtPipe/Cli/Mcp/IMcpHelpService.cs` & `McpHelpService.cs` — Dynamic reflection-based help generator.
-
-### Agent Hardening (F1–F7, non-negotiable)
-
-The agent/MCP execution layer is hardened and **fail-closed** — when in doubt it rejects rather than executes. Do not regress these invariants.
-
-- **F1 — Planner/Executor split**: `AgentMode` { `Plan` (default), `Execute`, `Autonomous` } drives a **tool allow-list** via `McpToolProvider.GetToolDefinitions(AgentMode)`. In `Plan` mode the `execute-yaml-job` tool is *removed from the tool list the model sees* and `PlannerSystemPrompt` forbids execution; execution is a deterministic engine step, not an LLM decision.
-- **F2 — Execution guardrails**: `src/DtPipe/Cli/Security/ISqlSafetyPolicy.cs` (`DefaultSqlSafetyPolicy`) classifies/forbids destructive verbs `TRUNCATE, DROP, DELETE, UPDATE, ALTER, INSERT, ATTACH` and network access (`LOAD httpfs/azure`, remote `read_parquet/read_csv` over a URL). `IApprovalGate` (`DefaultApprovalGate`) denies writes in non-interactive contexts. `execute-yaml-job` takes `apply`/`allowDestructive`/`allowNetwork`; a real write needs `apply` + approval + a clean safety check. **Default mode = deny.**
-- **F3 — Determinism**: `ILlmClient.ChatAsync(…, temperature, seed)` (default `0`+seed) and `--repeat N` replication; `AgentTrajectory.Determinism` is a `DeterminismReport` (variance = distinct-YAML − 1; `0` ⇒ reproducible).
-- **F4 — Non-destructive context**: `AgentContextStore` caches "fact" tool results (inspect/preview-data/suggest-pipeline/dry-run) keyed by args; `ConversationWindowManager.Compact(messages, store)` emits a FACTS block instead of a lossy one-liner; the full journal stays in the trajectory. KISS: no mandatory 2nd LLM call.
-- **F5 — Parallel tools**: the executor processes **all** `ToolCalls` in a turn (independent ones in parallel via `Task.WhenAll`; `--sequential` forces one-at-a-time). Each call yields one `tool` message correlated by call id.
-- **F6 — Single YAML path**: the `yamlContent` tool argument is the **sole source** of the plan YAML; free-text content is never parsed into a plan.
-- **F7 — Traces as CI gate**: `tests/agentic/analyze-traces.sh --gate` fails on unhandled MCP errors / determinism variance / a failed mission; `run-all.sh --gate` propagates. `.github/workflows/agentic-ci.yml` runs the build + gate; `test-gate-smoke.sh` exercises the gate without a LLM.
-
-New CLI options on `dtpipe agent`: `--mode`, `--temperature`, `--seed`, `--repeat`, `--sequential`, `--apply`, `--allow-destructive`, `--allow-network` — all optional; `dtpipe agent` with no flags = the safest behavior (mode `plan`, dry-run, deterministic).
-
-### Mandatory Directives for MCP Development (Hard Rules)
-
-1. **Strictly Generic Help (SOLID / DRY)**:
-    - MCP help **must never** contain hardcoded connection strings, provider-specific connection examples, or hardcoded option lists in the service.
-    - All component descriptions, connection string formats, options, and YAML examples are owned by the components themselves via reflection on `[Description]`, `[ComponentHelp]`, and option properties across reader, writer, and transformer factories.
-
-2. **Direct In-Memory Execution (KISS)**:
-    - MCP job execution tools (`execute-yaml-job`, `validate-yaml-job`) must parse and execute YAML content directly in-memory via `JobFileParser` and `JobService.ExecutePipelineAsync()`.
-    - Never generate temporary YAML files on disk or invoke shell CLI command string proxies.
-
-3. **Auto-Exploration & Actionable Hints**:
-    - `inspect` on database providers without a query must perform automatic table/view discovery (`TryBuildTableDiscoveryQuery`) instead of throwing errors.
-    - Validation errors (e.g. invalid transformer names or missing DAG stream processors) must return actionable hints explaining the correct component name or YAML configuration pattern.
-
-4. **Fail-Closed Guardrails (F2)**:
-    - `execute-yaml-job` is dry-run by default. A real write requires `apply` + an approving `IApprovalGate` + a clean `ISqlSafetyPolicy` verdict. Never weaken the default to `apply=true` or to allow destructive/network SQL.
-    - When a guardrail is ambiguous, **reject** (fail closed). Document every unlock flag (`--apply`, `--allow-destructive`, `--allow-network`).
-
-### Agentic Benchmark & Trace E2E Suite (`tests/agentic/`)
-
-- `tests/agentic/run-all.sh [models...] [--gate]` — Runs E2E mission benchmarks across multiple Ollama LLM models; `--gate` runs the fail-closed analyzer and propagates failure.
-- `tests/agentic/agent_runner.sh` — Drives single model evaluation with Chain-of-Thought reasoning prompt and generates Markdown trajectory traces under `tests/agentic/artifacts/traces/<model>/<mission>.md`.
-- `tests/agentic/analyze-traces.sh [--gate]` — Parses traces; `--gate` fails (non-zero) on unhandled MCP errors, determinism variance over threshold, or a failed mission.
-- `tests/agentic/test-gate-smoke.sh` — F7 smoke test for the gate (no LLM/Docker required; runs in CI).
-- `tests/agentic/print-benchmark.sh` — Renders formatted benchmark comparison table.
+Mandatory MCP directives:
+1. No hardcoded help — reflect on `[Description]`/`[ComponentHelp]`.
+2. In-memory execution via `JobFileParser` + `JobService.ExecutePipelineAsync()` — no temp files/shell proxies.
+3. Auto table discovery on `inspect` without a query, plus actionable hints on validation errors.
+4. Fail-closed — default `apply=false`, reject on ambiguity.

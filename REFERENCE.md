@@ -1,5 +1,28 @@
 # DtPipe CLI Reference
 
+> **Docs map:** [README.md](./README.md) — quick start · [COOKBOOK.md](./COOKBOOK.md) — recipes · [EXTENDING.md](./EXTENDING.md) — new adapters/transformers · [CLAUDE.md](./CLAUDE.md) — contributor internals.
+
+## Table of Contents
+
+- [Synopsis](#synopsis)
+- [Core Options](#core-options)
+- [Secret Management](#secret-management)
+- [Value Resolution](#value-resolution)
+- [Providers](#providers)
+- [Source (Reader) Options](#source-reader-options)
+- [Data Transformations](#data-transformations)
+- [Schema & Projection](#schema--projection)
+- [Target (Writer) Options](#target-writer-options)
+- [Execution & Statistics](#execution--statistics)
+- [DAG Syntax](#dag-syntax)
+- [YAML Job File Schema](#yaml-job-file-schema)
+- [Provider-Specific Options](#provider-specific-options)
+- [Incremental Loading](#incremental-loading)
+- [Shell Completion](#shell-completion)
+- [Model Context Protocol (MCP) Server](#model-context-protocol-mcp-server)
+- [AI Agent Subcommand](#ai-agent-subcommand-dtpipe-agent)
+- [Agent Guardrails](#agent-guardrails-isqlsafetypolicy--iapprovalgate)
+
 ## Synopsis
 
 ```
