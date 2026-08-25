@@ -10,6 +10,10 @@ namespace DtPipe.Cli.Infrastructure;
 
 public static class CliOptionBuilder
 {
+	// F17: warn once per (type, property) when a property is skipped for lack of any
+	// CLI metadata — a silent skip usually means a forgotten [ComponentOption].
+	private static readonly HashSet<string> WarnedSkippedProperties = new(StringComparer.Ordinal);
+
 	public static IEnumerable<FlagDef> GenerateFlagDefsForType(Type t, FlagScope scope = FlagScope.PerBranch)
 	{
 		var flags = new List<FlagDef>();
@@ -34,7 +38,11 @@ public static class CliOptionBuilder
 				metadataFlag = mappedFlag;
 			}
 
-			if (cliOptionAttr is null && descriptionAttr is null && metadataFlag is null) continue;
+			if (cliOptionAttr is null && descriptionAttr is null && metadataFlag is null)
+			{
+				WarnSkippedProperty(t, property);
+				continue;
+			}
 
 			var flagName = metadataFlag ?? cliOptionAttr?.Name;
 			if (string.IsNullOrEmpty(flagName))
@@ -61,6 +69,17 @@ public static class CliOptionBuilder
 	private static Type GetUnderlyingType(Type type)
 	{
 		return Nullable.GetUnderlyingType(type) ?? type;
+	}
+
+	private static void WarnSkippedProperty(Type declaringType, PropertyInfo property)
+	{
+		var key = $"{declaringType.FullName}.{property.Name}";
+		lock (WarnedSkippedProperties)
+		{
+			if (!WarnedSkippedProperties.Add(key)) return;
+		}
+		Console.Error.WriteLine(
+			$"[dtpipe] Warning: property '{property.Name}' on options type '{declaringType.Name}' has no [ComponentOption], [Description] or metadata mapping — it is not exposed as a CLI flag. Add [ComponentOption] if it should be user-facing.");
 	}
 
 	/// <summary>Resolves a property's help description, preferring the CLI-specific override over the general one.</summary>

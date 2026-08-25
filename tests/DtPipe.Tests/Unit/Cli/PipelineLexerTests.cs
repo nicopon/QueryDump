@@ -235,3 +235,45 @@ public class PipelineLexerTests
         Assert.Contains("SELECT * FROM s", pipeline.Branches[1].RawArgs);
     }
 }
+
+[Collection("console-serial")]
+public class RepeatedGlobalWarningTests
+{
+    private static string ParseCapturingStderr(params string[] args)
+    {
+        var registry = new FlagRegistry();
+        CoreFlagRegistry.RegisterCoreFlags(registry);
+        // Mirror runtime registration of the CSV reader flags used by these tests.
+        foreach (var def in DtPipe.Cli.Infrastructure.CliOptionBuilder.GenerateFlagDefsForType(typeof(DtPipe.Adapters.Csv.CsvReaderOptions)))
+            registry.Register(def with { Stage = FlagStage.Reader });
+        var lexer = new PipelineLexer(registry);
+
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        try
+        {
+            lexer.Parse(args);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        return captured.ToString();
+    }
+
+    [Fact]
+    public void Repeated_Globals_Warn_On_Last_Wins()
+    {
+        var output = ParseCapturingStderr("-i", "in.csv", "--csv-separator", ";", "--csv-separator", "|", "-o", "out.csv");
+        Assert.Contains("more than once", output, StringComparison.Ordinal);
+        Assert.Contains("--csv-separator", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Distinct_Flags_Do_Not_Warn()
+    {
+        var output = ParseCapturingStderr("-i", "in.csv", "-o", "out.csv", "--no-stats");
+        Assert.DoesNotContain("Warning: flag", output, StringComparison.Ordinal);
+    }
+}

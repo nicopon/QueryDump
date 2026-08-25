@@ -7,7 +7,7 @@ namespace DtPipe.Cli.Pipeline;
 
 public static class FlagBinder
 {
-    public static void Bind(object target, string[] args, FlagRegistry registry, string prefix = "")
+    public static void Bind(object target, string[] args, FlagRegistry registry, string prefix = "", bool strict = false)
     {
         var type = target.GetType();
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
@@ -18,7 +18,14 @@ public static class FlagBinder
             if (!token.StartsWith('-')) continue;
 
             var def = registry.Lookup(token);
-            if (def == null) continue;
+            if (def == null)
+            {
+                if (strict)
+                    throw new InvalidOperationException(
+                        $"Unrecognized flag '{token}' for component '{(string.IsNullOrEmpty(prefix) ? type.Name : prefix)}'. " +
+                        "Check the provider prefix and flag spelling (see 'dtpipe --help'), or remove --strict-bindings to skip unknown flags.");
+                continue;
+            }
 
             string? value = null;
             if (def.Arity != FlagArity.Boolean)
@@ -35,13 +42,20 @@ public static class FlagBinder
 
             if (value == null) continue;
 
+            bool matched = false;
             foreach (var prop in props)
             {
                 if (Match(prop, def.Name, def.Aliases, prefix))
                 {
-                    SetValue(target, prop, value);
+                    matched = true;
+                    SetValue(target, prop, value, strict);
                 }
             }
+
+            if (strict && !matched)
+                throw new InvalidOperationException(
+                    $"Flag '{token}' could not be bound to any property of '{type.Name}' for component '{prefix}'. " +
+                    "The flag exists in the registry but does not map to this options type.");
         }
     }
 
@@ -59,7 +73,7 @@ public static class FlagBinder
                aliases.Any(a => names.Any(n => n.Equals(a, StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static void SetValue(object target, PropertyInfo prop, string value)
+    private static void SetValue(object target, PropertyInfo prop, string value, bool strict = false)
     {
         try
         {
@@ -72,6 +86,9 @@ public static class FlagBinder
         }
         catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
         {
+            if (strict)
+                throw new InvalidOperationException(
+                    $"Failed to bind value '{value}' to option '{prop.Name}': {ex.Message}", ex);
             Console.Error.WriteLine($"Warning: FlagBinder could not bind '{prop.Name}': {ex.Message}");
         }
     }

@@ -63,6 +63,11 @@ public class PipelineLexer
                 globalDict[def.Name] = value ?? "true";
                 if (def.Scope == FlagScope.PerBranch)
                 {
+                    // F17: a repeated non-repeatable flag silently kept only the last
+                    // occurrence — surface it (last-wins behavior is unchanged).
+                    if (def.Arity != FlagArity.Repeatable && currentBranchFlags.ContainsKey(def.Name))
+                        WarnRepeated(token);
+
                     if (!currentBranchFlags.ContainsKey(def.Name)) currentBranchFlags[def.Name] = new List<string>();
                     currentBranchFlags[def.Name].Add(value ?? "true");
                     currentBranchArgs.Add(token);
@@ -75,6 +80,8 @@ public class PipelineLexer
                 {
                     // Unknown flag — store as boolean, captured in RawArgs for FlagBinder.
                     globalDict[token] = "true";
+                    if (currentBranchFlags.ContainsKey(token))
+                        WarnRepeated(token);
                     if (!currentBranchFlags.ContainsKey(token)) currentBranchFlags[token] = new List<string>();
                     currentBranchFlags[token].Add("true");
                     currentBranchArgs.Add(token);
@@ -110,12 +117,16 @@ public class PipelineLexer
         return token.Length > 1 && (char.IsDigit(token[1]) || (token[1] == '.' && token.Length > 2 && char.IsDigit(token[2])));
     }
 
+    private static void WarnRepeated(string token)
+        => Console.Error.WriteLine($"[dtpipe] Warning: flag '{token}' appears more than once in the same branch; using the last occurrence.");
+
     private GlobalOptions MapGlobals(Dictionary<string, object?> dict)
     {
         return new GlobalOptions
         {
             DryRunCount   = GetDryRun(dict),
             NoStats       = dict.ContainsKey("--no-stats"),
+            StrictBindings= dict.ContainsKey("--strict-bindings"),
             LogPath       = dict.TryGetValue("--log", out var logVal) ? logVal?.ToString() : null,
             JobFile       = dict.TryGetValue("--job", out var jobVal) ? jobVal?.ToString()
                           : dict.TryGetValue("-j", out var jVal) ? jVal?.ToString() : null,

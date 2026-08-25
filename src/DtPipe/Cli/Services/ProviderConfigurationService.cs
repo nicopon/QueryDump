@@ -63,7 +63,8 @@ public class ProviderConfigurationService
                 {
                     var tempRegistry = new Pipeline.FlagRegistry();
                     foreach (var f in contributor.GetFlagDefs()) tempRegistry.Register(f);
-                    Pipeline.FlagBinder.Bind(instance, stageArgs, tempRegistry, factory.ComponentName);
+                    Pipeline.FlagBinder.Bind(instance, stageArgs, tempRegistry, factory.ComponentName,
+                        strict: globals?.StrictBindings == true);
                 }
 
                 _registry.RegisterByType(optionsType, instance);

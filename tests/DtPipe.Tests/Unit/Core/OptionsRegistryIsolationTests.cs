@@ -104,4 +104,97 @@ public class OptionsRegistryIsolationTests
 
         Assert.Equal("", bRead); // B's scope was forked before A wrote — A's write is invisible to B
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // F17 — silent failures made loud
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private sealed class CapturingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        public System.Collections.Generic.List<string> Warnings { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning)
+                Warnings.Add(formatter(state, exception));
+        }
+    }
+
+    private sealed class ProbeOptions : IOptionSet
+    {
+        public static string Prefix => "probe";
+        public static string DisplayName => "Probe";
+    }
+
+    [Fact]
+    public void Get_Missing_Logs_Warning()
+    {
+        var logger = new CapturingLogger();
+        var registry = new OptionsRegistry(logger);
+
+        var options = registry.Get<ProbeOptions>();
+
+        Assert.NotNull(options);
+        var warning = Assert.Single(logger.Warnings);
+        Assert.Contains("ProbeOptions", warning);
+    }
+
+    [Fact]
+    public void Get_Hit_Does_Not_Log_Warning()
+    {
+        var logger = new CapturingLogger();
+        var registry = new OptionsRegistry(logger);
+        registry.Register(new ProbeOptions());
+
+        registry.Get<ProbeOptions>();
+
+        Assert.Empty(logger.Warnings);
+    }
+
+    [Fact]
+    public void TryGet_Missing_Returns_False()
+    {
+        var registry = new OptionsRegistry();
+
+        var found = registry.TryGet<ProbeOptions>(out var value);
+
+        Assert.False(found);
+        Assert.NotNull(value);
+        Assert.False(registry.TryGet<CsvReaderOptions>(out _));
+    }
+
+    [Fact]
+    public void TryGet_Hit_Returns_Registered_Instance()
+    {
+        var registry = new OptionsRegistry();
+        var registered = new CsvReaderOptions { Separator = ";" };
+        registry.Register(registered);
+
+        var found = registry.TryGet<CsvReaderOptions>(out var value);
+
+        Assert.True(found);
+        Assert.Same(registered, value);
+    }
+
+    [Fact]
+    public void Require_Missing_Throws()
+    {
+        var registry = new OptionsRegistry();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => registry.Require<ProbeOptions>());
+
+        Assert.Contains("ProbeOptions", ex.Message);
+    }
+
+    [Fact]
+    public void Require_Hit_Returns_Registered_Instance()
+    {
+        var registry = new OptionsRegistry();
+        var registered = new CsvReaderOptions { Separator = ";" };
+        registry.Register(registered);
+
+        Assert.Same(registered, registry.Require<CsvReaderOptions>());
+    }
 }

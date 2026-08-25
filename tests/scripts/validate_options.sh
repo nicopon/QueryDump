@@ -177,6 +177,30 @@ grep -qi "ReadCount" "$ARTIFACTS_DIR/metrics.json" \
   || fail "--metrics-path: ReadCount missing from JSON"
 
 # ----------------------------------------
+# [8] --strict-bindings surfaces unknown flags
+# ----------------------------------------
+echo "--- [8] --strict-bindings surfaces unknown flags ---"
+set +e
+OUT=$("$DTPIPE" --unknown-flag -i generate:5 -o "$ARTIFACTS_DIR/strict.csv" --strict-bindings --no-stats 2>&1)
+EXIT=$?
+set -e
+[ "$EXIT" -ne 0 ] \
+  && pass "--strict-bindings rejects unknown flag (exit $EXIT)" \
+  || fail "--strict-bindings accepted unknown flag (exit 0)"
+echo "$OUT" | grep -q "unknown-flag" \
+  && pass "--strict-bindings error names offending flag" \
+  || fail "--strict-bindings error does not name offending flag"
+
+# Default (lenient) behavior unchanged: unknown flag is skipped with a warning, run succeeds.
+set +e
+OUT=$("$DTPIPE" -i generate:5 --unknown-flag -o "$ARTIFACTS_DIR/lenient.csv" --no-stats 2>&1)
+EXIT=$?
+set -e
+[ "$EXIT" -eq 0 ] \
+  && pass "default behavior still tolerates unknown flags" \
+  || fail "unknown flag broke default lenient run (exit $EXIT)"
+
+# ----------------------------------------
 # Cleanup
 # ----------------------------------------
 rm -f "$ARTIFACTS_DIR"/*.csv "$ARTIFACTS_DIR"/*.yaml "$ARTIFACTS_DIR"/*.db "$ARTIFACTS_DIR"/*.json

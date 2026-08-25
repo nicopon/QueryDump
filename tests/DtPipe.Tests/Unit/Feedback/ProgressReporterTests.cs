@@ -5,6 +5,7 @@ using Xunit;
 
 namespace DtPipe.Tests.Unit.Feedback;
 
+[Collection("console-serial")]
 public class ProgressReporterTests
 {
 	[Fact]

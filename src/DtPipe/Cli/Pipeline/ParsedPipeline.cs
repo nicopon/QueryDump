@@ -15,6 +15,9 @@ public record GlobalOptions
     public bool IgnoreNulls { get; init; }
     public string? DryRunInteractiveBranch { get; set; }
 
+    /// <summary>F17: when true, binding failures (unrecognized flags, unparsable values) exit non-zero instead of being skipped.</summary>
+    public bool StrictBindings { get; init; }
+
     /// <summary>All raw flag values (key→value) for passthrough to PipelineToJobConverter.</summary>
     public IReadOnlyDictionary<string, object?> AllFlags { get; init; } = new Dictionary<string, object?>(System.StringComparer.OrdinalIgnoreCase);
 }

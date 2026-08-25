@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 
 namespace DtPipe.Core.Options;
 
@@ -8,6 +9,12 @@ namespace DtPipe.Core.Options;
 public class OptionsRegistry
 {
 	private readonly AsyncLocal<Dictionary<Type, object>> _options = new();
+	private readonly ILogger? _logger;
+
+	public OptionsRegistry(ILogger? logger = null)
+	{
+		_logger = logger;
+	}
 
 	private Dictionary<Type, object> CurrentOptions
 	{
@@ -48,6 +55,8 @@ public class OptionsRegistry
 
 	/// <summary>
 	/// Retrieves options of a specific type. Returns a default instance if not found.
+	/// F17: a miss previously fell back to <c>new T()</c> silently — it now emits a
+	/// warning naming the type so silently-unbound options are visible.
 	/// </summary>
 	public T Get<T>() where T : class, IOptionSet, new()
 	{
@@ -56,12 +65,12 @@ public class OptionsRegistry
 			return (T)value;
 		}
 
-		// Return default option if not registered (fallback)
+		WarnMissing(typeof(T));
 		return new T();
 	}
 
 	/// <summary>
-	/// Retrieves options of a specific type by runtime Type.
+	/// Retrieves options of a specific type by runtime Type. Returns a default instance if not found.
 	/// </summary>
 	public object Get(Type optionType)
 	{
@@ -70,7 +79,8 @@ public class OptionsRegistry
 			return value;
 		}
 
-		// Return default instance if not registered
+		WarnMissing(optionType);
+
 		try
 		{
 			return Activator.CreateInstance(optionType) ?? throw new InvalidOperationException($"Could not create instance of {optionType.Name}");
@@ -78,6 +88,52 @@ public class OptionsRegistry
 		catch (Exception ex)
 		{
 			throw new InvalidOperationException($"Could not create default instance for option type {optionType.Name}. Ensure it has a parameterless constructor.", ex);
+		}
+	}
+
+	/// <summary>
+	/// Attempts to retrieve registered options of a specific type without side effects.
+	/// </summary>
+	public bool TryGet<T>(out T value) where T : class, IOptionSet, new()
+	{
+		if (CurrentOptions.TryGetValue(typeof(T), out var raw) && raw is T typed)
+		{
+			value = typed;
+			return true;
+		}
+		value = new T();
+		return false;
+	}
+
+	/// <summary>
+	/// Requires registered options of a specific type, throwing when they were never bound.
+	/// Use instead of <see cref="Get{T}"/> in code paths where a silent default would hide
+	/// a binding failure.
+	/// </summary>
+	public T Require<T>() where T : class, IOptionSet, new()
+	{
+		if (CurrentOptions.TryGetValue(typeof(T), out var raw) && raw is T typed)
+		{
+			return typed;
+		}
+
+		throw new InvalidOperationException(
+			$"Options of type '{typeof(T).Name}' were required but never bound. " +
+			"Ensure the component's flags were provided and the options were registered before use.");
+	}
+
+	private void WarnMissing(Type optionType)
+		=> Warn($"[dtpipe] Warning: no options of type '{optionType.Name}' were registered; using a fresh default instance. If this component expected CLI/config values, they were silently skipped.");
+
+	private void Warn(string message)
+	{
+		if (_logger != null)
+		{
+			_logger.LogWarning("{Message}", message);
+		}
+		else
+		{
+			Console.Error.WriteLine(message);
 		}
 	}
 

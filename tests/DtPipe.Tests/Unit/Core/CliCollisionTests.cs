@@ -97,3 +97,56 @@ public class CliCollisionTests
 		collisions.Should().BeEmpty("CLI flags (names or aliases) must be unique across all contributors.");
 	}
 }
+
+[Collection("console-serial")]
+public class UnmappedPropertyWarningTests
+{
+	/// <summary>
+	/// F17: a property without any CLI metadata is skipped silently — it must warn once,
+	/// then stay quiet for the remainder of the process.
+	/// </summary>
+	[Fact]
+	public void Unmapped_Property_Warns_Once_At_Startup()
+	{
+		string firstRun;
+		var originalError = Console.Error;
+		var warmupSink = new StringWriter();
+		Console.SetError(warmupSink); // discard any pre-existing cache warm-up noise
+		try
+		{
+			CliOptionBuilder.GenerateFlagDefsForType(typeof(OptionsWithBareProperty));
+			firstRun = warmupSink.ToString();
+		}
+		finally
+		{
+			Console.SetError(originalError);
+		}
+		Assert.Contains("UnmappedProperty", firstRun, StringComparison.Ordinal);
+
+		var originalError2 = Console.Error;
+		var captured = new StringWriter();
+		Console.SetError(captured);
+		try
+		{
+			CliOptionBuilder.GenerateFlagDefsForType(typeof(OptionsWithBareProperty));
+			CliOptionBuilder.GenerateFlagDefsForType(typeof(OptionsWithBareProperty));
+		}
+		finally
+		{
+			Console.SetError(originalError2);
+		}
+
+		Assert.DoesNotContain("UnmappedProperty", captured.ToString(), StringComparison.Ordinal);
+	}
+
+	private sealed class OptionsWithBareProperty
+	{
+		public static string Prefix => "bare";
+		public static string DisplayName => "Bare";
+
+		[DtPipe.Core.Attributes.ComponentOption("--known")]
+		public string Known { get; set; } = "";
+
+		public string UnmappedProperty { get; set; } = "";
+	}
+}

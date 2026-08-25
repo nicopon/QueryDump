@@ -279,6 +279,7 @@ into one step; a different flag type starts a new step.
 | `--no-stats` | | Suppress progress bars and transfer statistics |
 | `--metrics-path` | `metrics.json` | Write structured execution results to a JSON file |
 | `--log` | `pipeline.log` | Write log output to a file |
+| `--strict-bindings` | | Fail with a non-zero exit code on unrecognized flags or failed option bindings instead of skipping them silently (default: warn/skip) |
 
 ---
 
