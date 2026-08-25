@@ -6,8 +6,10 @@ using Apache.Arrow;
 
 namespace DtPipe.Adapters.MemoryChannel;
 
-public class MemoryChannelReaderDescriptor : IProviderDescriptor<IStreamReader>
+public class MemoryChannelReaderDescriptor : IProviderDescriptor<IStreamReader>, IInternalChannelCapable
 {
+    public InternalChannelKind ChannelKind => InternalChannelKind.Row;
+
     public string ComponentName => MemoryChannelMetadata.ComponentName;
     public string Category => "Reader Options";
     public Type OptionsType => typeof(MemoryChannelOptions);

@@ -81,7 +81,7 @@ public class MemoryChannelRegistry : IMemoryChannelRegistry
         }
         
         // Propagate to fan-out sub-channels
-        PropagateArrowSchemaToFanOut(branchAlias + "__fan_", schema);
+        PropagateArrowSchemaToFanOut(branchAlias + IChannelNaming.FanPrefix, schema);
 
         if (!found)
         {

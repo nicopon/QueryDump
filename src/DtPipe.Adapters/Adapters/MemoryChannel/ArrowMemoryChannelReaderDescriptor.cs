@@ -4,8 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace DtPipe.Adapters.MemoryChannel;
 
-public class ArrowMemoryChannelReaderDescriptor : IProviderDescriptor<IStreamReader>
+public class ArrowMemoryChannelReaderDescriptor : IProviderDescriptor<IStreamReader>, IInternalChannelCapable
 {
+    public InternalChannelKind ChannelKind => InternalChannelKind.Arrow;
+
     public string ComponentName => ArrowMemoryChannelMetadata.ComponentName;
     public string Category => "Reader Options";
     public Type OptionsType => typeof(ArrowMemoryChannelOptions);

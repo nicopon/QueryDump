@@ -99,16 +99,12 @@ public class LinearPipelineService
         if (job.Limit < 0)
             throw new ArgumentException($"--limit value must be >= 0 (got {job.Limit}).");
 
-        // Apply channel routing provided by DagOrchestrator (memory channels between DAG branches)
-        if (ctx?.ChannelInjection is { } plan)
-        {
-            job = job with
-            {
-                Input = plan.InputChannelAlias != null ? DtPipe.Cli.Helpers.ChannelSpecHelper.ArrowMemory(plan.InputChannelAlias) : job.Input,
-                Output = plan.OutputChannelAlias != null ? DtPipe.Cli.Helpers.ChannelSpecHelper.ArrowMemory(plan.OutputChannelAlias) : job.Output,
-                NoStats = job.NoStats || plan.SuppressStats
-            };
-        }
+        // F5: consume the orchestrator's typed channel endpoints directly — no CLI flag
+        // syntax is synthesized; reader/writer factories are selected by capability.
+        InternalChannelEndpoint? inputEndpoint = ctx?.InputEndpoint;
+        InternalChannelEndpoint? outputEndpoint = ctx?.OutputEndpoint;
+        if (ctx?.SuppressStats == true && !job.NoStats)
+            job = job with { NoStats = true };
 
         // Resolve keyring connection string secrets
         var resolver = _serviceProvider.GetService<DtPipe.Core.Expressions.IStringContentResolver>();
@@ -126,8 +122,11 @@ public class LinearPipelineService
             }
         }
 
-        // 1. Resolve Reader (strips "componentName:" prefix, e.g. "arrow-memory:src" → "src")
-        var (readerFactory, cleanedInput) = ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
+        // 1. Resolve Reader. A typed input endpoint bypasses connection-string resolution
+        // entirely: the factory is picked by capability and the channel alias handed over.
+        (IStreamReaderFactory? readerFactory, string cleanedInput) = inputEndpoint != null
+            ? (PickChannelReader(inputEndpoint.Kind), inputEndpoint.Alias)
+            : ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
 
         // 2. Resolve Stream Transformer (SQL / Merge / …): CLI args when present, else the YAML JobDefinition.
         //    Each factory owns both surfaces (Create for CLI tokens, CreateFromJob for provider-options);
@@ -161,12 +160,22 @@ public class LinearPipelineService
             throw new InvalidOperationException($"No reader factory resolved for input '{job.Input}'");
         }
 
-        // 3. Resolve Writer (also strips prefix)
+        // 3. Resolve Writer — typed output endpoint first (capability-selected), then
+        // connection-string resolution for explicit -o targets.
         IDataWriterFactory? writerFactory = null;
-        string cleanedOutput = job.Output ?? "";
-        if (!string.IsNullOrEmpty(job.Output))
+        string cleanedOutput;
+        if (outputEndpoint != null)
         {
-            (writerFactory, cleanedOutput) = ResolveFactory<IDataWriterFactory>(job.Output, _writerFactories);
+            writerFactory = PickChannelWriter(outputEndpoint.Kind);
+            cleanedOutput = outputEndpoint.Alias;
+        }
+        else
+        {
+            cleanedOutput = job.Output ?? "";
+            if (!string.IsNullOrEmpty(job.Output))
+            {
+                (writerFactory, cleanedOutput) = ResolveFactory<IDataWriterFactory>(job.Output, _writerFactories);
+            }
         }
 
         // 3b. Query file resolution: OptionBinder sets readerOpts.Query
@@ -338,6 +347,14 @@ public class LinearPipelineService
         return (match, raw);
     }
 
+    // F5 — capability-based selection of internal channel transports. DI wraps
+    // descriptors in CliProviderFactory, which forwards the descriptor's capability.
+    private IStreamReaderFactory? PickChannelReader(InternalChannelKind kind)
+        => _readerFactories.FirstOrDefault(f => f.CapabilityKind == kind);
+
+    private IDataWriterFactory? PickChannelWriter(InternalChannelKind kind)
+        => _writerFactories.FirstOrDefault(f => f.CapabilityKind == kind);
+
 
     private List<IDataTransformer> BuildPipelineFromYaml(JobDefinition job, List<IDataTransformerFactory> factories, IAnsiConsole console)
     {
@@ -361,7 +378,7 @@ public class LinearPipelineService
     }
 }
 
-internal class StreamTransformerReaderAdapter : IStreamReaderFactory
+internal class StreamTransformerReaderAdapter : IStreamReaderFactory, IStreamProcessorSource
 {
     private readonly IStreamTransformer _transformer;
 

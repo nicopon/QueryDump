@@ -77,8 +77,9 @@ public class ExportService
 		if (_logger.IsEnabled(LogLevel.Information))
 			_logger.LogInformation("Starting export from {Provider} to {OutputPath}", providerName, ConnectionStringSanitizer.Sanitize(outputPath));
 
-		// Silence internal DAG plumbing branches (arrow-memory / memory-channel) unless DEBUG=1
-		bool isInternalChannel = writerFactory.ComponentName is "arrow-memory" or "memory-channel";
+		// Silence internal DAG plumbing branches unless DEBUG=1 — capability check, not
+		// an adapter-identity string comparison (F5).
+		bool isInternalChannel = writerFactory is IInternalChannelCapable;
 		bool silenceInternal = isInternalChannel && Environment.GetEnvironmentVariable("DEBUG") != "1";
 		bool outputIsStdio = string.Equals(outputPath, "-", StringComparison.Ordinal);
 
@@ -113,7 +114,7 @@ public class ExportService
 
 			// Persist the full Arrow schema to a .dtschema file for future runs.
 			var schemaSaveName = readerSchemaPersist?.SchemaSave;
-			if (!string.IsNullOrEmpty(schemaSaveName) && providerName != "stream-transformer")
+			if (!string.IsNullOrEmpty(schemaSaveName) && readerFactory is not IStreamProcessorSource)
 			{
 				var schema = (reader as IColumnarStreamReader)?.Schema;
 				if (schema is { FieldsList: { Count: > 0 } })

@@ -225,12 +225,11 @@ public class DagOrchestratorTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ChannelInjectionPlan — producer contract
+    // Typed channel endpoints — producer contract (F5)
     //
-    // These tests verify that DagOrchestrator produces correct ChannelInjectionPlan
-    // objects in ctx.ChannelInjection before calling the branchExecutor.
-    // The CLI layer (LinearPipelineService) consumes this plan to resolve
-    // Input/Output for each branch without the engine injecting CLI flags.
+    // These tests verify that DagOrchestrator produces correct typed endpoints in the
+    // BranchChannelContext before calling the branchExecutor. The CLI layer consumes
+    // them directly — no CLI flag syntax is synthesized anywhere.
     // ─────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -247,7 +246,17 @@ public class DagOrchestratorTests
             return Task.FromResult(0);
         });
 
-        Assert.Null(captured?.ChannelInjection);
+        Assert.Null(captured?.InputEndpoint);
+        Assert.Null(captured?.OutputEndpoint);
+        Assert.False(captured?.SuppressStats ?? true);
+    }
+
+    [Fact]
+    public async Task ReplaceAliasesInArgs_Method_No_Longer_Exists()
+    {
+        var method = typeof(DagOrchestrator).GetMethod("ReplaceAliasesInArgs",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance);
+        Assert.Null(method);
     }
 
     [Fact]
@@ -266,11 +275,12 @@ public class DagOrchestratorTests
             return Task.FromResult(0);
         });
 
-        var plan = sourceCtx?.ChannelInjection;
-        Assert.NotNull(plan);
-        Assert.NotNull(plan!.OutputChannelAlias);  // source writes to a memory channel
-        Assert.Null(plan.InputChannelAlias);       // source reads its normal -i
-        Assert.True(plan.SuppressStats);           // non-terminal → stats suppressed
+        var ctxOut = sourceCtx;
+        Assert.NotNull(ctxOut);
+        Assert.NotNull(ctxOut!.OutputEndpoint);   // source writes to a memory channel
+        Assert.Equal(InternalChannelKind.Arrow, ctxOut.OutputEndpoint!.Kind);
+        Assert.Null(ctxOut.InputEndpoint);        // source reads its normal -i
+        Assert.True(ctxOut.SuppressStats);        // non-terminal → stats suppressed
     }
 
     [Fact]
@@ -289,7 +299,8 @@ public class DagOrchestratorTests
             return Task.FromResult(0);
         });
 
-        Assert.NotNull(sourceCtx?.ChannelInjection?.OutputChannelAlias);
+        Assert.NotNull(sourceCtx?.OutputEndpoint);
+        Assert.Equal(InternalChannelKind.Arrow, sourceCtx!.OutputEndpoint!.Kind);
     }
 
     [Fact]
@@ -299,32 +310,35 @@ public class DagOrchestratorTests
         // pointing to distinct physical fan-out sub-channels.
         var dag = GoldenDagDefinitions.Dag_FanOut_OneSourceTwoConsumers;
         var orchestrator = BuildOrchestrator();
-        var plans = new ConcurrentDictionary<string, ChannelInjectionPlan?>(StringComparer.OrdinalIgnoreCase);
+        var plans = new ConcurrentDictionary<string, BranchChannelContext?>(StringComparer.OrdinalIgnoreCase);
 
         await orchestrator.ExecuteAsync(dag, (b, ctx, _) =>
         {
-            plans[b.Alias] = ctx.ChannelInjection;
+            plans[b.Alias] = ctx;
             return Task.FromResult(0);
         });
 
-        // Source → OutputChannel (to memory channel), no InputChannel
-        var srcPlan = plans["src"];
-        Assert.NotNull(srcPlan?.OutputChannelAlias);
-        Assert.Null(srcPlan!.InputChannelAlias);
-        Assert.True(srcPlan.SuppressStats);
+        // Source → output endpoint (to memory channel), no input endpoint
+        var srcCtx = plans["src"];
+        Assert.NotNull(srcCtx?.OutputEndpoint);
+        Assert.Null(srcCtx!.InputEndpoint);
+        Assert.True(srcCtx.SuppressStats);
 
-        // Consumers → InputChannel (from fan-out sub-channel), no OutputChannel
-        var planA = plans["consumer_a"];
-        var planB = plans["consumer_b"];
-        Assert.NotNull(planA?.InputChannelAlias);
-        Assert.NotNull(planB?.InputChannelAlias);
-        Assert.Null(planA!.OutputChannelAlias);
-        Assert.Null(planB!.OutputChannelAlias);
-        Assert.False(planA.SuppressStats);
-        Assert.False(planB.SuppressStats);
+        // Consumers → input endpoints pointing at distinct fan-out sub-channels
+        var ctxA = plans["consumer_a"];
+        var ctxB = plans["consumer_b"];
+        Assert.NotNull(ctxA?.InputEndpoint);
+        Assert.NotNull(ctxB?.InputEndpoint);
+        Assert.Null(ctxA!.OutputEndpoint);
+        Assert.Null(ctxB!.OutputEndpoint);
+        Assert.False(ctxA.SuppressStats);
+        Assert.False(ctxB.SuppressStats);
 
-        // The two physical sub-channels (aliases) are distinct
-        Assert.NotEqual(planA.InputChannelAlias, planB.InputChannelAlias);
+        // The two physical sub-channels (aliases) are distinct and carry the fan prefix
+        Assert.NotEqual(ctxA.InputEndpoint!.Alias, ctxB.InputEndpoint!.Alias);
+        Assert.Contains(IChannelNaming.FanPrefix, ctxA.InputEndpoint.Alias);
+        Assert.Contains(IChannelNaming.FanPrefix, ctxB.InputEndpoint.Alias);
+        Assert.Equal(InternalChannelKind.Arrow, ctxA.InputEndpoint.Kind);
     }
 
     [Fact]
@@ -343,16 +357,16 @@ public class DagOrchestratorTests
         };
 
         var orchestrator = BuildOrchestrator();
-        ChannelInjectionPlan? joinedPlan = null;
+        InternalChannelEndpoint? joinedOut = null;
 
         await orchestrator.ExecuteAsync(dag, (b, ctx, _) =>
         {
-            if (b.Alias == "joined") joinedPlan = ctx.ChannelInjection;
+            if (b.Alias == "joined") joinedOut = ctx.OutputEndpoint;
             return Task.FromResult(0);
         });
 
-        Assert.NotNull(joinedPlan);
-        Assert.NotNull(joinedPlan!.OutputChannelAlias);
+        Assert.NotNull(joinedOut);
+        Assert.Equal(InternalChannelKind.Arrow, joinedOut!.Kind);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -386,20 +400,21 @@ public class DagOrchestratorTests
         // (required by MergeTransformerFactory).
         var dag = GoldenDagDefinitions.Dag_Merge_TwoSources;
         var orchestrator = BuildOrchestrator();
-        var plans = new ConcurrentDictionary<string, ChannelInjectionPlan?>(StringComparer.OrdinalIgnoreCase);
+        var plans = new ConcurrentDictionary<string, BranchChannelContext?>(StringComparer.OrdinalIgnoreCase);
 
         await orchestrator.ExecuteAsync(dag, (b, ctx, _) =>
         {
-            plans[b.Alias] = ctx.ChannelInjection;
+            plans[b.Alias] = ctx;
             return Task.FromResult(0);
         });
 
         // Both sources feed a stream-transformer → Arrow
-        Assert.NotNull(plans["stream_a"]?.OutputChannelAlias);
-        Assert.NotNull(plans["stream_b"]?.OutputChannelAlias);
+        Assert.Equal(InternalChannelKind.Arrow, plans["stream_a"]?.OutputEndpoint?.Kind);
+        Assert.Equal(InternalChannelKind.Arrow, plans["stream_b"]?.OutputEndpoint?.Kind);
 
-        // The merge processor has an explicit -o → no injection
-        Assert.Null(plans["merged"]);
+        // The merge processor has an explicit -o → no channel endpoints
+        Assert.Null(plans["merged"]?.InputEndpoint);
+        Assert.Null(plans["merged"]?.OutputEndpoint);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

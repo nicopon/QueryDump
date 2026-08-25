@@ -40,6 +40,12 @@ public class CliProviderFactory<TService> : ICliContributor, IDataFactory
 	public bool SupportsStdio => _descriptor.SupportsStdio;
 	public Type OptionsType => _descriptor.OptionsType;
 
+	/// <summary>
+	/// F5: forwards the internal-channel capability of the wrapped descriptor, if any,
+	/// so typed endpoint routing can pick this factory without adapter-identity strings.
+	/// </summary>
+	public InternalChannelKind? CapabilityKind => (_descriptor as IInternalChannelCapable)?.ChannelKind;
+
 	// ICliContributor Implementation
 	public string Category => _descriptor.Category;
 

@@ -7,8 +7,10 @@ using Apache.Arrow;
 
 namespace DtPipe.Adapters.MemoryChannel;
 
-public class MemoryChannelWriterDescriptor : IProviderDescriptor<IDataWriter>
+public class MemoryChannelWriterDescriptor : IProviderDescriptor<IDataWriter>, IInternalChannelCapable
 {
+    public InternalChannelKind ChannelKind => InternalChannelKind.Row;
+
     public string ComponentName => MemoryChannelMetadata.ComponentName;
     public string Category => "Writer Options";
     public Type OptionsType => typeof(MemoryChannelOptions);

@@ -1,19 +1,30 @@
+using DtPipe.Core.Abstractions.Dag;
+
 namespace DtPipe.Core.Pipelines.Dag;
 
 /// <summary>
 /// Describes the channel wiring provided by the orchestrator for a single branch execution.
-/// The CLI layer reads <see cref="ChannelInjection"/> to route the branch to the correct
-/// in-memory channels without the engine having to know CLI flag syntax.
+/// F5: routing is carried in typed endpoints — the engine never emits CLI flag syntax
+/// (<c>-i</c>, <c>-o</c>, <c>mem:</c>, <c>arrow-memory:</c>) for the host to re-parse.
 /// </summary>
 public record BranchChannelContext
 {
-    /// <summary>Mapping logical → physical for fan-out sub-channels.</summary>
+    /// <summary>Mapping logical → physical for fan-out sub-channels (stream processors resolve their inputs through it).</summary>
     public IReadOnlyDictionary<string, string> AliasMap { get; init; }
         = new Dictionary<string, string>();
 
     /// <summary>
-    /// Channel routing plan set by <see cref="DagOrchestrator"/> for branches that read from
-    /// or write to in-memory channels. <see langword="null"/> for linear (non-DAG) branches.
+    /// Typed input channel endpoint. <see langword="null"/> means the branch reads its own
+    /// external <c>-i</c> source (or is a stream processor resolving channels via <see cref="AliasMap"/>).
     /// </summary>
-    public ChannelInjectionPlan? ChannelInjection { get; init; }
+    public InternalChannelEndpoint? InputEndpoint { get; init; }
+
+    /// <summary>
+    /// Typed output channel endpoint. <see langword="null"/> means the branch writes to its
+    /// own explicit <c>-o</c> target.
+    /// </summary>
+    public InternalChannelEndpoint? OutputEndpoint { get; init; }
+
+    /// <summary>When <see langword="true"/>, the branch is an intermediate (non-terminal) node and should suppress user-facing stats.</summary>
+    public bool SuppressStats { get; init; }
 }

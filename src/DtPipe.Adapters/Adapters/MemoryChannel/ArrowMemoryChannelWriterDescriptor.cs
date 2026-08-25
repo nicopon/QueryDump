@@ -5,8 +5,10 @@ using Microsoft.Extensions.Logging;
 
 namespace DtPipe.Adapters.MemoryChannel;
 
-public class ArrowMemoryChannelWriterDescriptor : IProviderDescriptor<IDataWriter>
+public class ArrowMemoryChannelWriterDescriptor : IProviderDescriptor<IDataWriter>, IInternalChannelCapable
 {
+    public InternalChannelKind ChannelKind => InternalChannelKind.Arrow;
+
     public string ComponentName => ArrowMemoryChannelMetadata.ComponentName;
     public string Category => "Writer Options";
     public Type OptionsType => typeof(ArrowMemoryChannelOptions);

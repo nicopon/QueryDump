@@ -1,5 +1,7 @@
 namespace DtPipe.Core.Abstractions;
 
+using DtPipe.Core.Abstractions.Dag;
+
 /// <summary>
 /// Base factory interface for data components (Readers/Writers) that can be selected via connection string.
 /// </summary>
@@ -11,6 +13,13 @@ public interface IDataFactory : IComponentDescriptor
     /// Default is false.
     /// </summary>
     bool SupportsStdio => false;
+
+	/// <summary>
+    /// F5: when non-null, this factory transports data over internal memory channels of
+    /// the given kind. Lets typed endpoint routing select the transport without
+    /// adapter-identity string comparisons.
+    /// </summary>
+    InternalChannelKind? CapabilityKind => null;
 
 	/// <summary>
 	/// Determines if this factory can handle the given connection string or file path as a fallback.

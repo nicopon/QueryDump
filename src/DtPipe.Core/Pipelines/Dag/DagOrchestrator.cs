@@ -92,7 +92,7 @@ public class DagOrchestrator : IDagOrchestrator
         {
             var subs = new List<string>(count);
             for (int i = 0; i < count; i++)
-                subs.Add($"{alias}__fan_{i}");
+                subs.Add($"{alias}{IChannelNaming.FanPrefix}{i}");
             broadcastSubAliases[alias] = subs;
         }
 
@@ -164,24 +164,10 @@ public class DagOrchestrator : IDagOrchestrator
                         aliasMap[branch.RefAliases[i]] = actualRefAliases[i];
                 var branchCtx = new BranchChannelContext { AliasMap = aliasMap };
 
-                // Stream-transformer branches (SQL, merge, …): preserve logical aliases in args
-                // so table names and alias references remain correct; factories resolve via AliasMap.
-                // Fan-out consumer branches: rewrite --from value to the physical alias.
-                string[] resolvedArgs;
-                if (branch.HasStreamTransformer)
-                    resolvedArgs = branch.Arguments;
-                else
-                    resolvedArgs = ReplaceAliasesInArgs(
-                        branch.Arguments,
-                        branch.StreamingAliases.Count > 0 ? branch.StreamingAliases[0] : null,
-                        actualStreamingAliases.Length > 0 ? actualStreamingAliases[0] : null,
-                        branch.RefAliases, actualRefAliases);
-
-                var updatedBranch = branch with
-                {
-                    RefAliases = actualRefAliases,
-                    Arguments = resolvedArgs
-                };
+                // F5: no argv mutation. Stream-transformer branches keep logical aliases in
+                // their args (factories resolve physical channels via AliasMap); fan-out
+                // consumers receive the physical sub-channel through their typed endpoint.
+                var updatedBranch = branch with { RefAliases = actualRefAliases };
 
                 var bCts = CancellationTokenSource.CreateLinkedTokenSource(effectiveCt);
                 branchCts[branch.Alias] = bCts;
@@ -342,27 +328,25 @@ public class DagOrchestrator : IDagOrchestrator
 
         try
         {
-            // Build the channel injection plan — communicate routing to the CLI layer without
-            // embedding CLI flag syntax (-i, -o, mem:, arrow-memory:, --no-stats) in Core.
-            string? inputAlias = null;
+            // F5: typed channel endpoints instead of a routing plan the CLI re-interprets.
+            InternalChannelEndpoint? inputEndpoint = null;
             if (!branch.HasStreamTransformer && string.IsNullOrEmpty(branch.Input) && !string.IsNullOrEmpty(resolvedFromAlias))
-            {
-                inputAlias = resolvedFromAlias;
-            }
+                inputEndpoint = new InternalChannelEndpoint(resolvedFromAlias, InternalChannelKind.Arrow);
 
-            string? outputAlias = null;
+            InternalChannelEndpoint? outputEndpoint = null;
             bool suppressStats = false;
             if (string.IsNullOrEmpty(branch.Output))
             {
-                outputAlias = branch.Alias;
+                outputEndpoint = new InternalChannelEndpoint(branch.Alias, InternalChannelKind.Arrow);
                 suppressStats = true;
             }
 
-            var plan = (inputAlias != null || outputAlias != null)
-                ? new ChannelInjectionPlan { InputChannelAlias = inputAlias, OutputChannelAlias = outputAlias, SuppressStats = suppressStats }
-                : null;
-
-            var enrichedCtx = plan != null ? ctx with { ChannelInjection = plan } : ctx;
+            var enrichedCtx = ctx with
+            {
+                InputEndpoint = inputEndpoint,
+                OutputEndpoint = outputEndpoint,
+                SuppressStats = suppressStats
+            };
 
             try
             {
@@ -448,48 +432,5 @@ public class DagOrchestrator : IDagOrchestrator
             return resolved;
         }
         return alias;
-    }
-
-    /// <summary>
-    /// Returns a copy of <paramref name="args"/> where <c>--from</c> and <c>--ref</c> values
-    /// are replaced with their fan-out sub-aliases when the source alias was broadcast.
-    /// Only called for fan-out consumer branches (non-stream-transformer branches).
-    /// </summary>
-    private static string[] ReplaceAliasesInArgs(
-        string[] args,
-        string? oldFromAlias, string? newFromAlias,
-        IReadOnlyList<string> oldRefAliases, string[] newRefAliases)
-    {
-        bool fromChanged = !string.IsNullOrEmpty(oldFromAlias)
-            && !string.IsNullOrEmpty(newFromAlias)
-            && !string.Equals(oldFromAlias, newFromAlias, StringComparison.OrdinalIgnoreCase);
-
-        bool refsChanged = oldRefAliases.Count > 0
-            && !oldRefAliases.SequenceEqual(newRefAliases, StringComparer.OrdinalIgnoreCase);
-
-        if (!fromChanged && !refsChanged) return args;
-
-        var result = args.ToList();
-        int refIdx = 0;
-        bool fromDone = !fromChanged;
-
-        for (int i = 0; i < result.Count - 1; i++)
-        {
-            if (!fromDone && result[i].Equals("--from", StringComparison.OrdinalIgnoreCase)
-                && result[i + 1].Equals(oldFromAlias, StringComparison.OrdinalIgnoreCase))
-            {
-                result[i + 1] = newFromAlias!;
-                fromDone = true;
-            }
-            else if (refsChanged && result[i].Equals("--ref", StringComparison.OrdinalIgnoreCase)
-                && refIdx < oldRefAliases.Count
-                && result[i + 1].Equals(oldRefAliases[refIdx], StringComparison.OrdinalIgnoreCase))
-            {
-                result[i + 1] = newRefAliases[refIdx];
-                refIdx++;
-            }
-        }
-
-        return result.ToArray();
     }
 }
