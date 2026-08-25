@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Apache.Arrow;
+using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -65,26 +67,21 @@ public sealed partial class PostgreSqlDataWriter
 
 	private async Task MergeStagingBatchAsync(string stagingTable, CancellationToken ct)
 	{
-		var cols = _targetNames!.Select(n => _dialect.Quote(n)).ToList();
-		var conflictTarget = string.Join(", ", _keyColumns.Select(c => _dialect.Quote(c)));
-		var quotedStaging = _dialect.Quote(stagingTable);
-
-		var updateSet = string.Join(", ",
-			_targetNames!.Where(n => !_keyColumns.Contains(n, StringComparer.OrdinalIgnoreCase))
-						.Select(n => $"{_dialect.Quote(n)} = EXCLUDED.{_dialect.Quote(n)}"));
-
-		var sb = new StringBuilder();
-		sb.Append($"INSERT INTO {_quotedTargetTableName} ({string.Join(", ", cols)}) SELECT {string.Join(", ", cols)} FROM {quotedStaging} ");
-
-		if (_options.Strategy == PostgreSqlWriteStrategy.Ignore)
+		// F9: SQL generation is dialect-owned (shared ANSI ON CONFLICT builder).
+		var mode = _options.Strategy switch
 		{
-			sb.Append($"ON CONFLICT ({conflictTarget}) DO NOTHING");
-		}
-		else if (_options.Strategy == PostgreSqlWriteStrategy.Upsert)
-		{
-			sb.Append($"ON CONFLICT ({conflictTarget}) DO UPDATE SET {updateSet}");
-		}
+			PostgreSqlWriteStrategy.Ignore => MergeMode.Ignore,
+			PostgreSqlWriteStrategy.Upsert => MergeMode.Upsert,
+			_ => MergeMode.Insert,
+		};
 
-		await ExecuteNonQueryAsync(sb.ToString(), ct);
+		var spec = new MergeSpec(
+			QuotedTargetTable: _quotedTargetTableName,
+			SourceTable: _dialect.Quote(stagingTable),
+			KeyColumns: _keyColumns,
+			Columns: _targetNames!.Select(n => new PipeColumnInfo(n, typeof(object), false)).ToList(),
+			Mode: mode);
+
+		await ExecuteNonQueryAsync(_dialect.BuildStagingMerge(spec), ct);
 	}
 }

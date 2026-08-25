@@ -308,6 +308,14 @@ public class SqlServerDataWriter : BaseSqlDataWriter, IColumnarDataWriter
 
 	private async Task ExecuteBulkInsertAsync(IEnumerable<object?[]> rows, CancellationToken ct)
 	{
+		FillBufferRows(rows);
+		await _bulkCopy!.WriteToServerAsync(_bufferTable, ct);
+	}
+
+	// P2-11: single implementation of the row→staging-buffer mapping (was copy-pasted
+	// between bulk insert and merge staging).
+	private void FillBufferRows(IEnumerable<object?[]> rows)
+	{
 		_bufferTable!.Clear();
 		foreach (var row in rows)
 		{
@@ -319,8 +327,6 @@ public class SqlServerDataWriter : BaseSqlDataWriter, IColumnarDataWriter
 			}
 			_bufferTable.Rows.Add(dataRow);
 		}
-
-		await _bulkCopy!.WriteToServerAsync(_bufferTable, ct);
 	}
 
 	private async Task ExecuteMergeAsync(IReadOnlyList<object?[]> rows, CancellationToken ct)
@@ -347,17 +353,7 @@ public class SqlServerDataWriter : BaseSqlDataWriter, IColumnarDataWriter
 				stageBulk.ColumnMappings.Add(dc.ColumnName, dc.ColumnName);
 			}
 
-			_bufferTable!.Clear();
-			foreach (var row in rows)
-			{
-				var dataRow = _bufferTable.NewRow();
-				for (int i = 0; i < _converters!.Length; i++)
-				{
-					int srcIdx = _sourceIndices![i];
-					dataRow[i] = srcIdx >= 0 ? _converters[i](row[srcIdx]) : DBNull.Value;
-				}
-				_bufferTable.Rows.Add(dataRow);
-			}
+			FillBufferRows(rows);
 			await stageBulk.WriteToServerAsync(_bufferTable, ct);
 
 			// 3. Perform Merge
@@ -371,46 +367,21 @@ public class SqlServerDataWriter : BaseSqlDataWriter, IColumnarDataWriter
 
 	private async Task MergeFromStagingAsync(string stagingTable, CancellationToken ct)
 	{
-		var sb = new StringBuilder();
-		sb.Append($"MERGE {_quotedTargetTableName} AS T ");
-		sb.Append($"USING [{stagingTable}] AS S ON (");
-
-		for (int i = 0; i < _keyColumns.Count; i++)
+		// F9: MERGE generation is dialect-owned.
+		var mode = _options.Strategy switch
 		{
-			if (i > 0) sb.Append(" AND ");
-			var keyCol = _columns!.FirstOrDefault(c => c.Name.Equals(_keyColumns[i], StringComparison.OrdinalIgnoreCase));
-			var safeKey = keyCol != null ? SqlIdentifierHelper.GetSafeIdentifier(_dialect, keyCol) : _dialect.Quote(_keyColumns[i]);
-			sb.Append($"T.{safeKey} = S.[{_keyColumns[i]}]");
-		}
-		sb.Append(") ");
+			SqlServerWriteStrategy.Upsert => MergeMode.Upsert,
+			SqlServerWriteStrategy.Ignore => MergeMode.Ignore,
+			_ => MergeMode.Insert,
+		};
+		var spec = new MergeSpec(
+			QuotedTargetTable: _quotedTargetTableName,
+			SourceTable: stagingTable,
+			KeyColumns: _keyColumns,
+			Columns: _columns!,
+			Mode: mode);
 
-		if (_options.Strategy == SqlServerWriteStrategy.Upsert)
-		{
-			sb.Append("WHEN MATCHED THEN UPDATE SET ");
-			var nonKeys = _columns!.Where(c => !_keyColumns.Contains(c.Name, StringComparer.OrdinalIgnoreCase)).ToList();
-			for (int i = 0; i < nonKeys.Count; i++)
-			{
-				if (i > 0) sb.Append(", ");
-				var safeName = SqlIdentifierHelper.GetSafeIdentifier(_dialect, nonKeys[i]);
-				sb.Append($"T.{safeName} = S.[{nonKeys[i].Name}]");
-			}
-		}
-
-		sb.Append(" WHEN NOT MATCHED THEN INSERT (");
-		for (int i = 0; i < _columns!.Count; i++)
-		{
-			if (i > 0) sb.Append(", ");
-			sb.Append(SqlIdentifierHelper.GetSafeIdentifier(_dialect, _columns[i]));
-		}
-		sb.Append(") VALUES (");
-		for (int i = 0; i < _columns.Count; i++)
-		{
-			if (i > 0) sb.Append(", ");
-			sb.Append($"S.[{_columns[i].Name}]");
-		}
-		sb.Append(");");
-
-		await ExecuteNonQueryAsync(sb.ToString(), ct);
+		await ExecuteNonQueryAsync(_dialect.BuildStagingMerge(spec), ct);
 	}
 
 

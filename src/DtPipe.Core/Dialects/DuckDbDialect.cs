@@ -1,3 +1,5 @@
+using DtPipe.Core.Abstractions;
+
 namespace DtPipe.Core.Dialects;
 
 public class DuckDbDialect : BaseSqlDialect
@@ -32,4 +34,28 @@ public class DuckDbDialect : BaseSqlDialect
 	}
 
 	public override string? TableDiscoveryQuery => "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_name";
+
+	// F9 — DuckDB requires a PRIMARY KEY/UNIQUE constraint matching the keys for native
+	// ON CONFLICT. When the writer's introspection cannot verify it, fall back to a
+	// manual DELETE+INSERT script (same statements as before, now dialect-owned).
+	public override string BuildStagingMerge(MergeSpec spec)
+	{
+		if (spec.ConstraintVerified && spec.KeyColumns.Count > 0)
+			return base.BuildStagingMerge(spec);
+
+		var join = string.Join(" AND ", spec.KeyColumns.Select(k =>
+		{
+			var safe = Quote(k);
+			return $"{spec.QuotedTargetTable}.{safe} = {spec.SourceTable}.{safe}";
+		}));
+
+		var steps = new List<string>();
+		if (spec.Mode == MergeMode.Upsert)
+			steps.Add($"DELETE FROM {spec.QuotedTargetTable} USING {spec.SourceTable} WHERE {join}");
+		else if (spec.Mode == MergeMode.Ignore)
+			steps.Add($"DELETE FROM {spec.SourceTable} USING {spec.QuotedTargetTable} WHERE {join}");
+
+		steps.Add($"INSERT INTO {spec.QuotedTargetTable} SELECT * FROM {spec.SourceTable}");
+		return string.Join(";", steps);
+	}
 }

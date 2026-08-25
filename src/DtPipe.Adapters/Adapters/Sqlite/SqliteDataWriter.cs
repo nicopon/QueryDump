@@ -113,16 +113,9 @@ public sealed class SqliteDataWriter : BaseSqlDataWriter
 			}
 			else if (_options.Strategy == SqliteWriteStrategy.Upsert)
 			{
-				var conflictTarget = string.Join(", ", _keyColumns.Select(k => SqlIdentifierHelper.GetSafeIdentifier(_dialect, k)));
-				var updateSet = string.Join(", ", _columns.Where(c => !_keyColumns.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
-													  .Select(c =>
-													  {
-														  var safe = SqlIdentifierHelper.GetSafeIdentifier(_dialect, c);
-														  return $"{safe} = excluded.{safe}";
-													  }));
-
+				// F9: conflict-clause shape is dialect-owned; VALUES stay writer-side params.
 				sql.Append($"INSERT INTO {_quotedTargetTableName} ({columnNames}) VALUES ({paramNames}) ");
-				sql.Append($"ON CONFLICT ({conflictTarget}) DO UPDATE SET {updateSet}");
+				sql.Append(_dialect.BuildParameterizedConflictClause(_keyColumns, _columns));
 			}
 			else
 			{

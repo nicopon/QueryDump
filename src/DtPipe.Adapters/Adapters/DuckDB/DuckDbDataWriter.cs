@@ -181,49 +181,31 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
                 var pkCols = targetInfo?.PrimaryKeyColumns ?? new List<string>();
                 bool hasRequiredConstraints = _keyColumns.All(k => pkCols.Contains(k, StringComparer.OrdinalIgnoreCase));
 
-                var sql = new StringBuilder();
-                var conflictTarget = string.Join(", ", _keyColumns.Select(k => _dialect.Quote(k)));
-
-                if (hasRequiredConstraints && _keyColumns.Count > 0)
+                // F9: SQL generation is dialect-owned — including the DELETE+INSERT
+                // fallback when the target lacks matching constraints.
+                var mode = _options.Strategy switch
                 {
-                    _logger.LogDebug("DuckDB: using native ON CONFLICT for {Strategy} on {Table}", _options.Strategy, _quotedTargetTableName);
-                    sql.Append($"INSERT INTO {_quotedTargetTableName} SELECT * FROM {_stagingTable} ");
-                    if (_options.Strategy == DuckDbWriteStrategy.Ignore)
-                    {
-                        sql.Append($"ON CONFLICT ({conflictTarget}) DO NOTHING");
-                    }
-                    else if (_options.Strategy == DuckDbWriteStrategy.Upsert)
-                    {
-                        var updateSet = string.Join(", ", _columns!
-                            .Where(c => !_keyColumns.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
-                            .Select(c => {
-                                var safe = _dialect.Quote(c.Name);
-                                return $"{safe} = EXCLUDED.{safe}";
-                            }));
-                        sql.Append($"ON CONFLICT ({conflictTarget}) DO UPDATE SET {updateSet}");
-                    }
-                    await ExecuteNonQueryAsync(sql.ToString(), ct);
-                }
-                else
+                    DuckDbWriteStrategy.Ignore => MergeMode.Ignore,
+                    DuckDbWriteStrategy.Upsert => MergeMode.Upsert,
+                    _ => MergeMode.Insert,
+                };
+                var spec = new MergeSpec(
+                    QuotedTargetTable: _quotedTargetTableName,
+                    SourceTable: _stagingTable,
+                    KeyColumns: _keyColumns,
+                    Columns: _columns!,
+                    Mode: mode,
+                    ConstraintVerified: hasRequiredConstraints && _keyColumns.Count > 0);
+
+                if (!spec.ConstraintVerified)
                 {
                     _logger.LogWarning("DuckDB: Target table {Table} lacks a PRIMARY KEY or UNIQUE constraint matching the specified keys ({Keys}). Falling back to a less-optimized manual DELETE+INSERT strategy for {Strategy}.", _quotedTargetTableName, string.Join(", ", _keyColumns), _options.Strategy);
-                    // Fallback to manual DELETE + INSERT if constraints are missing
-                    var joinCondition = string.Join(" AND ", _keyColumns.Select(k => {
-                        var safe = _dialect.Quote(k);
-                        return $"{_quotedTargetTableName}.{safe} = {_stagingTable}.{safe}";
-                    }));
+                }
 
-                    if (_options.Strategy == DuckDbWriteStrategy.Upsert)
-                    {
-                        await ExecuteNonQueryAsync($"DELETE FROM {_quotedTargetTableName} USING {_stagingTable} WHERE {joinCondition}", ct);
-                    }
-                    else if (_options.Strategy == DuckDbWriteStrategy.Ignore)
-                    {
-                        // For Ignore, we only insert rows that don't exist
-                        await ExecuteNonQueryAsync($"DELETE FROM {_stagingTable} USING {_quotedTargetTableName} WHERE {joinCondition}", ct);
-                    }
-
-                    await ExecuteNonQueryAsync($"INSERT INTO {_quotedTargetTableName} SELECT * FROM {_stagingTable}", ct);
+                var script = _dialect.BuildStagingMerge(spec);
+                foreach (var statement in script.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    await ExecuteNonQueryAsync(statement, ct);
                 }
             }
             finally

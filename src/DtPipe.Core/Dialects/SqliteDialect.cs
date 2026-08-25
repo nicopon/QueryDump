@@ -1,3 +1,6 @@
+using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
+
 namespace DtPipe.Core.Dialects;
 
 public class SqliteDialect : BaseSqlDialect
@@ -28,4 +31,8 @@ public class SqliteDialect : BaseSqlDialect
 	}
 
 	public override string? TableDiscoveryQuery => "SELECT name AS table_name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name";
+
+	// F9 — SQLite parameterized upsert clause (excluded.* is case-insensitive here).
+	public override string BuildParameterizedConflictClause(IReadOnlyList<string> rawKeys, IReadOnlyList<PipeColumnInfo> columns)
+		=> SqliteConflictClause(rawKeys, columns, k => $"\"{k}\"");
 }

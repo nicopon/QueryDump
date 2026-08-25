@@ -1,3 +1,5 @@
+using DtPipe.Core.Abstractions;
+
 namespace DtPipe.Core.Dialects;
 
 public class SqlServerDialect : BaseSqlDialect
@@ -28,4 +30,50 @@ public class SqlServerDialect : BaseSqlDialect
 	}
 
 	public override string? TableDiscoveryQuery => "SELECT TABLE_NAME AS table_name, TABLE_TYPE AS table_type FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME";
+
+	// F9 — TSQL MERGE over a staging table (ported from SqlServerDataWriter).
+	public override string BuildStagingMerge(MergeSpec spec)
+	{
+		if (spec.Mode == MergeMode.Ignore)
+			throw new NotSupportedException("SqlServer staged merge does not support the Ignore strategy.");
+
+		var sb = new System.Text.StringBuilder();
+		sb.Append($"MERGE {spec.QuotedTargetTable} AS T ");
+		sb.Append($"USING [{spec.SourceTable}] AS S ON (");
+
+		for (int i = 0; i < spec.KeyColumns.Count; i++)
+		{
+			if (i > 0) sb.Append(" AND ");
+			var keyCol = spec.Columns.FirstOrDefault(c => c.Name.Equals(spec.KeyColumns[i], StringComparison.OrdinalIgnoreCase));
+			var safeKey = keyCol != null ? DtPipe.Core.Helpers.SqlIdentifierHelper.GetSafeIdentifier(this, keyCol) : Quote(spec.KeyColumns[i]);
+			sb.Append($"T.{safeKey} = S.[{spec.KeyColumns[i]}]");
+		}
+		sb.Append(") ");
+
+		if (spec.Mode == MergeMode.Upsert)
+		{
+			sb.Append("WHEN MATCHED THEN UPDATE SET ");
+			var nonKeys = spec.Columns.Where(c => !spec.KeyColumns.Contains(c.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+			for (int i = 0; i < nonKeys.Count; i++)
+			{
+				if (i > 0) sb.Append(", ");
+				sb.Append($"T.{DtPipe.Core.Helpers.SqlIdentifierHelper.GetSafeIdentifier(this, nonKeys[i])} = S.[{nonKeys[i].Name}]");
+			}
+		}
+
+		sb.Append(" WHEN NOT MATCHED THEN INSERT (");
+		for (int i = 0; i < spec.Columns.Count; i++)
+		{
+			if (i > 0) sb.Append(", ");
+			sb.Append(DtPipe.Core.Helpers.SqlIdentifierHelper.GetSafeIdentifier(this, spec.Columns[i]));
+		}
+		sb.Append(") VALUES (");
+		for (int i = 0; i < spec.Columns.Count; i++)
+		{
+			if (i > 0) sb.Append(", ");
+			sb.Append($"S.[{spec.Columns[i].Name}]");
+		}
+		sb.Append(");");
+		return sb.ToString();
+	}
 }
