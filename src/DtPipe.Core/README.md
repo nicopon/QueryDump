@@ -29,8 +29,7 @@ DtPipe.Core/
 ├── Pipelines/          # PipelineExecutionPlan, PipelineSegment, DAG orchestration
 │   └── Dag/
 ├── Security/           # SQL query validator
-├── Validation/         # Schema and constraint validators
-└── PipelineEngine.cs   # Headless pipeline engine for library use
+└── Validation/         # Schema and constraint validators
 ```
 
 ---
@@ -102,14 +101,24 @@ public class MyReaderDescriptor : IProviderDescriptor<IStreamReader>
 
 ## Running the Pipeline Directly
 
+Headless execution goes through `DagOrchestrator` — even a single-branch (linear)
+run goes through it once, giving uniform cancellation and channel wiring:
+
 ```csharp
-var engine = new PipelineEngine(logger);
-long rowsWritten = await engine.RunAsync(
-    reader,
-    writer,
-    pipeline: transformers,   // optional
-    batchSize: 50_000,
-    ct: cancellationToken);
+var orchestrator = new DagOrchestrator(logger, channelRegistry, readerFactories);
+var dag = new JobDagDefinition
+{
+    Branches = new[]
+    {
+        new BranchDefinition { Alias = "main", Input = "csv:in.csv", Output = "parquet:out.parquet" }
+    }
+};
+
+int exitCode = await orchestrator.ExecuteAsync(dag, (branch, ctx, ct) =>
+{
+    // Open the branch's reader, run transformers, write to its writer.
+    return RunBranchAsync(branch, ctx, ct);
+}, cancellationToken);
 ```
 
 ---

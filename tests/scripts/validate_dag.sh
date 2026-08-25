@@ -365,5 +365,14 @@ else
     fail "Duplicate State File: Wrong error message."
 fi
 
+# ----------------------------------------
+# Guard: dead abstraction classes must not be re-introduced in DtPipe.Core
+# ----------------------------------------
+echo "--- [16] Dead-abstraction guard ---"
+if grep -rqE "class (MappedMemoryChannelRegistry|PipelineEngine)\b" "$PROJECT_ROOT/src/DtPipe.Core/" 2>/dev/null; then
+    fail "dead abstraction class found in DtPipe.Core"
+fi
+pass "no dead abstraction classes in DtPipe.Core"
+
 echo ""
 echo -e "${GREEN}All DAG topology tests passed!${NC}"
