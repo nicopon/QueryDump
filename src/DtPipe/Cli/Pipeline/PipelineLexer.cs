@@ -45,16 +45,14 @@ public class PipelineLexer
                         value = args[++i];
                 }
 
-                // Implicit branch-split: a second -i, any --from, or a second --job triggers a new branch.
-                bool alreadyHasInput = currentBranchFlags.ContainsKey("--input") || currentBranchFlags.ContainsKey("-i");
-                bool alreadyHasFrom  = currentBranchFlags.ContainsKey("--from");
-                bool alreadyHasJob   = currentBranchFlags.ContainsKey("--job") || currentBranchFlags.ContainsKey("-j");
+                // Implicit branch-split: one pure function decides (F6). State is read
+                // from the flags accumulated so far in the current branch.
+                var state = new BranchSplitState(
+                    HasInput: currentBranchFlags.ContainsKey("--input") || currentBranchFlags.ContainsKey("-i"),
+                    HasJob: currentBranchFlags.ContainsKey("--job") || currentBranchFlags.ContainsKey("-j"),
+                    HasFrom: currentBranchFlags.ContainsKey("--from"));
 
-                bool isNewInput = (def.Name == "--input" || def.Name == "-i") && (alreadyHasInput || alreadyHasJob);
-                bool isNewFrom  = (def.Name == "--from")  && (alreadyHasFrom || alreadyHasInput || alreadyHasJob);
-                bool isNewJob   = (def.Name == "--job" || def.Name == "-j") && (alreadyHasJob || alreadyHasInput);
-
-                if (isNewInput || isNewFrom || isNewJob)
+                if (BranchSplitDecision.Decide(state, def.Name) != SplitDecision.Stay)
                 {
                     branches.Add(BuildBranch(currentBranchFlags, currentBranchArgs));
                     currentBranchFlags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);

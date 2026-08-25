@@ -298,6 +298,20 @@ into one step; a different flag type starts a new step.
 
 > **`--ref` is intentionally materialized.** Secondary sources declared via `--ref` are read fully
 > into memory so the query engine can build a cost-based plan. Only the `--from` source streams.
+
+#### Implicit branch-split rules
+
+Branches are separated implicitly while walking the arguments. One pure function
+(`BranchSplitDecision`) decides; the triggers are:
+
+| Token | Splits when |
+|:---|:---|
+| `-i` / `--input` | an input **or** job file was already seen in the current branch |
+| `--from` | a `--from`, `--input` or `--job` was already seen — the first `--from` in a fresh branch stays in the current branch |
+| `--job` / `-j` | a job file **or** input was already seen |
+| *positional SQL text* | a bare (non-flag) token starts a new branch that becomes the `--sql` processor branch |
+
+Neither `--sql` nor boolean processor flags (e.g. `--merge`) trigger a split.
 > Pre-filter large lookup tables upstream before using them as `--ref`.
 
 > **SQL engine**: The `--sql` processor uses DuckDB internally — the same engine available as a read/write provider (`duck:`). This means all DuckDB SQL extensions and functions are available in `--sql` branches. Use `--duck-init` to load extensions before query execution. See [Provider-Specific Options](#provider-specific-options) for details.
