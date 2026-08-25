@@ -111,6 +111,8 @@ public class UnmappedPropertyWarningTests
 		string firstRun;
 		var originalError = Console.Error;
 		var warmupSink = new StringWriter();
+		var prevDebug = Environment.GetEnvironmentVariable("DEBUG");
+		Environment.SetEnvironmentVariable("DEBUG", "1"); // skip-warnings are DEBUG-gated
 		Console.SetError(warmupSink); // discard any pre-existing cache warm-up noise
 		try
 		{
@@ -120,6 +122,8 @@ public class UnmappedPropertyWarningTests
 		finally
 		{
 			Console.SetError(originalError);
+			if (prevDebug is null) Environment.SetEnvironmentVariable("DEBUG", null);
+			else Environment.SetEnvironmentVariable("DEBUG", prevDebug);
 		}
 		Assert.Contains("UnmappedProperty", firstRun, StringComparison.Ordinal);
 

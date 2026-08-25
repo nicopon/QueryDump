@@ -14,9 +14,9 @@ namespace DtPipe.Cli.Services;
 /// into the Options objects registered in the OptionsRegistry.
 ///
 /// Two binding paths:
-/// - CLI path: FlagBinder reads adapter-specific flags directly from stage-scoped args
+/// - CLI path: OptionBinder.BindCli reads adapter-specific flags directly from stage-scoped args
 ///   (ReaderArgs, WriterArgs). All adapter flags are declared via [ComponentOption].
-/// - YAML path: ConfigurationBinder reads from ProviderOptions dictionaries.
+/// - YAML path: OptionBinder.BindYaml reads from ProviderOptions dictionaries.
 /// </summary>
 public class ProviderConfigurationService
 {
@@ -36,18 +36,21 @@ public class ProviderConfigurationService
             if (contributor is IDataFactory factory)
             {
                 var optionsType = factory.OptionsType;
-                var instance = _registry.Get(optionsType);
+                // Bulk pass: materialize defaults for every contributor without warning —
+                // most providers are inactive in any given run (F17 noise control).
+                var instance = _registry.GetOrNew(optionsType);
                 bool isWriter = factory is IDataWriterFactory;
 
                 // 1. Bind from ProviderOptions (YAML path)
                 if (job.ProviderOptions != null)
                 {
+                    bool strict = globals?.StrictBindings == true;
                     if (job.ProviderOptions.TryGetValue(factory.ComponentName, out var opts))
-                        ConfigurationBinder.Bind(instance, opts);
+                        Pipeline.OptionBinder.BindYaml(instance, opts, strict);
 
                     var suffix = isWriter ? "-writer" : "-reader";
                     if (job.ProviderOptions.TryGetValue(factory.ComponentName + suffix, out var specificOpts))
-                        ConfigurationBinder.Bind(instance, specificOpts);
+                        Pipeline.OptionBinder.BindYaml(instance, specificOpts, strict);
                 }
 
                 // 2. Bind from stage-scoped args (CLI path).
@@ -63,7 +66,7 @@ public class ProviderConfigurationService
                 {
                     var tempRegistry = new Pipeline.FlagRegistry();
                     foreach (var f in contributor.GetFlagDefs()) tempRegistry.Register(f);
-                    Pipeline.FlagBinder.Bind(instance, stageArgs, tempRegistry, factory.ComponentName,
+                    Pipeline.OptionBinder.BindCli(instance, stageArgs, tempRegistry, factory.ComponentName,
                         strict: globals?.StrictBindings == true);
                 }
 

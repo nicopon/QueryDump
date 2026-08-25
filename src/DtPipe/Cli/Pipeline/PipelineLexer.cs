@@ -36,9 +36,12 @@ public class PipelineLexer
             if (def != null)
             {
                 string? value = null;
-                if (def.Arity != FlagArity.Boolean)
+                if (def.ConsumesNextToken)
                 {
-                    if (i + 1 < args.Length && IsValueToken(args[i + 1]))
+                    // F8 arity-driven consumption: scalar/repeatable flags always take the
+                    // next token as their value — even dash-leading ones ("-5", "-###-").
+                    // This is the same rule OptionBinder.BindCli applies to raw args.
+                    if (i + 1 < args.Length)
                         value = args[++i];
                 }
 
@@ -78,7 +81,7 @@ public class PipelineLexer
             {
                 if (token.StartsWith('-'))
                 {
-                    // Unknown flag — store as boolean, captured in RawArgs for FlagBinder.
+                    // Unknown flag — store as boolean, captured in RawArgs for OptionBinder.
                     globalDict[token] = "true";
                     if (currentBranchFlags.ContainsKey(token))
                         WarnRepeated(token);
@@ -108,13 +111,6 @@ public class PipelineLexer
             branches.Add(BuildBranch(currentBranchFlags, currentBranchArgs));
 
         return new ParsedPipeline(MapGlobals(globalDict), branches);
-    }
-
-    // A token is a flag value if it doesn't start with '-', OR if it looks like a negative number.
-    private static bool IsValueToken(string token)
-    {
-        if (!token.StartsWith('-')) return true;
-        return token.Length > 1 && (char.IsDigit(token[1]) || (token[1] == '.' && token.Length > 2 && char.IsDigit(token[2])));
     }
 
     private static void WarnRepeated(string token)

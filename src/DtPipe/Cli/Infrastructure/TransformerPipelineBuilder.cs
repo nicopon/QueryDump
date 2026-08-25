@@ -29,7 +29,7 @@ public class TransformerPipelineBuilder
             // Same binding path as the live CLI: bind the flag group into a fresh options
             // instance, then let the factory create the transformer from it.
             var instance = Activator.CreateInstance(factory.OptionsType)!;
-            TransformerArgsBinder.Bind(instance, pairs);
+            OptionBinder.BindPairs(instance, pairs);
             var transformer = factory.CreateFromOptions(instance);
             if (transformer != null) pipeline.Add(transformer);
         }
@@ -125,14 +125,15 @@ public class TransformerPipelineBuilder
 
                 currentFactory = factory;
 
-                // Determine if we should consume a value
+                // Determine if we should consume a value — F8 arity-driven rule:
+                // scalar/repeatable flags always take the next token, even dash-leading
+                // (e.g. --mask "-###-").
                 string? value = null;
-                if (flag.Arity != FlagArity.Boolean)
+                if (flag.ConsumesNextToken)
                 {
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith('-'))
+                    if (i + 1 < args.Length)
                     {
-                        value = args[i + 1];
-                        i++;
+                        value = args[++i];
                     }
                     else if (flag.Arity == FlagArity.Scalar)
                     {

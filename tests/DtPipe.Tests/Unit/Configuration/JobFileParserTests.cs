@@ -1,4 +1,7 @@
 using DtPipe.Configuration;
+using DtPipe.Cli.Infrastructure;
+using DtPipe.Cli.Pipeline;
+using DtPipe.Core.Abstractions;
 using FluentAssertions;
 using Xunit;
 
@@ -282,3 +285,85 @@ joined:
 	}
 }
 
+
+public class YamlCliParityTests
+{
+	/// <summary>
+	/// F8 — the YAML path and the CLI path must produce identical options objects.
+	/// Drives ProviderConfigurationService both ways with stub csv contributors and
+	/// compares the registered CsvReaderOptions / CsvWriterOptions.
+	/// </summary>
+	[Fact]
+	public async Task Yaml_And_Cli_Produce_Identical_Options()
+	{
+		var registry = new DtPipe.Core.Options.OptionsRegistry();
+		var contributors = YamlParityStubs.Build();
+
+		// ── YAML path: provider-options dictionaries ──
+		var yamlJob = new DtPipe.Core.Models.JobDefinition
+		{
+			Input = "in.csv",
+			Output = "out.csv",
+			ProviderOptions = new()
+			{
+				["csv"] = new() { ["separator"] = ";", ["column-types"] = "Id:int32" },
+				["csv-writer"] = new() { ["separator"] = "|" }
+			}
+		};
+		registry.BeginScope();
+		new DtPipe.Cli.Services.ProviderConfigurationService(contributors, registry)
+			.BindOptions(yamlJob, context: null);
+		var yamlReader = registry.Get<DtPipe.Adapters.Csv.CsvReaderOptions>();
+		var yamlWriter = registry.Get<DtPipe.Adapters.Csv.CsvWriterOptions>();
+
+		// ── CLI path: stage-scoped args ──
+		var cliJob = new DtPipe.Core.Models.JobDefinition { Input = "in.csv", Output = "out.csv" };
+		var cliContext = new DtPipe.Cli.Pipeline.CliJobContext(
+			ReaderArguments: new[] { "--csv-separator", ";", "--column-types", "Id:int32" },
+			PipelineArguments: System.Array.Empty<string>(),
+			WriterArguments: new[] { "-o", "out.csv", "--csv-separator", "|" },
+			Arguments: System.Array.Empty<string>());
+		registry.BeginScope();
+		new DtPipe.Cli.Services.ProviderConfigurationService(contributors, registry)
+			.BindOptions(cliJob, cliContext);
+		var cliReader = registry.Get<DtPipe.Adapters.Csv.CsvReaderOptions>();
+		var cliWriter = registry.Get<DtPipe.Adapters.Csv.CsvWriterOptions>();
+
+		// ── Compare ──
+		cliReader.Separator.Should().Be(yamlReader.Separator).And.Be(";");
+		cliReader.ColumnTypes.Should().Be(yamlReader.ColumnTypes).And.Be("Id:int32");
+		cliWriter.Separator.Should().Be(yamlWriter.Separator).And.Be("|");
+	}
+
+	private static class YamlParityStubs
+	{
+		public sealed class ReaderStubFactory : IStreamReaderFactory, ICliContributor
+		{
+			public string ComponentName => "csv";
+			public string Category => "Readers";
+			public Type OptionsType => typeof(DtPipe.Adapters.Csv.CsvReaderOptions);
+			public bool CanHandle(string connectionString) => connectionString.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+			public IEnumerable<FlagDef> GetFlagDefs() => CliOptionBuilder.GenerateFlagDefsForType(OptionsType);
+			public DtPipe.Core.Abstractions.IStreamReader Create(DtPipe.Core.Options.OptionsRegistry registry) => throw new NotSupportedException();
+			public IEnumerable<Type> GetSupportedOptionTypes() => new[] { OptionsType };
+			public bool RequiresQuery => false;
+		}
+
+		public sealed class WriterStubFactory : IDataWriterFactory, ICliContributor
+		{
+			public string ComponentName => "csv";
+			public string Category => "Writers";
+			public Type OptionsType => typeof(DtPipe.Adapters.Csv.CsvWriterOptions);
+			public bool CanHandle(string connectionString) => connectionString.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+			public IEnumerable<FlagDef> GetFlagDefs() => CliOptionBuilder.GenerateFlagDefsForType(OptionsType);
+			public DtPipe.Core.Abstractions.IDataWriter Create(DtPipe.Core.Options.OptionsRegistry registry) => throw new NotSupportedException();
+			public IEnumerable<Type> GetSupportedOptionTypes() => new[] { OptionsType };
+		}
+
+		public static IEnumerable<ICliContributor> Build() => new ICliContributor[]
+		{
+			new ReaderStubFactory(),
+			new WriterStubFactory(),
+		};
+	}
+}

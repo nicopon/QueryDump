@@ -1,0 +1,313 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using DtPipe.Core.Attributes;
+using DtPipe.Core.Options;
+
+namespace DtPipe.Cli.Pipeline;
+
+/// <summary>
+/// The single option binder (F8). One implementation serves all binding surfaces:
+/// - <see cref="BindCli"/>: CLI tokens + FlagRegistry (replaces the legacy CLI binder)
+/// - <see cref="BindPairs"/>: pre-extracted (flag, value) transformer groups (replaces the legacy transformer args binder)
+/// - <see cref="BindYaml"/>: YAML provider-options dictionaries (replaces the legacy YAML configuration binder)
+///
+/// All surfaces resolve property names through <see cref="FlagNameDeriver"/>, share the
+/// arity-driven value-token rule (<see cref="FlagDef.ConsumesNextToken"/>), and enforce
+/// [ComponentOption(Required)] via <see cref="EnforceRequired"/> when asked.
+/// </summary>
+public static class OptionBinder
+{
+    // ─────────────────────────────────────────────────────────────────────────
+    // CLI surface
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public static void BindCli(object target, string[] args, FlagRegistry registry, string prefix = "", bool strict = false)
+    {
+        var type = target.GetType();
+        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        // Inverse of flag-def generation: canonical name (+ explicit aliases) → property.
+        var flagMap = BuildFlagToPropertyMap(props, type);
+
+        for (int i = 0; i < args.Length; i++)
+        {
+            var token = args[i];
+            if (!token.StartsWith('-')) continue;
+
+            var def = registry.Lookup(token);
+            if (def == null)
+            {
+                if (strict)
+                    throw new InvalidOperationException(
+                        $"Unrecognized flag '{token}' for component '{(string.IsNullOrEmpty(prefix) ? type.Name : prefix)}'. " +
+                        "Check the provider prefix and flag spelling (see 'dtpipe --help'), or remove --strict-bindings to skip unknown flags.");
+                continue;
+            }
+
+            string? value;
+            if (!def.ConsumesNextToken)
+            {
+                value = "true";
+            }
+            else
+            {
+                // Arity-driven consumption (F8): a scalar/repeatable flag always consumes
+                // the token that follows it as its value — no shape sniffing on the token.
+                value = i + 1 < args.Length ? args[++i] : null;
+                if (value == null) continue;
+            }
+
+            if (!flagMap.TryGetValue(def.Name, out var prop))
+            {
+                if (strict)
+                    throw new InvalidOperationException(
+                        $"Flag '{def.Name}' could not be bound to any property of '{type.Name}'. " +
+                        "The flag exists in the registry but does not map to this options type.");
+                continue;
+            }
+
+            SetValue(target, prop, value, strict);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Transformer group surface — (flag, value) pairs already extracted by the group walker
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public static void BindPairs(object target, IEnumerable<(string Option, string Value)> pairs, bool strict = false)
+    {
+        var type = target.GetType();
+        var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var flagToProp = BuildFlagToPropertyMap(props, type);
+
+        // Accumulate all values per property — required for repeatable flags.
+        var accumulated = new Dictionary<PropertyInfo, List<string>>();
+        foreach (var (option, value) in pairs)
+        {
+            if (!flagToProp.TryGetValue(option, out var prop))
+            {
+                if (strict)
+                    throw new InvalidOperationException(
+                        $"Unrecognized option '{option}' for options type '{type.Name}'.");
+                continue;
+            }
+            if (!accumulated.TryGetValue(prop, out var list))
+                accumulated[prop] = list = new List<string>();
+            list.Add(value);
+        }
+
+        foreach (var (prop, values) in accumulated)
+            SetProperty(target, prop, values, strict);
+    }
+
+    private static Dictionary<string, PropertyInfo> BuildFlagToPropertyMap(PropertyInfo[] props, Type type)
+    {
+        var metadata = GetMetadataMap(type);
+        var result = new Dictionary<string, PropertyInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in props)
+        {
+            var canonical = FlagNameDeriver.DeriveCanonical(prop, type, metadata);
+            result[canonical] = prop;
+            var attr = prop.GetCustomAttribute<ComponentOptionAttribute>();
+            if (attr?.Aliases != null)
+                foreach (var alias in attr.Aliases)
+                    result[alias] = prop;
+        }
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, string>? GetMetadataMap(Type type)
+    {
+        try
+        {
+            var instance = Activator.CreateInstance(type);
+            return (instance as ICliOptionMetadata)?.PropertyToFlag;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // YAML surface
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Binds a provider-options dictionary to an existing instance. Keys are normalized
+    /// (strip '-', '_', lowercase); unmapped keys warn (or throw in strict mode).
+    /// </summary>
+    public static void BindYaml(object target, IReadOnlyDictionary<string, object?> config, bool strict = false)
+    {
+        if (config == null || config.Count == 0 || target == null) return;
+
+        var properties = target.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
+            .ToList();
+
+        foreach (var kvp in config)
+        {
+            var key = kvp.Key;
+            var value = kvp.Value;
+
+            var normalizedKey = NormalizeKey(key);
+            var prop = properties.FirstOrDefault(p => NormalizeKey(p.Name) == normalizedKey);
+
+            if (prop == null)
+            {
+                var message = $"Unrecognized provider option '{key}' for '{target.GetType().Name}'. Check the option name against 'dtpipe providers' output.";
+                if (strict)
+                    throw new InvalidOperationException(message);
+                Console.Error.WriteLine($"[dtpipe] Warning: {message}");
+                continue;
+            }
+
+            try
+            {
+                var convertedValue = ConvertValue(value, prop.PropertyType);
+                prop.SetValue(target, convertedValue);
+            }
+            catch (Exception ex)
+            {
+                var message = $"Failed to bind provider option '{key}' to property '{prop.Name}': {ex.Message}";
+                if (strict)
+                    throw new InvalidOperationException(message, ex);
+                Console.Error.WriteLine($"[dtpipe] Warning: {message}");
+            }
+        }
+    }
+
+    private static string NormalizeKey(string key)
+        => key.Replace("-", "").Replace("_", "").ToLowerInvariant();
+
+    private static object? ConvertValue(object? value, Type targetType)
+    {
+        if (value == null) return null;
+
+        var underlyingType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+        if (underlyingType.IsInstanceOfType(value))
+            return value;
+
+        var stringValue = value.ToString();
+        if (string.IsNullOrEmpty(stringValue)) return null;
+
+        if (underlyingType.IsEnum)
+            return Enum.Parse(underlyingType, stringValue, ignoreCase: true);
+
+        if (underlyingType == typeof(Guid))
+            return Guid.Parse(stringValue);
+
+        if (underlyingType == typeof(TimeSpan))
+            return TimeSpan.Parse(stringValue);
+
+        return Convert.ChangeType(value, underlyingType);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Required enforcement + value assignment
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Checks every [ComponentOption(Required = true)] property of the target and reports
+    /// unset ones: strict throws listing offenders, otherwise a warning is emitted.
+    /// Not invoked automatically by the bind methods — call sites opt in where a missing
+    /// required option is genuinely fatal at that point in the pipeline setup.
+    /// </summary>
+    public static void EnforceRequired(object target, bool strict)
+    {
+        var offenders = target.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.GetCustomAttribute<ComponentOptionAttribute>() is { Required: true })
+            .Where(p => IsUnset(p.GetValue(target)))
+            .Select(p => p.Name)
+            .ToList();
+
+        if (offenders.Count == 0) return;
+
+        var message = $"Required option(s) missing on {target.GetType().Name}: {string.Join(", ", offenders)}";
+        if (strict)
+            throw new InvalidOperationException(message);
+        Console.Error.WriteLine($"[dtpipe] Warning: {message}");
+    }
+
+    private static bool IsUnset(object? value)
+        => value is null
+           || (value is string s && s.Length == 0)
+           || (value is not string && !(value is System.Collections.IEnumerable) && Equals(value, Activator.CreateInstance(Nullable.GetUnderlyingType(value.GetType()) ?? value.GetType())));
+
+    private static void SetValue(object target, PropertyInfo prop, string value, bool strict)
+    {
+        try
+        {
+            var type = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+            if (type == typeof(string)) prop.SetValue(target, value);
+            else if (type == typeof(bool)) prop.SetValue(target, bool.Parse(value));
+            else if (type == typeof(int)) prop.SetValue(target, int.Parse(value));
+            else if (type == typeof(double)) prop.SetValue(target, double.Parse(value));
+            else if (type.IsEnum) prop.SetValue(target, Enum.Parse(type, value, true));
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
+        {
+            if (strict)
+                throw new InvalidOperationException(
+                    $"Failed to bind value '{value}' to option '{prop.Name}': {ex.Message}", ex);
+            Console.Error.WriteLine($"Warning: OptionBinder could not bind '{prop.Name}': {ex.Message}");
+        }
+    }
+
+    private static void SetProperty(object instance, PropertyInfo prop, List<string> values, bool strict)
+    {
+        var propType = prop.PropertyType;
+        var underlying = Nullable.GetUnderlyingType(propType) ?? propType;
+
+        try
+        {
+            // Scalar types — use the last value (consistent with how flags override each other)
+            if (underlying == typeof(string)) { prop.SetValue(instance, values.Last()); return; }
+            if (underlying == typeof(bool)) { if (bool.TryParse(values.Last(), out var b)) prop.SetValue(instance, b); return; }
+            if (underlying == typeof(int)) { if (int.TryParse(values.Last(), out var i)) prop.SetValue(instance, i); return; }
+            if (underlying == typeof(double)) { if (double.TryParse(values.Last(), out var d)) prop.SetValue(instance, d); return; }
+            if (underlying.IsEnum) { prop.SetValue(instance, Enum.Parse(underlying, values.Last(), ignoreCase: true)); return; }
+
+            // Dictionary<string, string>: each value is "key:value"
+            if (underlying == typeof(Dictionary<string, string>))
+            {
+                var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var v in values)
+                {
+                    var sep = v.IndexOf(':');
+                    if (sep > 0) dict[v[..sep].Trim()] = v[(sep + 1)..].Trim();
+                    else dict[v.Trim()] = string.Empty;
+                }
+                prop.SetValue(instance, dict);
+                return;
+            }
+
+            // String collection types — use all values
+            var elementType = GetElementType(propType);
+            if (elementType == typeof(string))
+            {
+                if (propType == typeof(string[]) || propType.IsArray)
+                    prop.SetValue(instance, values.ToArray());
+                else
+                    prop.SetValue(instance, values); // Assignable to IEnumerable<string>, IReadOnlyList<string>, List<string>
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
+        {
+            if (strict)
+                throw new InvalidOperationException(
+                    $"Failed to bind value '{values.Last()}' to option '{prop.Name}': {ex.Message}", ex);
+            Console.Error.WriteLine($"Warning: OptionBinder could not bind '{prop.Name}': {ex.Message}");
+        }
+    }
+
+    private static Type? GetElementType(Type type)
+    {
+        if (type.IsArray) return type.GetElementType();
+        if (type.IsGenericType) return type.GetGenericArguments().FirstOrDefault();
+        return null;
+    }
+}

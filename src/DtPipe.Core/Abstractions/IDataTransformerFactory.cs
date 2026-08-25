@@ -24,7 +24,7 @@ public interface IDataTransformerFactory : IDataFactory
 	IDataTransformer? CreateFromYamlConfig(TransformerConfig config);
 
 	/// <summary>
-	/// Creates a transformer from a pre-bound options object (typically populated by TransformerArgsBinder).
+	/// Creates a transformer from a pre-bound options object (typically populated by OptionBinder).
 	/// The options type must match the factory's OptionsType.
 	/// </summary>
 	IDataTransformer? CreateFromOptions(object options);

@@ -92,6 +92,29 @@ public class OptionsRegistry
 	}
 
 	/// <summary>
+	/// Materializes a default instance for <paramref name="optionType"/> WITHOUT the
+	/// missing-options warning. For bulk registration passes (e.g. provider configuration
+	/// binding iterates every contributor and intentionally materializes defaults for
+	/// inactive providers) — genuine consumers should use <see cref="Get(Type)"/>.
+	/// </summary>
+	public object GetOrNew(Type optionType)
+	{
+		if (CurrentOptions.TryGetValue(optionType, out var value))
+		{
+			return value;
+		}
+
+		try
+		{
+			return Activator.CreateInstance(optionType) ?? throw new InvalidOperationException($"Could not create instance of {optionType.Name}");
+		}
+		catch (Exception ex)
+		{
+			throw new InvalidOperationException($"Could not create default instance for option type {optionType.Name}. Ensure it has a parameterless constructor.", ex);
+		}
+	}
+
+	/// <summary>
 	/// Attempts to retrieve registered options of a specific type without side effects.
 	/// </summary>
 	public bool TryGet<T>(out T value) where T : class, IOptionSet, new()

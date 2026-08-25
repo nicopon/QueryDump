@@ -169,7 +169,7 @@ public class LinearPipelineService
             (writerFactory, cleanedOutput) = ResolveFactory<IDataWriterFactory>(job.Output, _writerFactories);
         }
 
-        // 3b. Query file resolution: FlagBinder or ConfigurationBinder set readerOpts.Query
+        // 3b. Query file resolution: OptionBinder sets readerOpts.Query
         // from --query flag or YAML — resolve file refs here.
         // This is separate from 3b because job.Query is null for CLI branches.
         {
@@ -182,7 +182,7 @@ public class LinearPipelineService
             }
         }
 
-        // 3c. Load hook content from files for adapter options (CLI path: already bound by FlagBinder)
+        // 3c. Load hook content from files for adapter options (CLI path: already bound by OptionBinder)
         if (writerFactory != null)
         {
             var writerHookOpts = _optionsRegistry.Get(writerFactory.OptionsType) as DtPipe.Core.Options.IHookAware;

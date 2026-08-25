@@ -63,7 +63,7 @@ public class CliDataWriterFactory : CliProviderFactory<IDataWriter>, IDataWriter
 		var specificOptions = registry.Get(_descriptor.OptionsType);
 		var route = registry.Get<ConnectionRoute>();
 
-		// Validate that a target table was provided (FlagBinder set it from --table; YAML path via MapProcessorProperties)
+		// Validate that a target table was provided (OptionBinder set it from --table; YAML path via MapProcessorProperties)
 		var tableProp = specificOptions.GetType().GetProperty("Table");
 		if (tableProp != null)
 		{
@@ -108,7 +108,7 @@ public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStream
 		var route = registry.Get<ConnectionRoute>();
 
 		// Connection string is set by LinearPipelineService into ConnectionRoute after stripping the
-		// component-name prefix. Query is set by FlagBinder (CLI path) or MapProcessorProperties (YAML path).
+		// component-name prefix. Query is set by OptionBinder (CLI path) or MapProcessorProperties (YAML path).
 		var reader = _descriptor.Create(route?.Input ?? "", specificOptions!, _serviceProvider);
 		if (reader is IBatchSizeConfigurable batchConfigurable)
 		{

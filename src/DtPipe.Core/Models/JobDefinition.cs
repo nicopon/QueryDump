@@ -6,8 +6,8 @@ namespace DtPipe.Core.Models;
 /// <summary>
 /// Central job definition for export configuration, hydrated from CLI or YAML.
 /// Adapter-specific fields (Query, Table, Strategy, Key, hooks, schema persistence)
-/// are handled directly by FlagBinder → adapter option POCOs (CLI path)
-/// or ConfigurationBinder → ProviderOptions (YAML path).
+/// are handled directly by OptionBinder.BindCli → adapter option POCOs (CLI path)
+/// or OptionBinder.BindYaml ← ProviderOptions (YAML path).
 /// </summary>
 public record JobDefinition
 {

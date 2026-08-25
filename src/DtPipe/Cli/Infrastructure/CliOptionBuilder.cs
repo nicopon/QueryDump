@@ -17,8 +17,6 @@ public static class CliOptionBuilder
 	public static IEnumerable<FlagDef> GenerateFlagDefsForType(Type t, FlagScope scope = FlagScope.PerBranch)
 	{
 		var flags = new List<FlagDef>();
-		var prefixProp = t.GetProperty("Prefix", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
-		var prefix = prefixProp?.GetValue(null) as string ?? "";
 
 		var defaultInstance = Activator.CreateInstance(t);
 		IReadOnlyDictionary<string, string>? cliMetadata = null;
@@ -44,14 +42,8 @@ public static class CliOptionBuilder
 				continue;
 			}
 
-			var flagName = metadataFlag ?? cliOptionAttr?.Name;
-			if (string.IsNullOrEmpty(flagName))
-			{
-				var kebabProp = property.Name.ToKebabCase();
-				flagName = kebabProp == prefix.ToLowerInvariant()
-					? $"--{prefix.ToLowerInvariant()}"
-					: (string.IsNullOrEmpty(prefix) ? $"--{kebabProp}" : $"--{prefix.ToLowerInvariant()}-{kebabProp}");
-			}
+			// F8 single derivation source — see FlagNameDeriver.
+			var flagName = FlagNameDeriver.DeriveCanonical(property, t, cliMetadata);
 
 			var description = ResolveDescription(cliOptionAttr, descriptionAttr);
 			var propType = property.PropertyType;
@@ -73,6 +65,11 @@ public static class CliOptionBuilder
 
 	private static void WarnSkippedProperty(Type declaringType, PropertyInfo property)
 	{
+		// F17 signal is aimed at development time: a forgotten [ComponentOption] on a NEW
+		// property. Curated internal properties (engine options, schema injection slots…)
+		// legitimately carry no CLI metadata, so the reminder only fires under DEBUG=1.
+		if (Environment.GetEnvironmentVariable("DEBUG") != "1") return;
+
 		var key = $"{declaringType.FullName}.{property.Name}";
 		lock (WarnedSkippedProperties)
 		{

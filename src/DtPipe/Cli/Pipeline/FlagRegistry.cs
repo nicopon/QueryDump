@@ -38,7 +38,15 @@ public record FlagDef(
     FlagScope Scope,
     string? Description = null,
     FlagStage Stage = FlagStage.All,
-    string? ComponentName = null);
+    string? ComponentName = null)
+{
+    /// <summary>
+    /// F8 single source of value-token semantics: a flag consumes the token that follows it
+    /// unless it is boolean. The lexer, the option binders and shell completion all share
+    /// this rule (arity-driven consumption — no shape sniffing on the token itself).
+    /// </summary>
+    public bool ConsumesNextToken => Arity != FlagArity.Boolean;
+}
 
 public class FlagRegistry
 {

@@ -186,7 +186,8 @@ class Program
 					currentStage        = FlagStage.Pipeline;
 					lastPipelineTrigger = w;
 				}
-				if (def != null && def.Arity != FlagArity.Boolean) valuePending = true;
+				// F8 shared value-pending rule (same as lexer/binders).
+				valuePending = def?.ConsumesNextToken == true;
 			}
 		}
 

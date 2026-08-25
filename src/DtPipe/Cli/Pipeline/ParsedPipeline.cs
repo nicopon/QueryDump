@@ -25,7 +25,7 @@ public record GlobalOptions
 /// <summary>
 /// Per-branch data extracted by PipelineLexer.
 /// Contains only DAG-routing fields and stage-scoped raw args.
-/// All adapter/engine flags flow exclusively through RawArgs → FlagBinder → adapter options.
+/// All adapter/engine flags flow exclusively through RawArgs → OptionBinder.BindCli → adapter options.
 /// </summary>
 public record BranchSpec
 {

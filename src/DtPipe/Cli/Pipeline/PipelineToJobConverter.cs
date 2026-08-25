@@ -203,7 +203,7 @@ public static class PipelineToJobConverter
         foreach (var (factory, pairs) in builder.CollectGroups(pipelineArgs))
         {
             var instance = Activator.CreateInstance(factory.OptionsType)!;
-            DtPipe.Cli.Infrastructure.TransformerArgsBinder.Bind(instance, pairs);
+            OptionBinder.BindPairs(instance, pairs);
             var config = OptionObjectExporter.ExportTransformerConfig(factory.ComponentName, instance);
             if (config != null)
                 configs.Add(config);
@@ -291,7 +291,7 @@ public static class PipelineToJobConverter
         foreach (var def in CliOptionBuilder.GenerateFlagDefsForType(optionsType))
             registry.Register(def);
 
-        FlagBinder.Bind(instance, args, registry, prefix);
+        OptionBinder.BindCli(instance, args, registry, prefix);
         return OptionObjectExporter.CollectChanged(instance);
     }
 
