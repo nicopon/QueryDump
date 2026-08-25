@@ -147,6 +147,12 @@ dtpipe -i "pg:..." --query "SELECT * FROM users" \
 dtpipe --job anonymize_users.yaml
 ```
 
+> **Round-trip invariant.** `--export-job` preserves the full pipeline semantics —
+> transformers, provider options, and stream processors (`--sql` / `--merge`) — so
+> running the exported YAML is equivalent to the original CLI invocation.
+> This invariant is enforced end-to-end by `tests/scripts/validate_export_job.sh`
+> (CLI run vs `--job` run must report identical row counts).
+
 DtPipe uses [Bogus](https://github.com/bchavez/Bogus) for fake data generation. Syntax: `--fake "Column:Dataset.Method"` (e.g. `name.fullName`, `internet.email`, `finance.iban`, `date.past`, `random.uuid`). See the [Bogus documentation](https://github.com/bchavez/Bogus) for the full dataset/method reference.
 
 ---

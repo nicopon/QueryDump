@@ -70,4 +70,13 @@ public interface IStreamTransformerFactory
     /// Used by the CLI layer to register the correct arity in FlagRegistry — no CLI types here.
     /// </summary>
     IReadOnlyList<(string Flag, bool IsBoolean)> CliTriggerFlags { get; }
+
+    /// <summary>
+    /// Exports the processor activation from CLI branch args into the canonical
+    /// provider-options payload consumed by <see cref="CreateFromJob"/> (the YAML path).
+    /// Used by --export-job so CLI → YAML → run preserves stream processors.
+    /// Returns null when this factory is not activated by the given args; an empty
+    /// dictionary is a valid marker for parameterless processors.
+    /// </summary>
+    Dictionary<string, object>? ExportToProviderOptions(string[] branchArgs) => null;
 }

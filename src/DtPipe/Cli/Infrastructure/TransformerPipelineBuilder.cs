@@ -24,6 +24,27 @@ public class TransformerPipelineBuilder
     public List<IDataTransformer> Build(string[] args)
     {
         var pipeline = new List<IDataTransformer>();
+        foreach (var (factory, pairs) in CollectGroups(args))
+        {
+            // Same binding path as the live CLI: bind the flag group into a fresh options
+            // instance, then let the factory create the transformer from it.
+            var instance = Activator.CreateInstance(factory.OptionsType)!;
+            TransformerArgsBinder.Bind(instance, pairs);
+            var transformer = factory.CreateFromOptions(instance);
+            if (transformer != null) pipeline.Add(transformer);
+        }
+        return pipeline;
+    }
+
+    /// <summary>
+    /// Groups raw args into ordered transformer flag groups using the canonical rule:
+    /// consecutive options belonging to the same factory form one group; re-occurrence of
+    /// the factory's trigger flag starts a new group of the same factory.
+    /// Single source shared by live execution (<see cref="Build"/>) and --export-job.
+    /// </summary>
+    public List<(IDataTransformerFactory Factory, List<(string Option, string Value)> Pairs)> CollectGroups(string[] args)
+    {
+        var groups = new List<(IDataTransformerFactory, List<(string, string)>)>();
         var transformerFactories = _factories.ToList();
 
         // Build option maps
@@ -58,6 +79,13 @@ public class TransformerPipelineBuilder
         IDataTransformerFactory? currentFactory = null;
         var currentOptions = new List<(string Key, string Value)>();
 
+        void FlushCurrent()
+        {
+            if (currentFactory != null && currentOptions.Count > 0)
+                groups.Add((currentFactory, currentOptions));
+            currentOptions = new List<(string Key, string Value)>();
+        }
+
         for (int i = 0; i < args.Length; i++)
         {
             var arg = args[i];
@@ -66,7 +94,7 @@ public class TransformerPipelineBuilder
             (IDataTransformerFactory Factory, FlagDef Flag)? match = null;
             if (currentFactory != null && perFactoryMap[currentFactory].TryGetValue(arg, out var currentFlag))
             {
-                // Trigger Detection: if this is the "trigger" flag (matching prefix) 
+                // Trigger Detection: if this is the "trigger" flag (matching prefix)
                 // and we already have it in currentOptions, it starts a new instance.
                 var triggerName = $"--{currentFactory.ComponentName.ToLowerInvariant()}";
                 bool isTrigger = string.Equals(arg, triggerName, StringComparison.OrdinalIgnoreCase);
@@ -74,10 +102,9 @@ public class TransformerPipelineBuilder
                 if (isTrigger && currentOptions.Any(o => string.Equals(o.Key, arg, StringComparison.OrdinalIgnoreCase)))
                 {
                     // Force flush to start new instance of the same factory
-                    Flush(currentFactory, currentOptions, pipeline);
-                    currentOptions.Clear();
+                    FlushCurrent();
                 }
-                
+
                 match = (currentFactory, currentFlag);
             }
             // 2. Global lookup
@@ -93,8 +120,7 @@ public class TransformerPipelineBuilder
 
                 if (factory != currentFactory && currentFactory != null && currentOptions.Count > 0)
                 {
-                    Flush(currentFactory, currentOptions, pipeline);
-                    currentOptions.Clear();
+                    FlushCurrent();
                 }
 
                 currentFactory = factory;
@@ -127,20 +153,8 @@ public class TransformerPipelineBuilder
         }
 
         // Flush last
-        if (currentFactory != null && currentOptions.Count > 0)
-            Flush(currentFactory, currentOptions, pipeline);
+        FlushCurrent();
 
-        return pipeline;
-    }
-
-    private static void Flush(
-        IDataTransformerFactory factory,
-        List<(string Key, string Value)> options,
-        List<IDataTransformer> pipeline)
-    {
-        var instance = Activator.CreateInstance(factory.OptionsType)!;
-        TransformerArgsBinder.Bind(instance, options);
-        var transformer = factory.CreateFromOptions(instance);
-        if (transformer != null) pipeline.Add(transformer);
+        return groups;
     }
 }

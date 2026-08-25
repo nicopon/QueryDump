@@ -28,11 +28,17 @@ public static class JobFileWriter
 	}
 
 	/// <summary>
+	/// Serializes a dictionary of JobDefinitions (DAG) to YAML.
+	/// </summary>
+	public static string Serialize(Dictionary<string, DtPipe.Core.Models.JobDefinition> jobs)
+		=> Serializer.Serialize(jobs);
+
+	/// <summary>
 	/// Writes a dictionary of JobDefinitions (DAG) to a YAML file.
 	/// </summary>
 	public static void Write(string filePath, Dictionary<string, DtPipe.Core.Models.JobDefinition> jobs)
 	{
-		var yaml = Serializer.Serialize(jobs);
+		var yaml = Serialize(jobs);
 		File.WriteAllText(filePath, yaml);
 		Console.Error.WriteLine($"DAG configuration exported to: {filePath}");
 	}

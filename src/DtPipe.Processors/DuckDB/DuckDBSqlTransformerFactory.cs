@@ -32,6 +32,17 @@ public class DuckDBSqlTransformerFactory : IStreamTransformerFactory
         => BranchArgParser.ExtractValue(branchArgs, "--sql") != null ||
            (BranchArgParser.ExtractValue(branchArgs, "--from") != null && BranchArgParser.GetPositionalQuery(branchArgs) != null);
 
+    public Dictionary<string, object>? ExportToProviderOptions(string[] branchArgs)
+    {
+        var query = BranchArgParser.ExtractValue(branchArgs, "--sql") ?? BranchArgParser.GetPositionalQuery(branchArgs);
+        if (query == null) return null;
+
+        var options = new Dictionary<string, object> { ["query"] = query };
+        var initSql = BranchArgParser.ExtractValue(branchArgs, "--duck-init");
+        if (!string.IsNullOrEmpty(initSql)) options["duck-init"] = initSql;
+        return options;
+    }
+
     public IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider serviceProvider)
     {
         var query = BranchArgParser.ExtractValue(branchArgs, "--sql")

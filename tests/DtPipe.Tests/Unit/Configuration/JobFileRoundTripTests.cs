@@ -1,0 +1,224 @@
+using DtPipe.Cli.Infrastructure;
+using DtPipe.Cli.Pipeline;
+using DtPipe.Configuration;
+using DtPipe.Core.Abstractions;
+using DtPipe.Core.Models;
+using DtPipe.Core.Options;
+using DtPipe.Core.Pipelines;
+using DtPipe.Processors.Merge;
+using DtPipe.Processors.Sql;
+using Xunit;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace DtPipe.Tests.Unit.Configuration;
+
+/// <summary>
+/// F3 — --export-job round-trip invariant: CLI → YAML → re-parse produces a
+/// semantically identical pipeline (Input, Output, From/Ref, Transformers,
+/// ProviderOptions, engine fields).
+/// </summary>
+public class JobFileRoundTripTests
+{
+    private readonly PipelineLexer _lexer;
+
+    public JobFileRoundTripTests()
+    {
+        var registry = new FlagRegistry();
+        CoreFlagRegistry.RegisterCoreFlags(registry);
+        foreach (var def in new PipelineOptionsCliContributor().GetFlagDefs())
+            registry.Register(def with { Stage = FlagStage.All });
+
+        // Transformer triggers (pipeline stage)
+        registry.Register(new FlagDef("--fake", new[] { "-f" }, FlagArity.Repeatable, FlagScope.PerBranch, "fake transformer", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--fake-locale", System.Array.Empty<string>(), FlagArity.Scalar, FlagScope.PerBranch, "fake locale", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--filter", System.Array.Empty<string>(), FlagArity.Repeatable, FlagScope.PerBranch, "filter", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--sql", System.Array.Empty<string>(), FlagArity.Scalar, FlagScope.PerBranch, "sql processor", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--merge", System.Array.Empty<string>(), FlagArity.Boolean, FlagScope.PerBranch, "merge processor", FlagStage.Pipeline));
+
+        // CSV reader / writer flags (stage-scoped)
+        foreach (var def in CliOptionBuilder.GenerateFlagDefsForType(typeof(DtPipe.Adapters.Csv.CsvReaderOptions)))
+            registry.Register(def with { Stage = FlagStage.Reader });
+        foreach (var def in CliOptionBuilder.GenerateFlagDefsForType(typeof(DtPipe.Adapters.Csv.CsvWriterOptions)))
+            registry.Register(def with { Stage = FlagStage.Writer });
+
+        _lexer = new PipelineLexer(registry);
+    }
+
+    private static List<IDataTransformerFactory> TransformerFactories()
+    {
+        var registry = new OptionsRegistry();
+        return new List<IDataTransformerFactory>
+        {
+            new DtPipe.Transformers.Arrow.Fake.FakeDataTransformerFactory(registry),
+            new DtPipe.Transformers.Arrow.Filter.FilterDataTransformerFactory(registry, new DtPipe.Transformers.Services.JsEngineProvider()),
+        };
+    }
+
+    private Dictionary<string, JobDefinition> RoundTrip(string[] cliArgs, out ParsedPipeline parsed)
+    {
+        parsed = _lexer.Parse(cliArgs);
+        var converted = PipelineToJobConverter.Convert(
+            parsed,
+            streamTransformerFactories: new IStreamTransformerFactory[] { new CompositeSqlTransformerFactory(), new MergeTransformerFactory() },
+            secretsManager: null,
+            readerFactories: new IStreamReaderFactory[] { new StubCsvReaderFactory() },
+            writerFactories: new IDataWriterFactory[] { new StubCsvWriterFactory() },
+            dataTransformerFactories: TransformerFactories());
+
+        var yaml = JobFileWriter.Serialize(converted.Jobs);
+        return JobFileParser.ParseContent(yaml);
+    }
+
+    private sealed class StubCsvReaderFactory : IStreamReaderFactory
+    {
+        public string ComponentName => "csv";
+        public string Category => "Readers";
+        public Type OptionsType => typeof(DtPipe.Adapters.Csv.CsvReaderOptions);
+        public bool CanHandle(string connectionString) => connectionString.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+        public IStreamReader Create(OptionsRegistry registry) => throw new NotSupportedException();
+        public IEnumerable<Type> GetSupportedOptionTypes() => new[] { OptionsType };
+        public bool RequiresQuery => false;
+    }
+
+    private sealed class StubCsvWriterFactory : IDataWriterFactory
+    {
+        public string ComponentName => "csv";
+        public string Category => "Writers";
+        public Type OptionsType => typeof(DtPipe.Adapters.Csv.CsvWriterOptions);
+        public bool CanHandle(string connectionString) => connectionString.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+        public IDataWriter Create(OptionsRegistry registry) => throw new NotSupportedException();
+        public IEnumerable<Type> GetSupportedOptionTypes() => new[] { OptionsType };
+    }
+
+    // ── (a) linear --fake + --filter ─────────────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_Linear_Fake_And_Filter()
+    {
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "generate:10",
+            "--fake", "NAME:name.firstName", "--fake-locale", "fr",
+            "--filter", "row.Age > 21",
+            "-o", "out.csv",
+        }, out _);
+
+        var job = reparsed["main"];
+        Assert.NotNull(job.Transformers);
+        Assert.Equal(2, job.Transformers!.Count);
+
+        var fake = job.Transformers[0];
+        Assert.Equal("fake", fake.Type);
+        Assert.NotNull(fake.Mappings);
+        Assert.Equal("name.firstName", fake.Mappings!["NAME"]);
+        Assert.NotNull(fake.Options);
+        Assert.Equal("fr", fake.Options!["locale"]);
+
+        var filter = job.Transformers[1];
+        Assert.Equal("filter", filter.Type);
+        Assert.NotNull(filter.Mappings);
+        Assert.True(filter.Mappings!.ContainsKey("row.Age > 21"));
+        Assert.Equal("", filter.Mappings["row.Age > 21"]);
+    }
+
+    // ── (b) DAG --merge ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_Dag_Merge_PreservesProcessorAndFrom()
+    {
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "generate:5", "--alias", "a",
+            "-i", "generate:5", "--alias", "b",
+            "--from", "a,b", "--merge", "-o", "merged.csv",
+        }, out var parsed);
+
+        Assert.True(parsed.Globals.AllFlags.ContainsKey("--merge"));
+
+        var mergeBranch = reparsed.Values.First(j => j.ProviderOptions?.ContainsKey("merge") == true);
+        Assert.Equal("a,b", mergeBranch.From);
+        Assert.Null(mergeBranch.Transformers);
+    }
+
+    // ── (c) DAG --sql + --fake on the processor branch ───────────────────────
+
+    [Fact]
+    public void RoundTrip_Dag_Sql_WithFake_PreservesQueryAndTransformer()
+    {
+        const string query = "SELECT * FROM src WHERE Id > 1";
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "generate:100", "--alias", "src",
+            "--from", "src", "--sql", query, "--fake", "Id:random.number",
+            "-o", "processed.csv",
+        }, out _);
+
+        var sqlBranch = reparsed.Values.First(j => j.ProviderOptions?.ContainsKey("sql") == true);
+        Assert.Equal(query, sqlBranch.ProviderOptions!["sql"]["query"]);
+        Assert.Equal("src", sqlBranch.From);
+
+        Assert.NotNull(sqlBranch.Transformers);
+        var fake = Assert.Single(sqlBranch.Transformers!);
+        Assert.Equal("fake", fake.Type);
+        Assert.Equal("random.number", fake.Mappings!["Id"]);
+    }
+
+    // ── (d) incremental --cursor/--state ─────────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_Incremental_CursorState()
+    {
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "events.csv", "--cursor", "Id", "--state", "state.json",
+            "-o", "out.csv",
+        }, out _);
+
+        var job = reparsed["main"];
+        Assert.Equal("Id", job.Cursor);
+        Assert.Equal("state.json", job.State);
+    }
+
+    // ── (e) provider scoping: reader vs writer csv options ───────────────────
+
+    [Fact]
+    public void RoundTrip_ProviderScoping_ReaderAndWriterSeparate()
+    {
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "in.csv", "--csv-separator", ";",
+            "-o", "out.csv", "--csv-separator", "|", "--csv-decimal-separator", ",",
+        }, out _);
+
+        var job = reparsed["main"];
+        Assert.NotNull(job.ProviderOptions);
+
+        var readerOpts = job.ProviderOptions!["csv"];
+        Assert.Equal(";", readerOpts["separator"]);
+        Assert.False(readerOpts.ContainsKey("decimal-separator"));
+
+        var writerOpts = job.ProviderOptions!["csv-writer"];
+        Assert.Equal("|", writerOpts["separator"]);
+        Assert.Equal(",", writerOpts["decimal-separator"]);
+    }
+
+    // ── semantic equality of engine fields ───────────────────────────────────
+
+    [Fact]
+    public void RoundTrip_EngineFields_Preserved()
+    {
+        var reparsed = RoundTrip(new[]
+        {
+            "-i", "in.csv", "--limit", "42", "--batch-size", "500",
+            "--sampling-rate", "0.5", "--sampling-seed", "7",
+            "-o", "out.csv",
+        }, out _);
+
+        var job = reparsed["main"];
+        Assert.Equal(42, job.Limit);
+        Assert.Equal(500, job.BatchSize);
+        Assert.Equal(0.5, job.SamplingRate);
+        Assert.Equal(7, job.SamplingSeed);
+    }
+}

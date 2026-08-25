@@ -27,6 +27,9 @@ public class MergeTransformerFactory : IStreamTransformerFactory
     public bool IsApplicable(string[] branchArgs)
         => branchArgs.Any(a => a.Equals("--merge", StringComparison.OrdinalIgnoreCase));
 
+    public Dictionary<string, object>? ExportToProviderOptions(string[] branchArgs)
+        => IsApplicable(branchArgs) ? new Dictionary<string, object>() : null;
+
     public IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider serviceProvider)
     {
         var fromValue = BranchArgParser.ExtractValue(branchArgs, "--from")

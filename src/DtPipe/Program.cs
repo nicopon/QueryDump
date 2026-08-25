@@ -90,11 +90,20 @@ class Program
 			// 4. Pipeline Execution (New Parser)
 			var registry = FlagRegistryFactory.Build(serviceProvider);
 			var streamTransformerFactories = serviceProvider.GetRequiredService<IEnumerable<IStreamTransformerFactory>>();
+			var readerFactories = serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>();
+			var writerFactories = serviceProvider.GetRequiredService<IEnumerable<IDataWriterFactory>>();
+			var dataTransformerFactories = serviceProvider.GetRequiredService<IEnumerable<IDataTransformerFactory>>();
 
 			var lexer = new PipelineLexer(registry);
 			var parsedPipeline = lexer.Parse(args);
 			var secretsManager = serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>();
-			var (jobs, dag, contexts) = PipelineToJobConverter.Convert(parsedPipeline, streamTransformerFactories, secretsManager);
+			var (jobs, dag, contexts) = PipelineToJobConverter.Convert(
+				parsedPipeline,
+				streamTransformerFactories,
+				secretsManager,
+				readerFactories,
+				writerFactories,
+				dataTransformerFactories);
 
 			if (!string.IsNullOrEmpty(parsedPipeline.Globals.ExportJobFile))
 			{
