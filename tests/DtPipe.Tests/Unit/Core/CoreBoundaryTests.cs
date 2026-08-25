@@ -28,12 +28,15 @@ public class CoreBoundaryTests
     [Fact]
     public void Core_Assembly_Keeps_Engine_Contracts()
     {
-        var core = typeof(DtPipe.Core.Options.OptionsRegistry).Assembly;
-
-        Assert.NotNull(core.GetType("DtPipe.Core.Abstractions.Dag.IDagOrchestrator"));
-        Assert.NotNull(core.GetType("DtPipe.Core.Pipelines.Dag.IMemoryChannelRegistry"));
-        Assert.NotNull(core.GetType("DtPipe.Core.Abstractions.IStreamReader"));
-        Assert.NotNull(core.GetType("DtPipe.Core.Abstractions.ISqlDialect")); // abstraction stays
+        // Engine contracts remain in Core (compile-time references double as the check).
+        Assert.NotNull(typeof(DtPipe.Core.Abstractions.Dag.IDagOrchestrator));
+        Assert.NotNull(typeof(DtPipe.Core.Abstractions.Dag.IMemoryChannelRegistry));
+        Assert.NotNull(typeof(DtPipe.Core.Abstractions.IStreamReader));
+        Assert.NotNull(typeof(DtPipe.Core.Abstractions.ISqlDialect)); // abstraction stays
         Assert.NotNull(typeof(DtPipe.Core.Models.Branch));
+
+        // …and they live in the Core assembly, not elsewhere.
+        Assert.Equal(typeof(DtPipe.Core.Options.OptionsRegistry).Assembly, typeof(DtPipe.Core.Abstractions.Dag.IDagOrchestrator).Assembly);
+        Assert.Equal(typeof(DtPipe.Core.Options.OptionsRegistry).Assembly, typeof(DtPipe.Core.Models.Branch).Assembly);
     }
 }
