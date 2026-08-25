@@ -11,7 +11,7 @@ namespace DtPipe.Adapters.PostgreSQL;
 	examples: new[] {
 		"main:\n  input: \"orders.parquet\"\n  output: \"pg:Host=localhost;Database=prod;Username=postgres\"\n  provider-options:\n    pg-writer:\n      table: \"public.orders\"\n      strategy: \"Upsert\"\n      key: \"order_id\""
 	})]
-public class PostgreSqlWriterOptions : DbWriterOptions, IWriterOptions
+public class PostgreSqlWriterOptions : DbWriterOptions, IWriterOptions, ITableAwareOptions
 {
 	public static string Prefix => PostgreSqlConstants.ProviderName;
 	public static string DisplayName => "PostgreSQL Writer Options";

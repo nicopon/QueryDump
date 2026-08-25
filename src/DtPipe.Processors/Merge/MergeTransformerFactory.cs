@@ -11,7 +11,7 @@ namespace DtPipe.Processors.Merge;
 /// Activated when branch arguments contain the boolean flag <c>--merge</c> (no value).
 /// Streaming sources are declared via <c>--from a,b,c</c> (comma-separated).
 /// </summary>
-public class MergeTransformerFactory : IStreamTransformerFactory
+public class MergeTransformerFactory : IStreamTransformerFactory, IStreamProcessorMarker
 {
     public string ComponentName => "merge";
     public string Category => "Stream Processors";

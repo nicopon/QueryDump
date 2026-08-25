@@ -304,47 +304,51 @@ class Program
 		services.AddSingleton<DtPipe.Core.Expressions.IStringInterpolator, DtPipe.Cli.Security.KeyringInterpolator>();
 		services.AddSingleton<DtPipe.Core.Expressions.IStringInterpolator, DtPipe.Cli.Incremental.CursorInterpolator>();
 
-		RegisterReader<DtPipe.Adapters.Arrow.ArrowReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Csv.CsvReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.DuckDB.DuckDbReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Generate.GenerateReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.JsonL.JsonLReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.MemoryChannel.ArrowMemoryChannelReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.MemoryChannel.MemoryChannelReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Oracle.OracleReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Parquet.ParquetReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.PostgreSQL.PostgreSqlReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Sqlite.SqliteReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.SqlServer.SqlServerReaderDescriptor>(services);
-		RegisterReader<DtPipe.Adapters.Xml.XmlReaderDescriptor>(services);
+		// F13 — deterministic component discovery replaces the manual registration list.
+		var catalog = ComponentCatalog.Discover(
+			typeof(Program).Assembly,
+			typeof(DtPipe.Adapters.Csv.CsvReaderDescriptor).Assembly,
+			typeof(DtPipe.Processors.Sql.CompositeSqlTransformerFactory).Assembly,
+			typeof(DtPipe.Transformers.Services.JsEngineProvider).Assembly);
+		catalog.Validate();
+		if (Environment.GetEnvironmentVariable("DTPIPE_DEBUG_CATALOG") == "1")
+		{
+			Console.Error.WriteLine($"[catalog] readers={catalog.Readers.Count} writers={catalog.Writers.Count} stream={catalog.StreamTransformers.Count} transformers={catalog.Transformers.Count}");
+		}
 
-		RegisterWriter<DtPipe.Adapters.Arrow.ArrowWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.Checksum.ChecksumWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.Csv.CsvWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.DuckDB.DuckDbWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.JsonL.JsonLWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.MemoryChannel.ArrowMemoryChannelWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.MemoryChannel.MemoryChannelWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.Null.NullDataWriterFactory>(services);
-		RegisterWriter<DtPipe.Adapters.Oracle.OracleWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.Parquet.ParquetWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.PostgreSQL.PostgreSqlWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.Sqlite.SqliteWriterDescriptor>(services);
-		RegisterWriter<DtPipe.Adapters.SqlServer.SqlServerWriterDescriptor>(services);
+		foreach (var entry in catalog.Readers)
+		{
+			var type = entry.ImplementationType;
+			services.AddSingleton<IStreamReaderFactory>(sp => new CliStreamReaderFactory(
+				(IProviderDescriptor<IStreamReader>)Activator.CreateInstance(type)!,
+				sp.GetRequiredService<OptionsRegistry>(), sp));
+			services.AddSingleton<ICliContributor>(sp =>
+				(ICliContributor)sp.GetServices<IStreamReaderFactory>().First(f => f.ComponentName == entry.ComponentName));
+		}
 
-		RegisterStreamTransformer<DtPipe.Processors.Sql.CompositeSqlTransformerFactory>(services);
-		RegisterStreamTransformer<DtPipe.Processors.Merge.MergeTransformerFactory>(services);
+		foreach (var entry in catalog.Writers)
+		{
+			var type = entry.ImplementationType;
+			services.AddSingleton<IDataWriterFactory>(sp => new CliDataWriterFactory(
+				(IProviderDescriptor<IDataWriter>)Activator.CreateInstance(type)!,
+				sp.GetRequiredService<OptionsRegistry>(), sp));
+			services.AddSingleton<ICliContributor>(sp =>
+				(ICliContributor)sp.GetServices<IDataWriterFactory>().First(f => f.ComponentName == entry.ComponentName));
+		}
 
-		RegisterTransformer<NullDataTransformerFactory>(services);
-		RegisterTransformer<OverwriteDataTransformerFactory>(services);
-		RegisterTransformer<FakeDataTransformerFactory>(services);
-		RegisterTransformer<FormatDataTransformerFactory>(services);
-		RegisterTransformer<MaskDataTransformerFactory>(services);
-		RegisterTransformer<ComputeDataTransformerFactory>(services);
-		RegisterTransformer<FilterDataTransformerFactory>(services);
-		RegisterTransformer<ExpandDataTransformerFactory>(services);
-		RegisterTransformer<ProjectDataTransformerFactory>(services);
-		RegisterTransformer<WindowDataTransformerFactory>(services);
+		foreach (var entry in catalog.StreamTransformers)
+		{
+			var type = entry.ImplementationType;
+			services.AddSingleton<IStreamTransformerFactory>(sp =>
+				(IStreamTransformerFactory)ActivatorUtilities.CreateInstance(sp, type));
+		}
+
+		foreach (var entry in catalog.Transformers)
+		{
+			var type = entry.ImplementationType;
+			services.AddSingleton<IDataTransformerFactory>(sp =>
+				new CliDataTransformerFactory((IDataTransformerFactory)ActivatorUtilities.CreateInstance(sp, type)));
+		}
 
 		services.AddSingleton<IJsEngineProvider, JsEngineProvider>();
 		services.AddSingleton<IExportObserver, SpectreConsoleObserver>();
@@ -372,21 +376,10 @@ class Program
 		        .WithTools<DtPipe.Cli.Mcp.DtPipeMcpTools>();
 	}
 
-	private static void RegisterStreamTransformer<TFac>(IServiceCollection services) where TFac : class, IStreamTransformerFactory => services.AddSingleton<IStreamTransformerFactory>(sp => ActivatorUtilities.CreateInstance<TFac>(sp));
-	private static void RegisterWriter<TDesc>(IServiceCollection services) where TDesc : class, IProviderDescriptor<IDataWriter>, new()
-	{
-		var descriptor = new TDesc();
-		services.AddSingleton<IDataWriterFactory>(sp => new CliDataWriterFactory(descriptor, sp.GetRequiredService<OptionsRegistry>(), sp));
-		services.AddSingleton<ICliContributor>(sp => (ICliContributor)sp.GetServices<IDataWriterFactory>().First(f => f.ComponentName == descriptor.ComponentName));
-	}
 	private static void RegisterReader<TDesc>(IServiceCollection services) where TDesc : class, IProviderDescriptor<IStreamReader>, new()
 	{
 		var descriptor = new TDesc();
 		services.AddSingleton<IStreamReaderFactory>(sp => new CliStreamReaderFactory(descriptor, sp.GetRequiredService<OptionsRegistry>(), sp));
 		services.AddSingleton<ICliContributor>(sp => (ICliContributor)sp.GetServices<IStreamReaderFactory>().First(f => f.ComponentName == descriptor.ComponentName));
-	}
-	private static void RegisterTransformer<TFac>(IServiceCollection services) where TFac : class, IDataTransformerFactory 
-	{
-		services.AddSingleton<IDataTransformerFactory>(sp => new CliDataTransformerFactory(ActivatorUtilities.CreateInstance<TFac>(sp)));
 	}
 }

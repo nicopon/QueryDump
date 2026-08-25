@@ -11,7 +11,7 @@ namespace DtPipe.Adapters.Oracle;
 	examples: new[] {
 		"main:\n  input: \"orders.parquet\"\n  output: \"ora:Data Source=PROD:1521/orcl;User Id=scott;Password=tiger\"\n  provider-options:\n    ora-writer:\n      table: \"sales.orders\"\n      strategy: \"Upsert\"\n      key: \"order_id\""
 	})]
-public class OracleWriterOptions : DbWriterOptions, IProviderOptions
+public class OracleWriterOptions : DbWriterOptions, IProviderOptions, ITableAwareOptions
 {
 	public static string Prefix => OracleConstants.ProviderName;
 	public static string DisplayName => "Oracle Writer Options";

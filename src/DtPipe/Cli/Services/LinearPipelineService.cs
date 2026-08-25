@@ -216,7 +216,7 @@ public class LinearPipelineService
             if (readerOpts != null && string.IsNullOrWhiteSpace(readerOpts.Query))
             {
                 // 1. Reader's own --table (e.g. DuckDB reader: --table source_table)
-                var readerTable = readerOpts.GetType().GetProperty("Table")?.GetValue(readerOpts) as string;
+                var readerTable = (readerOpts as ITableAwareOptions)?.Table;
                 if (!string.IsNullOrWhiteSpace(readerTable))
                 {
                     readerOpts.Query = $"SELECT * FROM \"{readerTable}\"";
@@ -225,7 +225,7 @@ public class LinearPipelineService
                 {
                     // 2. Writer's --table (same-name read/write)
                     var writerOpts = writerFactory != null ? _optionsRegistry.Get(writerFactory.OptionsType) : null;
-                    var tableVal = writerOpts?.GetType().GetProperty("Table")?.GetValue(writerOpts) as string;
+                    var tableVal = (writerOpts as ITableAwareOptions)?.Table;
                     if (!string.IsNullOrWhiteSpace(tableVal))
                         readerOpts.Query = $"SELECT * FROM \"{tableVal}\"";
                 }

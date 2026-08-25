@@ -69,15 +69,11 @@ public class CliDataWriterFactory : CliProviderFactory<IDataWriter>, IDataWriter
 		var specificOptions = registry.Get(_descriptor.OptionsType);
 		var route = registry.Get<ConnectionRoute>();
 
-		// Validate that a target table was provided (OptionBinder set it from --table; YAML path via MapProcessorProperties)
-		var tableProp = specificOptions.GetType().GetProperty("Table");
-		if (tableProp != null)
+		// Validate that a target table was provided (OptionBinder set it from --table; YAML path via provider-options).
+		// F13: typed capability instead of GetProperty("Table") reflection.
+		if (specificOptions is ITableAwareOptions tableOpts && string.IsNullOrWhiteSpace(tableOpts.Table))
 		{
-			var tableValue = tableProp.GetValue(specificOptions) as string;
-			if (string.IsNullOrWhiteSpace(tableValue))
-			{
-				throw new InvalidOperationException($"A target table is required for provider '{_descriptor.ComponentName}'. Use --table \"[name]\"");
-			}
+			throw new InvalidOperationException($"A target table is required for provider '{_descriptor.ComponentName}'. Use --table \"[name]\"");
 		}
 
 		return _descriptor.Create(route?.Output ?? "", specificOptions, _serviceProvider);

@@ -9,7 +9,7 @@ using DtPipe.Core.Pipelines.Dag;
 /// Provides standard SQL, richer function library, no build step, and queries testable
 /// outside DtPipe. Recommended for all typical ETL/transformation use cases.
 /// </summary>
-public class CompositeSqlTransformerFactory : IStreamTransformerFactory
+public class CompositeSqlTransformerFactory : IStreamTransformerFactory, IStreamProcessorMarker
 {
     public string ComponentName => "sql";
     public string Category => "Stream Processors";

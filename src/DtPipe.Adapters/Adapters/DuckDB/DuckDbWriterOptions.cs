@@ -11,7 +11,7 @@ namespace DtPipe.Adapters.DuckDB;
 	examples: new[] {
 		"main:\n  input: \"sales.parquet\"\n  output: \"duck:warehouse.duckdb\"\n  provider-options:\n    duck-writer:\n      table: \"sales\"\n      strategy: \"Append\"\n      duck-init: \"LOAD azure; SET azure_storage_connection_string='${{keyring://azure-init}}';\""
 	})]
-public class DuckDbWriterOptions : DbWriterOptions, IProviderOptions
+public class DuckDbWriterOptions : DbWriterOptions, IProviderOptions, ITableAwareOptions
 {
 	public static string Prefix => DuckDbConstants.ProviderName;
 	public static string DisplayName => "DuckDB Writer Options";

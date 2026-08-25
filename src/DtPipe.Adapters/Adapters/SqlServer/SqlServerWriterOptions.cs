@@ -11,7 +11,7 @@ namespace DtPipe.Adapters.SqlServer;
 	examples: new[] {
 		"main:\n  input: \"orders.csv\"\n  output: \"mssql:Server=.;Database=mydb;User Id=sa;Password=pass;TrustServerCertificate=True\"\n  provider-options:\n    mssql-writer:\n      table: \"dbo.Orders\"\n      strategy: \"Upsert\"\n      key: \"OrderId\""
 	})]
-public class SqlServerWriterOptions : DbWriterOptions, IProviderOptions
+public class SqlServerWriterOptions : DbWriterOptions, IProviderOptions, ITableAwareOptions
 {
 	public static string Prefix => SqlServerConstants.ProviderName;
 	public static string DisplayName => "SQL Server Writer Options";

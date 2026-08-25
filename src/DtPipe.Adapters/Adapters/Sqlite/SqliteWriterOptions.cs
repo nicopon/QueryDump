@@ -11,7 +11,7 @@ namespace DtPipe.Adapters.Sqlite;
 	examples: new[] {
 		"main:\n  input: \"orders.parquet\"\n  output: \"sqlite:Data Source=business.db\"\n  provider-options:\n    sqlite-writer:\n      table: \"orders\"\n      strategy: \"Upsert\"\n      key: \"id\""
 	})]
-public class SqliteWriterOptions : DbWriterOptions, IOptionSet
+public class SqliteWriterOptions : DbWriterOptions, IOptionSet, ITableAwareOptions
 {
 	public static string Prefix => "sqlite";
 	public static string DisplayName => "SQLite Writer";
