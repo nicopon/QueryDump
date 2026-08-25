@@ -113,7 +113,12 @@ Not all mechanisms are available in every context:
 | YAML job files (all values) | — | — | ✅ | ✅ | ✅ |
 
 > [!IMPORTANT]
-> **YAML Interpolation**: In YAML job files, `${{ENV_VAR}}` and `${{keyring://...}}` interpolations are applied to the raw YAML text *before* parsing, meaning they work on **all** values (including configuration properties that aren't normally resolved, like `batch-size` or `separator`).
+> **YAML Interpolation**: In YAML job files, `${{ENV_VAR}}`, `${{keyring://...}}` and
+> `${{cursor://...}}` interpolations run through the same resolver engine as the CLI
+> (env → keyring → cursor, in that order) and are applied to the raw YAML text *before*
+> parsing — so they work on **all** values (including configuration properties that aren't
+> normally resolved, like `batch-size` or `separator`). Unresolved variables are left
+> verbatim in the text.
 > Full-value replacement (`@file` and `keyring://alias` without braces) only works for specific string fields that pass through the CLI resolver (connection strings, queries, hooks, and transformer scripts).
 
 ### Examples

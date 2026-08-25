@@ -95,63 +95,22 @@ public static partial class JobFileParser
 	}
 
 	/// <summary>
-	/// Interpolates ${{VAR}} patterns with environment variable values or keyring secrets.
+	/// Interpolates ${{VAR}} patterns through the canonical resolver chain (F11):
+	/// env → keyring → cursor, exactly the engine used for CLI connection strings.
+	/// The compiled regex stays only as the matcher for ${{...}} tokens.
 	/// </summary>
 	internal static string InterpolateVariables(string content, DtPipe.Cli.Security.ISecretsManager? secretsManager)
 	{
-		return EnvVarPattern().Replace(content, match =>
+		var interpolators = new List<DtPipe.Core.Expressions.IStringInterpolator>
 		{
-			var innerValue = match.Groups[1].Value.Trim();
+			new DtPipe.Cli.Incremental.CursorInterpolator(),
+		};
+		if (secretsManager != null)
+			interpolators.Insert(0, new DtPipe.Cli.Security.KeyringInterpolator(secretsManager));
+		interpolators.Add(new DtPipe.Cli.Expressions.EnvVarInterpolator());
 
-			if (innerValue.StartsWith("keyring://", StringComparison.OrdinalIgnoreCase))
-			{
-				if (secretsManager != null)
-				{
-					try
-					{
-						var alias = innerValue["keyring://".Length..];
-						var secretValue = secretsManager.GetSecret(alias);
-						return secretValue ?? match.Value;
-					}
-					catch (Exception ex)
-					{
-						Console.Error.WriteLine($"Warning: Failed to resolve secret '{innerValue}': {ex.Message}");
-						return match.Value;
-					}
-				}
-				else
-				{
-					Console.Error.WriteLine($"Warning: Secret resolution requested for '{innerValue}' but no secrets manager is configured.");
-					return match.Value;
-				}
-			}
-
-			if (innerValue.StartsWith("cursor://", StringComparison.OrdinalIgnoreCase))
-			{
-				var envOverride = Environment.GetEnvironmentVariable("DTPIPE_CURSOR_OVERRIDE");
-				if (!string.IsNullOrEmpty(envOverride))
-				{
-					return envOverride;
-				}
-
-				var cursorExpr = innerValue["cursor://".Length..];
-				var cursorParts = cursorExpr.Split('|', 2);
-				var cursorPath = cursorParts[0].Trim();
-				var cursorDefault = cursorParts.Length > 1 ? cursorParts[1].Trim() : "";
-				var cursorValue = DtPipe.Core.Cursor.CursorStateStore.Read(cursorPath);
-				return cursorValue?.Value ?? cursorDefault;
-			}
-
-			var envValue = Environment.GetEnvironmentVariable(innerValue);
-
-			if (envValue is null)
-			{
-				Console.Error.WriteLine($"Warning: Environment variable '{innerValue}' is not set.");
-				return match.Value; // Keep original if not found
-			}
-
-			return envValue;
-		});
+		var resolver = new DtPipe.Cli.Expressions.CompositeStringContentResolver(interpolators);
+		return resolver.ResolveAsync(content).GetAwaiter().GetResult() ?? content;
 	}
 
 	private static List<TransformerConfig>? ParseTransformers(List<System.Collections.IDictionary>? transformers)

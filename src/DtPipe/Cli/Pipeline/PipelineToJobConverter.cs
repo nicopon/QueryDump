@@ -99,11 +99,17 @@ public static class PipelineToJobConverter
         var jobs = JobFileParser.Parse(parsed.Globals.JobFile!, secretsManager);
         var flags = parsed.Globals.AllFlags;
 
-        // Apply CLI overrides to all loaded jobs
+        // Apply CLI overrides to all loaded jobs — driven by EngineOverrideFlags.All
+        // (F11 single source), preserving the historical >0/non-empty guard semantics.
         int? limitOverride = GetInt(flags, "--limit");
         int? batchOverride = GetInt(flags, "--batch-size", "-b");
         string? logOverride = GetString(flags, "--log");
         string? metricsOverride = GetString(flags, "--metrics-path");
+        string? prefixOverride = GetString(flags, "--prefix", "-p");
+        string? cursorOverride = GetString(flags, "--cursor");
+        string? stateOverride = GetString(flags, "--state");
+        double? samplingRateOverride = GetDouble(flags, "--sampling-rate", "--sample-rate");
+        int? samplingSeedOverride = GetNullableInt(flags, "--sampling-seed", "--sample-seed");
 
         foreach (var alias in jobs.Keys.ToList())
         {
@@ -113,6 +119,11 @@ public static class PipelineToJobConverter
             if (batchOverride is > 0)           job = job with { BatchSize = batchOverride.Value };
             if (!string.IsNullOrEmpty(logOverride))     job = job with { LogPath = logOverride };
             if (!string.IsNullOrEmpty(metricsOverride)) job = job with { MetricsPath = metricsOverride };
+            if (!string.IsNullOrEmpty(prefixOverride))  job = job with { Prefix = prefixOverride };
+            if (!string.IsNullOrEmpty(cursorOverride))  job = job with { Cursor = cursorOverride };
+            if (!string.IsNullOrEmpty(stateOverride))   job = job with { State = stateOverride };
+            if (samplingRateOverride is > 0)    job = job with { SamplingRate = samplingRateOverride.Value };
+            if (samplingSeedOverride.HasValue)  job = job with { SamplingSeed = samplingSeedOverride.Value };
             jobs[alias] = job;
         }
 

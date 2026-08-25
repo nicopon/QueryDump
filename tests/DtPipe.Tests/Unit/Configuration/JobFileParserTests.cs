@@ -367,3 +367,32 @@ public class YamlCliParityTests
 		};
 	}
 }
+
+public class InterpolationUnificationTests
+{
+    /// <summary>F11 — YAML interpolation routes through the canonical resolver chain (env).</summary>
+    [Fact]
+    public void Env_Interpolation_Routes_Through_Resolver()
+    {
+        Environment.SetEnvironmentVariable("DTPIPE_TEST_INTERP_VAR", "resolved.csv");
+        try
+        {
+            var yaml = "main:\n  input: ${{DTPIPE_TEST_INTERP_VAR}}\n  output: out.csv\n";
+            var jobs = JobFileParser.ParseContent(yaml);
+            Assert.Equal("resolved.csv", jobs["main"].Input);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DTPIPE_TEST_INTERP_VAR", null);
+        }
+    }
+
+    /// <summary>F11 — unknown variables are left verbatim (composite semantics).</summary>
+    [Fact]
+    public void Unknown_Var_Left_Verbatim()
+    {
+        var yaml = "main:\n  input: ${{DTPIPE_DEFINITELY_UNSET_VAR_42}}\n  output: out.csv\n";
+        var jobs = JobFileParser.ParseContent(yaml);
+        Assert.Equal("${{DTPIPE_DEFINITELY_UNSET_VAR_42}}", jobs["main"].Input);
+    }
+}

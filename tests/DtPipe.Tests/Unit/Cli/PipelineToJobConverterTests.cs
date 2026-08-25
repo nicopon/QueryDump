@@ -83,3 +83,22 @@ public class PipelineToJobConverterTests
         Assert.Equal("stream2", dag.Branches[1].Alias);
     }
 }
+
+/// <summary>
+/// F11 — EngineOverrideFlags is the single source consumed by both the job-file override
+/// pass and engine-settings derivation; the two flag sets must be identical.
+/// </summary>
+public class EngineOverrideFlagsParityTests
+{
+    [Fact]
+    public void Override_List_Covers_Engine_Settings_Flags()
+    {
+        var expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "--limit", "--batch-size", "-b", "--log", "--metrics-path",
+            "--cursor", "--state", "--sampling-rate", "--sampling-seed",
+            "--prefix", "--dry-run",
+        };
+        Assert.Superset(expected, DtPipe.Cli.Pipeline.EngineOverrideFlags.All.ToHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+}
