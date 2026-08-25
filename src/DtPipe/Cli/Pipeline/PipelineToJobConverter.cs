@@ -231,20 +231,25 @@ public static class PipelineToJobConverter
 
         var result = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
 
+        // When a reader and a writer share the same component name (csv, jsonl…), the plain
+        // key would be consumed by BOTH at load time — suffix both entries explicitly.
         var readerFactory = ResolveFactory(input, readerFactories);
-        if (readerFactory != null && readerArgs is { Length: > 0 })
-        {
-            var entry = BindToOptionDictionary(readerFactory.OptionsType, readerArgs, readerFactory.ComponentName);
-            if (entry is { Count: > 0 })
-                result[readerFactory.ComponentName] = entry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
-        }
+        var readerKey = readerFactory?.ComponentName;
+        if (readerFactory != null && writerFactories?.Any(w => w.ComponentName.Equals(readerFactory.ComponentName, StringComparison.OrdinalIgnoreCase)) == true)
+            readerKey += "-reader";
 
-        var writerFactory = ResolveFactory(output, writerFactories);
-        if (writerFactory != null && writerArgs is { Length: > 0 })
+        var writerFactory2 = ResolveFactory(output, writerFactories);
+        var readerEntry = readerFactory != null && readerArgs is { Length: > 0 }
+            ? BindToOptionDictionary(readerFactory.OptionsType, readerArgs, readerFactory.ComponentName)
+            : null;
+        if (readerFactory != null && readerEntry is { Count: > 0 } && readerKey != null)
+            result[readerKey] = readerEntry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+
+        if (writerFactory2 != null && writerArgs is { Length: > 0 })
         {
-            var entry = BindToOptionDictionary(writerFactory.OptionsType, writerArgs, writerFactory.ComponentName);
+            var entry = BindToOptionDictionary(writerFactory2.OptionsType, writerArgs, writerFactory2.ComponentName);
             if (entry is { Count: > 0 })
-                result[writerFactory.ComponentName + "-writer"] = entry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+                result[writerFactory2.ComponentName + "-writer"] = entry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
         }
 
         if (processor != null && branchRawArgs != null)

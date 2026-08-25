@@ -171,6 +171,33 @@ public class JobService
 				_console.WriteLine();
 
 				var mainContext = contexts.Values.FirstOrDefault();
+
+				// P1-8: the linear path goes through DagOrchestrator too — a single-branch
+				// DAG gives uniform cancellation, channel wiring and exit-code semantics.
+				// Jobs without an output (validation-only mode) keep the direct path.
+				if (!string.IsNullOrEmpty(mainJob.Output))
+				{
+					var linearDag = new JobDagDefinition
+					{
+						Branches = new[]
+						{
+							new BranchDefinition
+							{
+								Alias = "main",
+								Input = mainJob.Input,
+								Output = mainJob.Output,
+								Arguments = Array.Empty<string>()
+							}
+						}
+					};
+					var orchestrator = _serviceProvider.GetRequiredService<IDagOrchestrator>();
+
+					Func<BranchDefinition, BranchChannelContext, CancellationToken, Task<int>> linearExecutor =
+						(_, branchCtx, token) => RunSingleJobAsync(mainJob, mainContext, "main", isDag: false, branchCtx, null, token, globals, userCts.Token);
+
+					return await orchestrator.ExecuteAsync(linearDag, linearExecutor, ct);
+				}
+
 				return await RunSingleJobAsync(mainJob, mainContext, null, false, null, null, ct, globals, userCts.Token);
 			}
 		}

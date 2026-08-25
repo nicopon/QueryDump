@@ -194,7 +194,7 @@ public class JobFileRoundTripTests
         var job = reparsed["main"];
         Assert.NotNull(job.ProviderOptions);
 
-        var readerOpts = job.ProviderOptions!["csv"];
+        var readerOpts = job.ProviderOptions!["csv-reader"]; // shared component name → suffixed
         Assert.Equal(";", readerOpts["separator"]);
         Assert.False(readerOpts.ContainsKey("decimal-separator"));
 
