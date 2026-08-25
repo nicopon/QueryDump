@@ -3,33 +3,28 @@ using DtPipe.Core.Options;
 
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Null;
 
-public class NullDataTransformerFactory : IDataTransformerFactory
+public class NullDataTransformerFactory : TransformerFactoryBase<NullOptions>
 {
+
+	public override string ComponentName => "null";
 	private readonly OptionsRegistry _registry;
 
-	public NullDataTransformerFactory(OptionsRegistry registry)
-	{
-		_registry = registry;
-	}
+	public NullDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
-	public string ComponentName => "null";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Null.NullOptions);
+	public override string Category => "Transformers";
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is NullOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Null.NullOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(NullOptions options)
 	{
 		return new NullDataTransformer(options);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var options = new DtPipe.Transformers.Arrow.Null.NullOptions
 		{
@@ -38,7 +33,7 @@ public class NullDataTransformerFactory : IDataTransformerFactory
 		return new NullDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		// For null transformer, Mappings keys are the column names (values are ignored)
 		if (config.Mappings == null || config.Mappings.Count == 0)

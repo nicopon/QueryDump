@@ -2,34 +2,29 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Overwrite;
 
-public class OverwriteDataTransformerFactory : IDataTransformerFactory
+public class OverwriteDataTransformerFactory : TransformerFactoryBase<OverwriteOptions>
 {
+
+	public override string ComponentName => "overwrite";
 	private readonly OptionsRegistry _registry;
 
-	public OverwriteDataTransformerFactory(OptionsRegistry registry)
-	{
-		_registry = registry;
-	}
-
-	public string ComponentName => "overwrite";
-
-	public bool CanHandle(string connectionString) => false;
-
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Overwrite.OverwriteOptions);
+	public OverwriteDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is OverwriteOptions o ? CreateFromOptions(o) : null;
 
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Overwrite.OverwriteOptions options)
+	public override string Category => "Transformers";
+
+
+	protected override IDataTransformer? CreateFromTypedOptions(OverwriteOptions options)
 	{
 		return new OverwriteDataTransformer(options);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		// Get config options (like SkipNull) from registry-bound options
 		var registryOptions = _registry.Get<OverwriteOptions>();
@@ -42,7 +37,7 @@ public class OverwriteDataTransformerFactory : IDataTransformerFactory
 		return new OverwriteDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		if (config.Mappings == null || config.Mappings.Count == 0)
 			return null;

@@ -2,25 +2,23 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Fake;
 
-public class FakeDataTransformerFactory : IDataTransformerFactory
+public class FakeDataTransformerFactory : TransformerFactoryBase<FakeOptions>
 {
+
+	public override string ComponentName => "fake";
 	private readonly OptionsRegistry _registry;
 
-	public FakeDataTransformerFactory(OptionsRegistry registry)
-	{
-		_registry = registry;
-	}
+	public FakeDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
-	public string ComponentName => "fake";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Fake.FakeOptions);
+	public override string Category => "Transformers";
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var globalOptions = _registry.Get<DtPipe.Transformers.Arrow.Fake.FakeOptions>();
 		var mappings = new List<string>();
@@ -66,15 +64,12 @@ public class FakeDataTransformerFactory : IDataTransformerFactory
 		return new FakeDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is FakeOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Fake.FakeOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(FakeOptions options)
 	{
 		return new FakeDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		var mappings = new List<string>();
 		if (config.Mappings != null)

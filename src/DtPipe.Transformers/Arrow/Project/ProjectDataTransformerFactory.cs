@@ -2,28 +2,26 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Project;
 
-public class ProjectDataTransformerFactory(OptionsRegistry registry) : IDataTransformerFactory
+public class ProjectDataTransformerFactory : TransformerFactoryBase<ProjectOptions>
 {
-	private readonly OptionsRegistry _registry = registry;
+	public ProjectDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
-	public string ComponentName => "project";
+	public override string ComponentName => "project";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Project.ProjectOptions);
+	public override string Category => "Transformers";
+	public override Type OptionsType => typeof(DtPipe.Transformers.Arrow.Project.ProjectOptions);
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is ProjectOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Project.ProjectOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(ProjectOptions options)
 	{
 		return new ProjectDataTransformer(options);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var options = new ProjectOptions();
         var projects = new List<string>();
@@ -47,7 +45,7 @@ public class ProjectDataTransformerFactory(OptionsRegistry registry) : IDataTran
 		return new ProjectDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		var options = new ProjectOptions();
 

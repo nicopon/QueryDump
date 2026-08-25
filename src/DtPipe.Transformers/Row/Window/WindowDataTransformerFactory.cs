@@ -3,11 +3,14 @@ using DtPipe.Core.Options;
 using DtPipe.Transformers.Services;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Row.Window;
 
-public class WindowDataTransformerFactory : IDataTransformerFactory
+public class WindowDataTransformerFactory : TransformerFactoryBase<WindowOptions>
 {
-	public bool CanHandle(string connectionString) => false;
+
+	public override string ComponentName => "window";
 	private readonly IJsEngineProvider _jsEngineProvider;
 
 	public WindowDataTransformerFactory(IJsEngineProvider jsEngineProvider)
@@ -15,19 +18,14 @@ public class WindowDataTransformerFactory : IDataTransformerFactory
 		_jsEngineProvider = jsEngineProvider;
 	}
 
-	public string Category => "Transformers";
-	public string ComponentName => "window";
-	public Type OptionsType => typeof(DtPipe.Transformers.Row.Window.WindowOptions);
+	public override string Category => "Transformers";
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is WindowOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Row.Window.WindowOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(WindowOptions options)
 	{
 		return new WindowDataTransformer(options, _jsEngineProvider);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var options = new DtPipe.Transformers.Row.Window.WindowOptions();
 
@@ -50,7 +48,7 @@ public class WindowDataTransformerFactory : IDataTransformerFactory
 		return new WindowDataTransformer(options, _jsEngineProvider);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		// For YAML, we map properties from dictionary
 		var options = new WindowOptions();

@@ -5,10 +5,14 @@ using DtPipe.Core.Security;
 using DtPipe.Transformers.Services;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Row.Compute;
 
-public class ComputeDataTransformerFactory : IDataTransformerFactory
+public class ComputeDataTransformerFactory : TransformerFactoryBase<ComputeOptions>
 {
+
+	public override string ComponentName => "compute";
 	private readonly OptionsRegistry _registry;
 	private readonly IJsEngineProvider _jsEngineProvider;
 	private readonly IStringContentResolver _resolver;
@@ -20,14 +24,11 @@ public class ComputeDataTransformerFactory : IDataTransformerFactory
 		_resolver = resolver ?? DefaultStringContentResolver.Instance;
 	}
 
-	public string ComponentName => "compute";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Row.Compute.ComputeOptions);
+	public override string Category => "Transformers";
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var mappings = new List<string>();
 		bool skipNull = false;
@@ -58,10 +59,7 @@ public class ComputeDataTransformerFactory : IDataTransformerFactory
 		}, _jsEngineProvider);
 	}
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is ComputeOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Row.Compute.ComputeOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(ComputeOptions options)
 	{
 		// Resolve @file references in Compute entries (single resolution point for both CLI and YAML paths)
 		var resolved = options.Compute.Select(c =>
@@ -74,7 +72,7 @@ public class ComputeDataTransformerFactory : IDataTransformerFactory
 		return new ComputeDataTransformer(options with { Compute = resolved }, _jsEngineProvider);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		var mappings = new List<string>();
 

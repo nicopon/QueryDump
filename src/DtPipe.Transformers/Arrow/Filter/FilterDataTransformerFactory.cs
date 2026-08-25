@@ -3,10 +3,14 @@ using DtPipe.Core.Options;
 using DtPipe.Transformers.Services;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Filter;
 
-public class FilterDataTransformerFactory : IDataTransformerFactory
+public class FilterDataTransformerFactory : TransformerFactoryBase<FilterOptions>
 {
+
+	public override string ComponentName => "filter";
 	private readonly OptionsRegistry _registry;
 	private readonly IJsEngineProvider _jsEngineProvider;
 	private readonly DtPipe.Core.Expressions.IStringContentResolver _resolver;
@@ -18,17 +22,11 @@ public class FilterDataTransformerFactory : IDataTransformerFactory
 		_resolver = resolver ?? DtPipe.Core.Expressions.DefaultStringContentResolver.Instance;
 	}
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Filter.FilterOptions);
+	public override string Category => "Transformers";
 
-	public string ComponentName => "filter";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is FilterOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Filter.FilterOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(FilterOptions options)
 	{
 		var resolved = options.Filters?.Select(f => 
 			_resolver.ResolveAsync(f).GetAwaiter().GetResult() ?? f
@@ -38,7 +36,7 @@ public class FilterDataTransformerFactory : IDataTransformerFactory
 		return new FilterDataTransformer(newOptions, _jsEngineProvider);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var filters = new List<string>();
 
@@ -57,7 +55,7 @@ public class FilterDataTransformerFactory : IDataTransformerFactory
 		return new FilterDataTransformer(options, _jsEngineProvider);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		var filters = new List<string>();
 

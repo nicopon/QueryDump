@@ -3,31 +3,29 @@ using DtPipe.Core.Options;
 
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Mask;
 
-public class MaskDataTransformerFactory(OptionsRegistry registry) : IDataTransformerFactory
+public class MaskDataTransformerFactory : TransformerFactoryBase<MaskOptions>
 {
-	private readonly OptionsRegistry _registry = registry;
+	public MaskDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
-	public string ComponentName => "mask";
+	public override string ComponentName => "mask";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Mask.MaskOptions);
+	public override string Category => "Transformers";
+	public override Type OptionsType => typeof(DtPipe.Transformers.Arrow.Mask.MaskOptions);
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is MaskOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Mask.MaskOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(MaskOptions options)
 	{
 		return new MaskDataTransformer(options);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		// Get config options (like SkipNull) from registry-bound options
-		var registryOptions = _registry.Get<MaskOptions>();
+		var registryOptions = Registry.Get<MaskOptions>();
 
 		var options = new DtPipe.Transformers.Arrow.Mask.MaskOptions
 		{
@@ -37,7 +35,7 @@ public class MaskDataTransformerFactory(OptionsRegistry registry) : IDataTransfo
 		return new MaskDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		// For mask transformer, Mappings are key=column, value=pattern
 		if (config.Mappings == null || config.Mappings.Count == 0)

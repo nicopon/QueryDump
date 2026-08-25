@@ -5,10 +5,14 @@ using DtPipe.Core.Security;
 using DtPipe.Transformers.Services;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Row.Expand;
 
-public class ExpandDataTransformerFactory : IDataTransformerFactory
+public class ExpandDataTransformerFactory : TransformerFactoryBase<ExpandOptions>
 {
+
+	public override string ComponentName => "expand";
 	private readonly OptionsRegistry _registry;
 	private readonly IJsEngineProvider _jsEngineProvider;
 	private readonly IStringContentResolver _resolver;
@@ -20,17 +24,11 @@ public class ExpandDataTransformerFactory : IDataTransformerFactory
 		_resolver = resolver ?? DefaultStringContentResolver.Instance;
 	}
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Row.Expand.ExpandOptions);
+	public override string Category => "Transformers";
 
-	public string ComponentName => "expand";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is ExpandOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Row.Expand.ExpandOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(ExpandOptions options)
 	{
 		var resolved = options.Expand?.Select(e =>
 			_resolver.ResolveAsync(e).GetAwaiter().GetResult() ?? e
@@ -38,7 +36,7 @@ public class ExpandDataTransformerFactory : IDataTransformerFactory
 		return new ExpandDataTransformer(new ExpandOptions { Expand = resolved }, _jsEngineProvider);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		var expands = new List<string>();
 
@@ -57,7 +55,7 @@ public class ExpandDataTransformerFactory : IDataTransformerFactory
  		return new ExpandDataTransformer(new DtPipe.Transformers.Row.Expand.ExpandOptions { Expand = expands.ToArray() }, _jsEngineProvider);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		var expands = new List<string>();
 

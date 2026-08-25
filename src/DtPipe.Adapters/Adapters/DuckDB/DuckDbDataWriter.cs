@@ -43,6 +43,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
     private IDisposable? _appender;
     private int[]? _columnMapping;
     private Type[]? _targetTypes;
+    private Func<object?, object?>[]? _cellConverters;
 
     private readonly IStringContentResolver? _resolver;
 
@@ -116,7 +117,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
                                 row.AppendNullValue();
                             else
                             {
-                                AppendValue(row, val, _targetTypes![i]);
+                                AppendValue(row, val, _cellConverters![i]);
                             }
                         }
                     }
@@ -131,7 +132,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
     }
 
-    private void AppendValue(IDuckDBAppenderRow row, object val, Type targetType)
+    private void AppendValue(IDuckDBAppenderRow row, object val, Func<object?, object?> converter)
     {
         // For Arrow path, RecordBatchDataReader already provides typed values,
         // but we still use ValueConverter to ensure perfect alignment with target types
@@ -139,7 +140,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         object? valueToAppend = val;
         try
         {
-            valueToAppend = ValueConverter.ConvertValue(val, targetType);
+            valueToAppend = converter(val);
         }
         catch { /* Fallback to original if conversion fails */ }
 
@@ -387,10 +388,14 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         {
             _columnMapping = new int[targetInfo.Columns.Count];
             _targetTypes = new Type[targetInfo.Columns.Count];
+            _cellConverters = new Func<object?, object?>[targetInfo.Columns.Count];
             for (int i = 0; i < targetInfo.Columns.Count; i++)
             {
                 var targetCol = targetInfo.Columns[i];
                 _targetTypes[i] = targetCol.InferredClrType ?? typeof(string);
+                // F12: build the per-column converter once at init instead of calling
+                // ValueConverter.ConvertValue on every cell.
+                _cellConverters[i] = ColumnConverterFactory.Build(null, _targetTypes[i]);
                 var sourceIdx = -1;
                 for (int s = 0; s < _columns!.Count; s++)
                 {

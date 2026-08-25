@@ -2,31 +2,29 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
 
+using DtPipe.Transformers.Abstract;
+
 namespace DtPipe.Transformers.Arrow.Format;
 
-public class FormatDataTransformerFactory(OptionsRegistry registry) : IDataTransformerFactory
+public class FormatDataTransformerFactory : TransformerFactoryBase<FormatOptions>
 {
-	private readonly OptionsRegistry _registry = registry;
+	public FormatDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
-	public string ComponentName => "format";
+	public override string ComponentName => "format";
 
-	public bool CanHandle(string connectionString) => false;
 
-	public string Category => "Transformers";
-	public Type OptionsType => typeof(DtPipe.Transformers.Arrow.Format.FormatOptions);
+	public override string Category => "Transformers";
+	public override Type OptionsType => typeof(DtPipe.Transformers.Arrow.Format.FormatOptions);
 
-	public IDataTransformer? CreateFromOptions(object options) =>
-		options is FormatOptions o ? CreateFromOptions(o) : null;
-
-	public IDataTransformer CreateFromOptions(DtPipe.Transformers.Arrow.Format.FormatOptions options)
+	protected override IDataTransformer? CreateFromTypedOptions(FormatOptions options)
 	{
 		return new FormatDataTransformer(options);
 	}
 
-	public IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
+	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		// Get config options (like SkipNull) from registry-bound options
-		var registryOptions = _registry.Get<DtPipe.Transformers.Arrow.Format.FormatOptions>();
+		var registryOptions = Registry.Get<DtPipe.Transformers.Arrow.Format.FormatOptions>();
 
 		var options = new DtPipe.Transformers.Arrow.Format.FormatOptions
 		{
@@ -38,7 +36,7 @@ public class FormatDataTransformerFactory(OptionsRegistry registry) : IDataTrans
 		return new FormatDataTransformer(options);
 	}
 
-	public IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
+	public override IDataTransformer? CreateFromYamlConfig(TransformerConfig config)
 	{
 		if (config.Mappings == null || config.Mappings.Count == 0)
 			return null;
