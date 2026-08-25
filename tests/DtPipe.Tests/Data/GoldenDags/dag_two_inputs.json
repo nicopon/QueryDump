@@ -9,7 +9,8 @@
       "RefAliases": [],
       "ProcessorName": null,
       "HasStreamTransformer": false,
-      "PreParsedJob": null
+      "PreParsedJob": null,
+      "Engine": null
     },
     {
       "Alias": "output1",
@@ -20,7 +21,8 @@
       "RefAliases": [],
       "ProcessorName": null,
       "HasStreamTransformer": false,
-      "PreParsedJob": null
+      "PreParsedJob": null,
+      "Engine": null
     }
   ],
   "IsDag": true

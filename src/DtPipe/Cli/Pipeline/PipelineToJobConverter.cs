@@ -82,7 +82,8 @@ public static class PipelineToJobConverter
                 StreamingAliases = branchSpec.From.ToArray(),
                 RefAliases = branchSpec.Ref.ToArray(),
                 Arguments = branchSpec.RawArgs,
-                ProcessorName = processor?.ComponentName
+                ProcessorName = processor?.ComponentName,
+                Engine = DeriveEngineSettings(parsed.Globals, branchSpec.Flags)
             });
         }
 
@@ -127,7 +128,13 @@ public static class PipelineToJobConverter
             Arguments = Array.Empty<string>(),
             ProcessorName = streamTransformerFactories?
                 .FirstOrDefault(f => f.IsApplicable(kv.Value))
-                ?.ComponentName
+                ?.ComponentName,
+            Engine = new BranchEngineSettings(
+                Limit: kv.Value.Limit, BatchSize: kv.Value.BatchSize,
+                SamplingRate: kv.Value.SamplingRate, SamplingSeed: kv.Value.SamplingSeed,
+                DryRunCount: kv.Value.DryRunCount, NoStats: kv.Value.NoStats,
+                MetricsPath: kv.Value.MetricsPath, LogPath: kv.Value.LogPath,
+                Prefix: kv.Value.Prefix, Cursor: kv.Value.Cursor, State: kv.Value.State)
         }).ToList();
 
         return (jobs, new JobDagDefinition { Branches = branches }, new Dictionary<string, CliJobContext>(StringComparer.OrdinalIgnoreCase));
@@ -135,54 +142,60 @@ public static class PipelineToJobConverter
 
     private static JobDefinition MapToJobDefinition(GlobalOptions globals, BranchSpec branch)
     {
-        // Engine-control values are extracted from AllFlags (global) and Flags (branch-local).
-        // Branch-local values take precedence over global defaults.
-        int batchSize = GetInt(branch.Flags, "--batch-size", "-b")
-                     ?? GetInt(globals.AllFlags, "--batch-size", "-b")
-                     ?? PipelineOptions.DefaultBatchSize;
-        int limit = GetInt(branch.Flags, "--limit")
-                 ?? GetInt(globals.AllFlags, "--limit")
-                 ?? 0;
-        double samplingRate = GetDouble(branch.Flags, "--sampling-rate", "--sample-rate")
-                           ?? GetDouble(globals.AllFlags, "--sampling-rate", "--sample-rate")
-                           ?? 1.0;
-        int? samplingSeed = GetNullableInt(branch.Flags, "--sampling-seed", "--sample-seed")
-                        ?? GetNullableInt(globals.AllFlags, "--sampling-seed", "--sample-seed");
-        string? logPath = GetString(branch.Flags, "--log") ?? globals.LogPath;
-        string? metricsPath = GetString(branch.Flags, "--metrics-path")
-                           ?? GetString(globals.AllFlags, "--metrics-path");
-        string? prefix = GetString(branch.Flags, "--prefix", "-p")
-                      ?? GetString(globals.AllFlags, "--prefix", "-p");
-        string? cursor = GetString(branch.Flags, "--cursor")
-                      ?? GetString(globals.AllFlags, "--cursor");
-        string? state = GetString(branch.Flags, "--state")
-                     ?? GetString(globals.AllFlags, "--state");
-
-        return new JobDefinition
+        // F7 single derivation point for engine controls (global defaults overlaid by
+        // branch-local flags); provider-level fields stay on the job.
+        var engine = DeriveEngineSettings(globals, branch.Flags);
+        var job = new JobDefinition
         {
             Input  = branch.Input,
             Output = branch.Output,
-            BatchSize    = batchSize,
-            DryRunCount  = globals.DryRunCount,
-            Limit        = limit,
-            SamplingRate = samplingRate,
-            SamplingSeed = samplingSeed,
-            LogPath      = logPath,
-            MetricsPath  = metricsPath,
-            Prefix       = prefix,
-            Cursor       = cursor,
-            State        = state,
-            NoStats      = globals.NoStats,
 
-            // YAML convention: 'from' carries the comma-joined streaming aliases
-            // (ConvertFromJobFile splits it back into StreamingAliases).
             From     = string.Join(",", branch.From),
             Ref      = branch.Ref.ToArray(),
 
             Transformers    = null,
             ProviderOptions = null
         };
+        return engine.ApplyTo(job);
     }
+
+    internal static BranchEngineSettings DeriveEngineSettings(GlobalOptions globals, IReadOnlyDictionary<string, List<string>> branchFlags)
+    {
+        int batchSize = GetInt(branchFlags, "--batch-size", "-b")
+                     ?? GetInt(globals.AllFlags, "--batch-size", "-b")
+                     ?? PipelineOptions.DefaultBatchSize;
+        int limit = GetInt(branchFlags, "--limit")
+                 ?? GetInt(globals.AllFlags, "--limit")
+                 ?? 0;
+        double samplingRate = GetDouble(branchFlags, "--sampling-rate", "--sample-rate")
+                           ?? GetDouble(globals.AllFlags, "--sampling-rate", "--sample-rate")
+                           ?? 1.0;
+        int? samplingSeed = GetNullableInt(branchFlags, "--sampling-seed", "--sample-seed")
+                         ?? GetNullableInt(globals.AllFlags, "--sampling-seed", "--sample-seed");
+        string? logPath = GetString(branchFlags, "--log") ?? globals.LogPath;
+        string? metricsPath = GetString(branchFlags, "--metrics-path")
+                           ?? GetString(globals.AllFlags, "--metrics-path");
+        string? prefix = GetString(branchFlags, "--prefix", "-p")
+                      ?? GetString(globals.AllFlags, "--prefix", "-p");
+        string? cursor = GetString(branchFlags, "--cursor")
+                      ?? GetString(globals.AllFlags, "--cursor");
+        string? state = GetString(branchFlags, "--state")
+                     ?? GetString(globals.AllFlags, "--state");
+
+        return new BranchEngineSettings(
+            Limit: limit,
+            BatchSize: batchSize,
+            SamplingRate: samplingRate,
+            SamplingSeed: samplingSeed,
+            DryRunCount: globals.DryRunCount,
+            NoStats: globals.NoStats,
+            MetricsPath: metricsPath,
+            LogPath: logPath,
+            Prefix: prefix,
+            Cursor: cursor,
+            State: state);
+    }
+
 
     // ── F3 round-trip reconstruction helpers ────────────────────────────────
 

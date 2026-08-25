@@ -61,4 +61,11 @@ public record BranchDefinition
     /// If present, this overrides the logic otherwise derived from <see cref="Arguments"/>.
     /// </summary>
     public Models.JobDefinition? PreParsedJob { get; set; }
+
+    /// <summary>
+    /// F7: canonical engine-control settings for this branch, derived once by the CLI
+    /// converter (global defaults + branch-local flags). Null when the branch was built
+    /// without engine derivation (e.g. hand-built in tests).
+    /// </summary>
+    public Models.BranchEngineSettings? Engine { get; init; }
 }
