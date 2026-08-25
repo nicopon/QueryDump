@@ -245,10 +245,11 @@ public class DagOrchestrator : IDagOrchestrator
 
                 if (finishedTask.IsFaulted)
                 {
-                    _logger.LogError(finishedTask.Exception, "A task failed. Cancelling the entire DAG.");
-                    var innerMsg = finishedTask.Exception?.InnerException?.Message
-                        ?? finishedTask.Exception?.Message
-                        ?? "Unknown error";
+                    // Preserve the full causal chain in logs instead of only the outermost message.
+                    var fault = finishedTask.Exception!;
+                    _logger.LogError(fault, "A task failed. Cancelling the entire DAG.\n{Chain}",
+                        Infrastructure.Diagnostics.ExceptionChainFlattener.Format(fault));
+                    var innerMsg = fault.GetBaseException().Message;
                     OnLogEvent?.Invoke($"✖ {innerMsg}");
                     await linkedCts.CancelAsync();
                     return 1;
@@ -293,6 +294,14 @@ public class DagOrchestrator : IDagOrchestrator
                         }
                     }
                 }
+            }
+
+            // Cancellation that raced with branch completion must not be reported as success:
+            // if every branch was orphaned by a global cancel, the run did not complete cleanly.
+            if (linkedCts.IsCancellationRequested)
+            {
+                _logger.LogWarning("DAG canceled during branch completion; returning 1.");
+                return 1;
             }
 
             _logger.LogInformation("DAG execution completed successfully.");

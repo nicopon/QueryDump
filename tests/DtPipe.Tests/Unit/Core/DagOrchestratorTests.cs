@@ -401,4 +401,75 @@ public class DagOrchestratorTests
         // The merge processor has an explicit -o → no injection
         Assert.Null(plans["merged"]);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cancellation semantics (F16 — cancellation must not mask as success)
+    //
+    // Documented intentional exception: ExecuteBranchAsync's orphaned-producer path
+    // returns 0 (producer termination when consumers complete is normal fan-out
+    // operation, not failure). A GLOBAL cancellation, however, must return non-zero.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static async Task<int> WaitUntilCanceledThenZeroAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // Orphaned-producer contract: cancellation is a normal shutdown for this branch.
+        }
+        return 0;
+    }
+
+    [Fact]
+    public async Task Global_Cancellation_In_3Branch_DAG_Returns_1_Not_0()
+    {
+        var dag = GoldenDagDefinitions.Dag_FanOut_OneSourceTwoConsumers; // 3 branches
+        var orchestrator = BuildOrchestrator();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // pre-canceled
+
+        var result = await orchestrator.ExecuteAsync(dag, (_, _, ct) => Task.FromCanceled<int>(ct), cts.Token);
+
+        Assert.Equal(1, result);
+    }
+
+    [Fact]
+    public async Task PerBranch_Orphan_Cancellation_Returns_0_When_Others_Succeed()
+    {
+        var dag = GoldenDagDefinitions.Dag_FanOut_OneSourceTwoConsumers;
+        var orchestrator = BuildOrchestrator();
+        var called = new ConcurrentBag<string>();
+
+        var result = await orchestrator.ExecuteAsync(dag, (b, _, ct) =>
+        {
+            called.Add(b.Alias);
+            // Source blocks until the orchestrator cancels it as an orphaned producer.
+            return b.Alias == "src" ? WaitUntilCanceledThenZeroAsync(ct) : Task.FromResult(0);
+        });
+
+        Assert.Equal(0, result);
+        Assert.Equal(3, called.Count);
+    }
+
+    [Fact]
+    public async Task All_Branches_Orphaned_During_Global_Cancellation_Returns_1()
+    {
+        var dag = GoldenDagDefinitions.Dag_FanOut_OneSourceTwoConsumers;
+        var orchestrator = BuildOrchestrator();
+        using var cts = new CancellationTokenSource();
+
+        var runTask = orchestrator.ExecuteAsync(dag,
+            (_, _, ct) => WaitUntilCanceledThenZeroAsync(ct), cts.Token);
+
+        // Cancel globally while all branches are still running.
+        await Task.Delay(100);
+        await cts.CancelAsync();
+
+        var result = await runTask;
+
+        Assert.Equal(1, result);
+    }
 }

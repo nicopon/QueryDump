@@ -374,9 +374,12 @@ public class ExportService
 			}
 			catch (OperationCanceledException)
 			{
-				// Graceful termination for orphaned producers or cancellation
+				// F16: cancellation must never mask as success. Re-throw so the caller can
+				// discriminate user-initiated shutdown (exit code 130) from internal
+				// cancellation. Orphaned producers stay a normal event: they are absorbed
+				// by DagOrchestrator.ExecuteBranchAsync's documented orphaned-producer path.
 				progress.Complete();
-				if (!silenceInternal) _observer.LogMessage($"[grey]✓ Export stopped (no more consumers).[/]");
+				throw;
 			}
 			catch (Exception ex)
 			{

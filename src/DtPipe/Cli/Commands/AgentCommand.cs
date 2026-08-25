@@ -197,53 +197,62 @@ public class AgentCommand : Command
               mcpTools.AgentOptions = agentOptions;
 
                 // Execute initial turn
-             var exitCode = await executor.RunTurnAsync(prompt, model, url, agentOptions, maxIterations, ct);
+              var exitCode = 0;
+              try
+              {
+                  exitCode = await executor.RunTurnAsync(prompt, model, url, agentOptions, maxIterations, ct);
 
-            // Interactive post-mission conversation loop
-            while (!ct.IsCancellationRequested)
-            {
-                bool hasYaml = !string.IsNullOrEmpty(executor.Trajectory.LastGeneratedYaml);
-                var action = tui.ShowPostMissionMenu(hasYaml);
+                  // Interactive post-mission conversation loop
+                  while (!ct.IsCancellationRequested)
+                  {
+                      bool hasYaml = !string.IsNullOrEmpty(executor.Trajectory.LastGeneratedYaml);
+                      var action = tui.ShowPostMissionMenu(hasYaml);
 
-                if (action == PostMissionAction.Exit)
-                {
-                    break;
-                }
+                      if (action == PostMissionAction.Exit)
+                      {
+                          break;
+                      }
 
-                switch (action)
-                {
-                     case PostMissionAction.ContinueDiscussion:
-                         var followUp = tui.PromptFollowUp();
-                         if (!string.IsNullOrWhiteSpace(followUp))
-                          {
-                             exitCode = await executor.RunTurnAsync(followUp, model, url, agentOptions, maxIterations, ct);
-                          }
-                         break;
+                      switch (action)
+                      {
+                           case PostMissionAction.ContinueDiscussion:
+                               var followUp = tui.PromptFollowUp();
+                               if (!string.IsNullOrWhiteSpace(followUp))
+                                {
+                                    exitCode = await executor.RunTurnAsync(followUp, model, url, agentOptions, maxIterations, ct);
+                                }
+                               break;
 
-                    case PostMissionAction.ViewDag:
-                        if (executor.Trajectory.LastGeneratedYaml != null)
-                        {
-                            tui.RenderPipelineDag(executor.Trajectory.LastGeneratedYaml, serviceProvider);
-                        }
-                        break;
+                          case PostMissionAction.ViewDag:
+                              if (executor.Trajectory.LastGeneratedYaml != null)
+                              {
+                                  tui.RenderPipelineDag(executor.Trajectory.LastGeneratedYaml, serviceProvider);
+                              }
+                              break;
 
-                    case PostMissionAction.InspectTrajectory:
-                        tui.InspectTrajectory(executor.Trajectory);
-                        break;
+                          case PostMissionAction.InspectTrajectory:
+                              tui.InspectTrajectory(executor.Trajectory);
+                              break;
 
-                    case PostMissionAction.SaveYaml:
-                        if (executor.Trajectory.LastGeneratedYaml != null)
-                        {
-                            tui.SaveYamlToFile(executor.Trajectory.LastGeneratedYaml);
-                        }
-                        break;
-                }
-            }
+                          case PostMissionAction.SaveYaml:
+                              if (executor.Trajectory.LastGeneratedYaml != null)
+                              {
+                                  tui.SaveYamlToFile(executor.Trajectory.LastGeneratedYaml);
+                              }
+                              break;
+                      }
+                  }
 
-            if (exitCode != 0)
-            {
-                Environment.ExitCode = exitCode;
-            }
-        });
+                  if (exitCode != 0)
+                  {
+                      Environment.ExitCode = exitCode;
+                  }
+              }
+              catch (OperationCanceledException)
+              {
+                  // F16: user cancellation must not mask as success — report POSIX SIGINT convention.
+                  Environment.ExitCode = 130;
+              }
+          });
     }
 }

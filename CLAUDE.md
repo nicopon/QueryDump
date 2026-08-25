@@ -139,6 +139,12 @@ DEBUG=1 dtpipe --input pg:"..." --output csv:out.csv
 ```
 Verbose branch-level logging to stderr.
 
+## Exit Codes
+
+`0` = success · `1` = fault · `130` = user cancellation (Ctrl-C, POSIX SIGINT convention).
+
+Cancellation never masks as success (F16): `LinearPipelineService` discriminates the dedicated user token from internal cancellation sources and returns 130 on user shutdown; internal cancellation propagates. In DAG runs, a branch reporting 130 makes `DagOrchestrator` cancel the rest and return 130. The only intentional cancellation-swallowing site is `DagOrchestrator.ExecuteBranchAsync`'s orphaned-producer path (returning 0 is normal fan-out operation when consumers complete).
+
 ## Pipeline Design Principles
 
 ### No magic conversions in the engine core

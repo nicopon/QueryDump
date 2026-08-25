@@ -76,6 +76,17 @@ public class JobService
 			Environment.SetEnvironmentVariable("DTPIPE_CURSOR_OVERRIDE", cursorFromVal);
 		}
 
+		// Translate Ctrl-C into cooperative cancellation (F16): the dedicated user token
+		// discriminates user shutdown from internal cancellation so the process can report
+		// exit code 130 instead of masking cancellation as success.
+		using var userCts = new CancellationTokenSource();
+		var cancelHandler = new ConsoleCancelEventHandler((_, e) =>
+		{
+			e.Cancel = true; // graceful shutdown; exit code is reported by the pipeline
+			userCts.Cancel();
+		});
+		Console.CancelKeyPress += cancelHandler;
+
 		try
 		{
 			var resultsCollector = new System.Collections.Concurrent.ConcurrentQueue<DtPipe.Feedback.BranchSummary>();
@@ -131,7 +142,7 @@ public class JobService
 				{
 					var job = jobs[branch.Alias];
 					contexts.TryGetValue(branch.Alias, out var branchCtx);
-					return await RunSingleJobAsync(job, branchCtx, branch.Alias, true, ctx, resultsCollector, token, globals);
+					return await RunSingleJobAsync(job, branchCtx, branch.Alias, true, ctx, resultsCollector, token, globals, userCts.Token);
 				};
 
 				int exitCode;
@@ -160,11 +171,12 @@ public class JobService
 				_console.WriteLine();
 
 				var mainContext = contexts.Values.FirstOrDefault();
-				return await RunSingleJobAsync(mainJob, mainContext, null, false, null, null, ct, globals);
+				return await RunSingleJobAsync(mainJob, mainContext, null, false, null, null, ct, globals, userCts.Token);
 			}
 		}
 		finally
 		{
+			Console.CancelKeyPress -= cancelHandler;
 			Environment.SetEnvironmentVariable("DTPIPE_CURSOR_OVERRIDE", null);
 		}
 	}
@@ -177,7 +189,8 @@ public class JobService
 		BranchChannelContext? ctx,
 		System.Collections.Concurrent.ConcurrentQueue<DtPipe.Feedback.BranchSummary>? resultsCollector,
 		CancellationToken ct,
-		Pipeline.GlobalOptions? globals = null)
+		Pipeline.GlobalOptions? globals = null,
+		CancellationToken userCancellationToken = default)
 	{
 		var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
 		registry.BeginScope();
@@ -205,6 +218,6 @@ public class JobService
 
 		var channelRegistry = _serviceProvider.GetRequiredService<IMemoryChannelRegistry>();
 		var linearPipelineService = new DtPipe.Cli.Services.LinearPipelineService(_contributors, _serviceProvider, channelRegistry, registry, _console);
-		return await linearPipelineService.ExecuteAsync(job, context, ct, resultsCollector, isDag, alias, ctx, showStatusMessages: false, dryRunInteractiveBranch: globals?.DryRunInteractiveBranch);
+		return await linearPipelineService.ExecuteAsync(job, context, ct, userCancellationToken, resultsCollector, isDag, alias, ctx, showStatusMessages: false, dryRunInteractiveBranch: globals?.DryRunInteractiveBranch);
 	}
 }

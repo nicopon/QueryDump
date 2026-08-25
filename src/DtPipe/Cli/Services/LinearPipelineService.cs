@@ -27,6 +27,11 @@ public class LinearPipelineService
     private readonly IEnumerable<IDataWriterFactory> _writerFactories;
     private readonly IEnumerable<IStreamReaderFactory> _readerFactories;
 
+    // Cancellation sources for user-vs-internal discrimination (F16):
+    // user-initiated shutdown reports exit code 130; internal cancellation propagates.
+    private CancellationToken _userCancellationToken;
+    private CancellationTokenSource? _internalCts;
+
     public LinearPipelineService(
         IEnumerable<ICliContributor> contributors,
         IServiceProvider serviceProvider,
@@ -43,7 +48,7 @@ public class LinearPipelineService
         _readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>();
     }
 
-    public async Task<int> ExecuteAsync(
+    public Task<int> ExecuteAsync(
         JobDefinition job,
         CliJobContext? context,
         CancellationToken token,
@@ -53,6 +58,40 @@ public class LinearPipelineService
         BranchChannelContext? ctx = null,
         bool showStatusMessages = false,
         string? dryRunInteractiveBranch = null)
+        => ExecuteAsync(job, context, token, CancellationToken.None, resultsCollector, isDag, localAlias, ctx, showStatusMessages, dryRunInteractiveBranch);
+
+    public async Task<int> ExecuteAsync(
+        JobDefinition job,
+        CliJobContext? context,
+        CancellationToken token,
+        CancellationToken userCancellationToken,
+        System.Collections.Concurrent.ConcurrentQueue<DtPipe.Feedback.BranchSummary>? resultsCollector = null,
+        bool isDag = false,
+        string? localAlias = null,
+        BranchChannelContext? ctx = null,
+        bool showStatusMessages = false,
+        string? dryRunInteractiveBranch = null)
+    {
+        // Internal cancellation models non-user sources (DAG branch faults, host teardown);
+        // the working token honors both so a Ctrl-C still stops the pipeline cooperatively.
+        _userCancellationToken = userCancellationToken;
+        using var internalCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        _internalCts = internalCts;
+        using var workCts = CancellationTokenSource.CreateLinkedTokenSource(internalCts.Token, userCancellationToken);
+        var workCt = workCts.Token;
+        return await ExecuteCoreAsync(job, context, workCt, resultsCollector, isDag, localAlias, ctx, showStatusMessages, dryRunInteractiveBranch);
+    }
+
+    private async Task<int> ExecuteCoreAsync(
+        JobDefinition job,
+        CliJobContext? context,
+        CancellationToken token,
+        System.Collections.Concurrent.ConcurrentQueue<DtPipe.Feedback.BranchSummary>? resultsCollector,
+        bool isDag,
+        string? localAlias,
+        BranchChannelContext? ctx,
+        bool showStatusMessages,
+        string? dryRunInteractiveBranch)
     {
         var exportService = _serviceProvider.GetRequiredService<ExportService>();
         var currentRawArgs = context?.Arguments ?? System.Array.Empty<string>();
@@ -262,11 +301,21 @@ public class LinearPipelineService
         }
         catch (OperationCanceledException)
         {
-            return 0;
+            // F16: cancellation must not mask as success. User-initiated shutdown
+            // (Ctrl-C) reports the POSIX SIGINT convention; internal cancellation
+            // propagates to the caller (DAG orchestrator / host) for correct reporting.
+            if (_userCancellationToken.IsCancellationRequested
+                && _internalCts is { Token.IsCancellationRequested: false })
+            {
+                _console.Write(new Spectre.Console.Markup($"{Environment.NewLine}[yellow]Warning: Pipeline canceled by user (Ctrl-C).[/]{Environment.NewLine}"));
+                return 130;
+            }
+            throw;
         }
         catch (Exception ex)
         {
-            _console.Write(new Spectre.Console.Markup($"{Environment.NewLine}[red]Error: {Markup.Escape(ex.Message)}[/]{Environment.NewLine}"));
+            var chain = DtPipe.Core.Infrastructure.Diagnostics.ExceptionChainFlattener.Format(ex);
+            _console.Write(new Spectre.Console.Markup($"{Environment.NewLine}[red]Error: {Markup.Escape(chain)}[/]{Environment.NewLine}"));
             if (Environment.GetEnvironmentVariable("DEBUG") == "1")
                 _console.WriteLine(ex.StackTrace ?? "");
             return 1;
