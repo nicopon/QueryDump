@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using DtPipe.Cli.Pipeline;
 using DtPipe.Cli.Services;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
@@ -128,13 +129,53 @@ public class LinearPipelineServiceTests
         public IEnumerable<Type> GetSupportedOptionTypes() => Array.Empty<Type>();
     }
 
+    /// <summary>Records whether the probe (PipelineOptions registration check) held at OpenAsync time.</summary>
+    private sealed class ProbeTransformer : IStreamTransformer
+    {
+        public Func<bool>? Probe { get; set; }
+        public bool PipelineOptionsWasRegistered { get; private set; }
+        public IReadOnlyList<PipeColumnInfo>? Columns => new List<PipeColumnInfo> { new("Id", typeof(int), false) };
+        public Apache.Arrow.Schema? Schema => null;
+        public Task OpenAsync(CancellationToken ct = default)
+        {
+            PipelineOptionsWasRegistered = Probe?.Invoke() ?? false;
+            return Task.CompletedTask;
+        }
+        public async IAsyncEnumerable<Apache.Arrow.RecordBatch> ReadResultsAsync(
+            IAsyncEnumerable<Apache.Arrow.RecordBatch>? inputStream = null,
+            [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            yield break;
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class ProbeTransformerFactory : IStreamTransformerFactory
+    {
+        private readonly ProbeTransformer _transformer;
+        public ProbeTransformerFactory(ProbeTransformer transformer) => _transformer = transformer;
+        public string ComponentName => "probe";
+        public string Category => "Test";
+        public bool RequiresArrowChannels => false;
+        public int MinStreams => 0;
+        public int MaxStreams => -1;
+        public int MinLookups => 0;
+        public int MaxLookups => -1;
+        public IReadOnlyList<(string Flag, bool IsBoolean)> CliTriggerFlags => new[] { ("--stubproc", true) };
+        public bool IsApplicable(string[] branchArgs) => branchArgs.Contains("--stubproc");
+        public IStreamTransformer Create(string[] branchArgs, BranchChannelContext ctx, IServiceProvider serviceProvider) => _transformer;
+        public IStreamTransformer CreateFromJob(JobDefinition job, BranchChannelContext ctx, IServiceProvider serviceProvider) => _transformer;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Harness
     // ─────────────────────────────────────────────────────────────────────────
 
     private static (LinearPipelineService Service, Mock<IAnsiConsole> Console, OptionsRegistry OptionsRegistry) BuildService(
         IStreamReaderFactory readerFactory,
-        IDataWriterFactory? writerFactoryOverride = null)
+        IDataWriterFactory? writerFactoryOverride = null,
+        IStreamTransformerFactory? streamTransformerFactory = null)
     {
         var observer = Mock.Of<IExportObserver>();
         var exportService = new ExportService(
@@ -157,7 +198,10 @@ public class LinearPipelineServiceTests
         services.AddSingleton(exportService);
         services.AddSingleton<IEnumerable<IStreamReaderFactory>>(new List<IStreamReaderFactory> { readerFactory });
         services.AddSingleton<IEnumerable<IDataWriterFactory>>(new List<IDataWriterFactory> { writerFactoryOverride ?? new NullWriterFactory() });
-        services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(new List<IStreamTransformerFactory>());
+        services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(
+            streamTransformerFactory != null
+                ? new List<IStreamTransformerFactory> { streamTransformerFactory }
+                : new List<IStreamTransformerFactory>());
         var serviceProvider = services.BuildServiceProvider();
 
         var consoleMock = new Mock<IAnsiConsole>();
@@ -280,5 +324,31 @@ public class LinearPipelineServiceTests
 
         Assert.Equal(1, exitCode);
         Assert.Equal("SELECT * FROM \"same_named\"", readerOptions.Query);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stream-transformer branches alias their factory OptionsType to PipelineOptions.
+    // Invariant: PipelineOptions must be registered BEFORE any factory-options probe,
+    // otherwise the probe warns about missing options and returns a discarded default.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task StreamTransformerBranch_Has_PipelineOptions_Registered_Before_Use()
+    {
+        var transformer = new ProbeTransformer();
+        var (service, _, registry) = BuildService(
+            new StubReaderFactory(() => new MarkerReader()),
+            streamTransformerFactory: new ProbeTransformerFactory(transformer));
+        transformer.Probe = () => registry.Has<DtPipe.Core.Models.PipelineOptions>();
+
+        await service.ExecuteAsync(
+            new JobDefinition { Input = "stub:x" },
+            context: new CliJobContext(null, null, null, new[] { "--stubproc" }),
+            token: CancellationToken.None, userCancellationToken: CancellationToken.None);
+
+        // The flag being evaluated at all proves execution reached OpenAsync;
+        // it must hold by then (writerless branch may still end with a non-zero exit).
+        Assert.True(transformer.PipelineOptionsWasRegistered,
+            "PipelineOptions must be registered before the stream-transformer branch executes.");
     }
 }

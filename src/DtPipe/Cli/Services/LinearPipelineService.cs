@@ -178,11 +178,31 @@ public class LinearPipelineService
             }
         }
 
+        // Universal pipeline options (engine controls only; adapter options are in the registry).
+        // Registered BEFORE any factory-options probe below: stream-transformer branches alias
+        // their factory OptionsType to PipelineOptions, so an early Get would miss and warn.
+        var pipelineOptions = new PipelineOptions
+        {
+            MetricsPath  = job.MetricsPath,
+            Limit        = job.Limit,
+            SamplingRate = job.SamplingRate,
+            SamplingSeed = job.SamplingSeed,
+            BatchSize    = job.BatchSize,
+            DryRunCount  = job.DryRunCount,
+            NoStats      = job.NoStats,
+            DryRunInteractiveBranch = dryRunInteractiveBranch,
+            Cursor       = job.Cursor,
+            State        = job.State
+        };
+        _optionsRegistry.Register(pipelineOptions);
+
         // 3b. Query file resolution: OptionBinder sets readerOpts.Query
         // from --query flag or YAML — resolve file refs here.
         // This is separate from 3b because job.Query is null for CLI branches.
         {
-            var readerOptsForLoad = _optionsRegistry.Get(readerFactory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
+            DtPipe.Core.Options.IQueryAwareOptions? readerOptsForLoad = null;
+            if (_optionsRegistry.TryGetByType(readerFactory.OptionsType, out var readerOptsRaw))
+                readerOptsForLoad = readerOptsRaw as DtPipe.Core.Options.IQueryAwareOptions;
             if (readerOptsForLoad != null && !string.IsNullOrWhiteSpace(readerOptsForLoad.Query))
             {
                 var resolved = await (resolver ?? DtPipe.Core.Expressions.DefaultStringContentResolver.Instance).ResolveAsync(readerOptsForLoad.Query, token);
@@ -212,7 +232,9 @@ public class LinearPipelineService
         // check (in order): reader's own --table, writer's --table, YAML job.Query.
         if (readerFactory.RequiresQuery)
         {
-            var readerOpts = _optionsRegistry.Get(readerFactory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
+            DtPipe.Core.Options.IQueryAwareOptions? readerOpts = null;
+            if (_optionsRegistry.TryGetByType(readerFactory.OptionsType, out var readerOptsObj))
+                readerOpts = readerOptsObj as DtPipe.Core.Options.IQueryAwareOptions;
             if (readerOpts != null && string.IsNullOrWhiteSpace(readerOpts.Query))
             {
                 // 1. Reader's own --table (e.g. DuckDB reader: --table source_table)
@@ -224,7 +246,9 @@ public class LinearPipelineService
                 else
                 {
                     // 2. Writer's --table (same-name read/write)
-                    var writerOpts = writerFactory != null ? _optionsRegistry.Get(writerFactory.OptionsType) : null;
+                    object? writerOpts = null;
+                    if (writerFactory != null)
+                        _optionsRegistry.TryGetByType(writerFactory.OptionsType, out writerOpts);
                     var tableVal = (writerOpts as ITableAwareOptions)?.Table;
                     if (!string.IsNullOrWhiteSpace(tableVal))
                         readerOpts.Query = $"SELECT * FROM \"{tableVal}\"";
@@ -234,22 +258,6 @@ public class LinearPipelineService
 
         // 4. Register routing so factory Create() methods can resolve adapter connection strings.
         _optionsRegistry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(cleanedInput, cleanedOutput));
-
-        // Universal pipeline options (engine controls only; adapter options are in the registry)
-        var pipelineOptions = new PipelineOptions
-        {
-            MetricsPath  = job.MetricsPath,
-            Limit        = job.Limit,
-            SamplingRate = job.SamplingRate,
-            SamplingSeed = job.SamplingSeed,
-            BatchSize    = job.BatchSize,
-            DryRunCount  = job.DryRunCount,
-            NoStats      = job.NoStats,
-            DryRunInteractiveBranch = dryRunInteractiveBranch,
-            Cursor       = job.Cursor,
-            State        = job.State
-        };
-        _optionsRegistry.Register(pipelineOptions);
 
         // 5. Build Pipeline (Transformers)
         // For CLI-originated branches (have raw args), always use TransformerPipelineBuilder

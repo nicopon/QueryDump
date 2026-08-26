@@ -129,6 +129,22 @@ public class OptionsRegistry : IOptionsProvider
 	}
 
 	/// <summary>
+	/// Attempts to retrieve registered options by runtime type without side effects
+	/// (no warning, no default materialization). For capability probes over factories
+	/// whose <c>OptionsType</c> is only known at runtime.
+	/// </summary>
+	public bool TryGetByType(Type optionType, out object? value)
+	{
+		if (CurrentOptions.TryGetValue(optionType, out var raw))
+		{
+			value = raw;
+			return true;
+		}
+		value = null;
+		return false;
+	}
+
+	/// <summary>
 	/// Requires registered options of a specific type, throwing when they were never bound.
 	/// Use instead of <see cref="Get{T}"/> in code paths where a silent default would hide
 	/// a binding failure.
