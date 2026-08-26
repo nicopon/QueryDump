@@ -370,16 +370,21 @@ class Program
 		// explicit override is wired by the command. The SQL safety policy classifies/forbids
 		// destructive verbs and network access.
 		services.AddSingleton<DtPipe.Cli.Security.ISqlSafetyPolicy, DtPipe.Cli.Security.DefaultSqlSafetyPolicy>();
-		services.AddSingleton(sp => (DtPipe.Cli.Security.IApprovalGate)new DtPipe.Cli.Security.DefaultApprovalGate());
+		// F2/F14: the approval gate stays fail-closed by default. An operator (or the
+		// agentic test harness) may explicitly consent to non-interactive writes by
+		// setting DTPIPE_MCP_APPROVE_WRITES=1 — this wires the documented Override
+		// predicate; without it, writes remain dry-run only.
+		var approveWrites = Environment.GetEnvironmentVariable("DTPIPE_MCP_APPROVE_WRITES") == "1";
+		services.AddSingleton(sp =>
+		{
+			var gate = new DtPipe.Cli.Security.DefaultApprovalGate();
+			if (approveWrites)
+				gate.Override = _ => true;
+			return (DtPipe.Cli.Security.IApprovalGate)gate;
+		});
 		services.AddMcpServer()
 		        .WithStdioServerTransport()
 		        .WithTools<DtPipe.Cli.Mcp.DtPipeMcpTools>();
 	}
 
-	private static void RegisterReader<TDesc>(IServiceCollection services) where TDesc : class, IProviderDescriptor<IStreamReader>, new()
-	{
-		var descriptor = new TDesc();
-		services.AddSingleton<IStreamReaderFactory>(sp => new CliStreamReaderFactory(descriptor, sp.GetRequiredService<OptionsRegistry>(), sp));
-		services.AddSingleton<ICliContributor>(sp => (ICliContributor)sp.GetServices<IStreamReaderFactory>().First(f => f.ComponentName == descriptor.ComponentName));
-	}
 }

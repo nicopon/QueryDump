@@ -40,6 +40,8 @@ run_mission() {
     rm -f "$FIFO_IN" "$FIFO_OUT"
     mkfifo "$FIFO_IN" "$FIFO_OUT"
 
+    # Harness consent (F2): explicitly approve writes for sanctioned test missions.
+    export DTPIPE_MCP_APPROVE_WRITES=1
     dotnet run --project src/DtPipe/DtPipe.csproj -- mcp < "$FIFO_IN" > "$FIFO_OUT" &
     local MCP_PID=$!
 
