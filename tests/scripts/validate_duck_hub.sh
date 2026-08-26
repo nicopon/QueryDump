@@ -115,12 +115,17 @@ echo -e "\n--- Test 4: DuckDB S3 / MinIO (httpfs) ---"
 if nc -z 127.0.0.1 9000 2>/dev/null || nc -w 2 127.0.0.1 9000 2>/dev/null; then
     S3_INIT="INSTALL httpfs; LOAD httpfs; SET s3_endpoint='127.0.0.1:9000'; SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin'; SET s3_use_ssl=false; SET s3_url_style='path';"
     S3_TARGET="s3://dtpipe-test-bucket/users.parquet"
+    STAGE_DB="$TMP_DIR/s3_stage.duckdb"
 
-    echo "Testing write to MinIO S3 bucket via DuckDB httpfs: ..."
-    "$DTPIPE" -i "$SRC_CSV" --duck-init "$S3_INIT" -o "$S3_TARGET" --strategy Recreate --no-stats
+    # Object-storage targets must go through the DuckDB engine (httpfs): a plain
+    # '-o s3://...' is rejected by design — file providers never claim remote schemes.
+    echo "Testing write to MinIO S3 bucket via DuckDB httpfs (stage + post-exec COPY): ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "duck:$STAGE_DB" --table "users" --strategy Recreate \
+        --post-exec "$S3_INIT COPY (SELECT * FROM users) TO '$S3_TARGET' (FORMAT PARQUET);" --no-stats
 
     echo "Testing read from MinIO S3 bucket via DuckDB httpfs: ..."
-    "$DTPIPE" -i "$S3_TARGET" --duck-init "$S3_INIT" -o "$TMP_DIR/s3_read.csv" --no-stats
+    "$DTPIPE" -i "duck:memory" --duck-init "$S3_INIT" \
+        --query "SELECT * FROM read_parquet('$S3_TARGET')" -o "$TMP_DIR/s3_read.csv" --no-stats
 
     OUT_LINES=$(wc -l < "$TMP_DIR/s3_read.csv" | tr -d ' ')
     if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
@@ -161,14 +166,18 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 6: DuckDB Azure Blob Storage (Azurite) ---"
 if nc -z 127.0.0.1 10000 2>/dev/null || nc -w 2 127.0.0.1 10000 2>/dev/null; then
-    AZURE_INIT="INSTALL azure; LOAD azure; CREATE SECRET azurite_secret (TYPE AZURE, PROVIDER CONNECTION_STRING, CONNECTION_STRING 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;');"
+    AZURE_INIT="INSTALL azure; LOAD azure; CREATE SECRET azurite_secret (TYPE AZURE, CONNECTION_STRING 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;');"
     AZURE_TARGET="azure://dtpipe-azure-bucket/users.parquet"
+    AZ_STAGE_DB="$TMP_DIR/az_stage.duckdb"
 
-    echo "Testing write to Azure Blob Storage (Azurite) via DuckDB azure: ..."
-    "$DTPIPE" -i "$SRC_CSV" --duck-init "$AZURE_INIT" -o "$AZURE_TARGET" --strategy Recreate --no-stats
+    # Same rule as test 4: remote schemes go through the DuckDB engine.
+    echo "Testing write to Azure Blob Storage (Azurite) via DuckDB azure (stage + post-exec COPY): ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "duck:$AZ_STAGE_DB" --table "users" --strategy Recreate \
+        --post-exec "$AZURE_INIT COPY (SELECT * FROM users) TO '$AZURE_TARGET' (FORMAT PARQUET);" --no-stats
 
     echo "Testing read from Azure Blob Storage (Azurite) via DuckDB azure: ..."
-    "$DTPIPE" -i "$AZURE_TARGET" --duck-init "$AZURE_INIT" -o "$TMP_DIR/azure_read.csv" --no-stats
+    "$DTPIPE" -i "duck:memory" --duck-init "$AZURE_INIT" \
+        --query "SELECT * FROM read_parquet('$AZURE_TARGET')" -o "$TMP_DIR/azure_read.csv" --no-stats
 
     OUT_LINES=$(wc -l < "$TMP_DIR/azure_read.csv" | tr -d ' ')
     if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then

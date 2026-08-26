@@ -273,6 +273,11 @@ into one step; a different flag type starts a new step.
 > `--pre-exec`, `--post-exec` etc. accept inline SQL or a file path (`@scripts/pre.sql` or a `.sql` file path).
 > `--duck-init` runs on the DuckDB connection before reads or writes (unlike `--pre-exec` which runs on the target DB after connection).
 
+> **Object storage (`s3://`, `azure://`, `https://`…)** is not a local-file target: file providers
+> never claim remote-scheme URIs. Read or write such locations through the DuckDB engine
+> (`--duck-init "INSTALL httpfs; …"` + `read_parquet('s3://…')` / `COPY … TO 's3://…'`) —
+> see the MinIO/Azurite scenarios in `tests/scripts/validate_duck_hub.sh`.
+
 ---
 
 ## Execution & Statistics

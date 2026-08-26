@@ -39,7 +39,7 @@ run_test() {
     local status=$?
 
     # Tests in this list are EXPECTED to fail (non-zero exit code = PASS)
-    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143)$ ]]; then
+    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143|144)$ ]]; then
         if [ $status -eq 0 ]; then
             echo -e "\e[31mFAILED (Expected error but got success)\e[0m"
             return 1
@@ -448,6 +448,11 @@ run_test "T142" "$DTPIPE -i artifacts/test_data.csv --alias a --alias b \
 run_test "T143" "$DTPIPE -i artifacts/test_data.csv --alias s --from s \
   \"SELECT Id FROM s\" --sql \"SELECT Val FROM s\" \
   -o artifacts/output_t143.csv"
+
+# T144: [ERROR] Object-storage URI claimed by a local-file writer.
+# File providers must never treat "s3://..." as a local path (that bug silently
+# created a literal "s3:" directory). Object storage goes through the DuckDB engine.
+run_test "T144" "$DTPIPE -i artifacts/test_data.csv -o \"s3://dtpipe-test-bucket/t144.parquet\""
 
 echo "----------------------------------------"
 
