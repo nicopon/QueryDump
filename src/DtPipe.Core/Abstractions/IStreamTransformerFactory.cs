@@ -78,5 +78,5 @@ public interface IStreamTransformerFactory
     /// Returns null when this factory is not activated by the given args; an empty
     /// dictionary is a valid marker for parameterless processors.
     /// </summary>
-    Dictionary<string, object>? ExportToProviderOptions(string[] branchArgs) => null;
+    Dictionary<string, object?>? ExportToProviderOptions(string[] branchArgs) => null;
 }

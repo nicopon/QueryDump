@@ -191,7 +191,9 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
                     _ => MergeMode.Insert,
                 };
                 var spec = new MergeSpec(
-                    QuotedTargetTable: _quotedTargetTableName,
+                    // Initialized in InitializeAsync (BuildQuotedTableName); CompleteAsync
+                    // cannot run before it on this writer's lifecycle.
+                    QuotedTargetTable: _quotedTargetTableName!,
                     SourceTable: _stagingTable,
                     KeyColumns: _keyColumns,
                     Columns: _columns!,

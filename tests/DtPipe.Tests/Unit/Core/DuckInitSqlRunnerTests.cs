@@ -86,7 +86,7 @@ public class DuckInitSqlRunnerTests
     private sealed class StubResolver(string input, string output) : IStringContentResolver
     {
         public bool WasCalled { get; private set; }
-        public Task<string?> ResolveAsync(string content, CancellationToken ct = default)
+        public Task<string?> ResolveAsync(string? content, CancellationToken ct = default)
         {
             WasCalled = true;
             return Task.FromResult<string?>(content == input ? output : content);

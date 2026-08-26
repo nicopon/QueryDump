@@ -1,0 +1,11 @@
+<Project>
+  <!-- Chain-import the repository-wide props (MSBuild imports only the NEAREST
+       Directory.Build.props, so this file must pull in the root one explicitly). -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- Zero-warning policy for production code: any compiler or analyzer warning
+         fails the build. Test projects remain advisory for now. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

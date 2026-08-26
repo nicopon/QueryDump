@@ -9,9 +9,7 @@ namespace DtPipe.Transformers.Arrow.Null;
 
 public class NullDataTransformerFactory : TransformerFactoryBase<NullOptions>
 {
-
 	public override string ComponentName => "null";
-	private readonly OptionsRegistry _registry;
 
 	public NullDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 

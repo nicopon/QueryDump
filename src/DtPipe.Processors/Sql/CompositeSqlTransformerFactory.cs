@@ -24,12 +24,12 @@ public class CompositeSqlTransformerFactory : IStreamTransformerFactory, IStream
     public bool IsApplicable(string[] branchArgs)
         => BranchArgParser.ExtractValue(branchArgs, "--sql") != null;
 
-    public Dictionary<string, object>? ExportToProviderOptions(string[] branchArgs)
+    public Dictionary<string, object?>? ExportToProviderOptions(string[] branchArgs)
     {
         var query = BranchArgParser.ExtractValue(branchArgs, "--sql") ?? BranchArgParser.GetPositionalQuery(branchArgs);
         if (query == null) return null;
 
-        var options = new Dictionary<string, object> { ["query"] = query };
+        var options = new Dictionary<string, object?> { ["query"] = query };
         var initSql = BranchArgParser.ExtractValue(branchArgs, "--duck-init");
         if (!string.IsNullOrEmpty(initSql)) options["duck-init"] = initSql;
         return options;

@@ -10,7 +10,6 @@ public class OverwriteDataTransformerFactory : TransformerFactoryBase<OverwriteO
 {
 
 	public override string ComponentName => "overwrite";
-	private readonly OptionsRegistry _registry;
 
 	public OverwriteDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
@@ -27,7 +26,7 @@ public class OverwriteDataTransformerFactory : TransformerFactoryBase<OverwriteO
 	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
 		// Get config options (like SkipNull) from registry-bound options
-		var registryOptions = _registry.Get<OverwriteOptions>();
+		var registryOptions = Registry.Get<OverwriteOptions>();
 
 		var options = new DtPipe.Transformers.Arrow.Overwrite.OverwriteOptions
 		{

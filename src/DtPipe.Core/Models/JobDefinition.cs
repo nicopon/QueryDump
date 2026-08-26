@@ -36,6 +36,6 @@ public record JobDefinition
     public string? From { get; set; }
 
 	/// <summary>Provider-specific options. Keyed by provider name (e.g. 'oracle-writer').</summary>
-	public Dictionary<string, Dictionary<string, object>>? ProviderOptions { get; init; }
+	public Dictionary<string, Dictionary<string, object?>>? ProviderOptions { get; init; }
 }
 

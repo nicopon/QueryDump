@@ -10,7 +10,6 @@ public class FakeDataTransformerFactory : TransformerFactoryBase<FakeOptions>
 {
 
 	public override string ComponentName => "fake";
-	private readonly OptionsRegistry _registry;
 
 	public FakeDataTransformerFactory(OptionsRegistry registry) : base(registry) { }
 
@@ -20,7 +19,7 @@ public class FakeDataTransformerFactory : TransformerFactoryBase<FakeOptions>
 
 	public override IDataTransformer CreateFromConfiguration(IEnumerable<(string Option, string Value)> configuration)
 	{
-		var globalOptions = _registry.Get<DtPipe.Transformers.Arrow.Fake.FakeOptions>();
+		var globalOptions = Registry.Get<DtPipe.Transformers.Arrow.Fake.FakeOptions>();
 		var mappings = new List<string>();
 		var locale = globalOptions.Locale;
 		var seedColumns = new List<string>(globalOptions.SeedColumn);

@@ -242,7 +242,7 @@ public static class PipelineToJobConverter
     /// options defaults are emitted. A detected stream processor contributes its own
     /// payload under its component name (e.g. <c>sql</c>, <c>merge</c>).
     /// </summary>
-    private static Dictionary<string, Dictionary<string, object>>? BuildProviderOptions(
+    private static Dictionary<string, Dictionary<string, object?>>? BuildProviderOptions(
         string? input, string? output,
         string[] readerArgs, string[] writerArgs,
         IEnumerable<IStreamReaderFactory>? readerFactories,
@@ -253,7 +253,7 @@ public static class PipelineToJobConverter
         if (readerFactories == null && writerFactories == null && processor == null)
             return null;
 
-        var result = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, Dictionary<string, object?>>(StringComparer.OrdinalIgnoreCase);
 
         // When a reader and a writer share the same component name (csv, jsonl…), the plain
         // key would be consumed by BOTH at load time — suffix both entries explicitly.
@@ -267,13 +267,13 @@ public static class PipelineToJobConverter
             ? BindToOptionDictionary(readerFactory.OptionsType, readerArgs, readerFactory.ComponentName)
             : null;
         if (readerFactory != null && readerEntry is { Count: > 0 } && readerKey != null)
-            result[readerKey] = readerEntry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+            result[readerKey] = readerEntry.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value);
 
         if (writerFactory2 != null && writerArgs is { Length: > 0 })
         {
             var entry = BindToOptionDictionary(writerFactory2.OptionsType, writerArgs, writerFactory2.ComponentName);
             if (entry is { Count: > 0 })
-                result[writerFactory2.ComponentName + "-writer"] = entry.ToDictionary(kvp => kvp.Key, kvp => (object)kvp.Value);
+                result[writerFactory2.ComponentName + "-writer"] = entry.ToDictionary(kvp => kvp.Key, kvp => (object?)kvp.Value);
         }
 
         if (processor != null && branchRawArgs != null)
