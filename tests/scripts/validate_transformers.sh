@@ -67,6 +67,8 @@ A="$ARTIFACTS_DIR"
 # Step 0: Generate reference source
 # ----------------------------------------
 echo "--- [Setup] Generating reference CSV ---"
+# One fake INSTANCE per mapping: each --fake starts a new instance whose options
+# (--fake-seed-row) scope to that instance only — this repetition is legitimate.
 "$DTPIPE" -i "generate:20" \
   --fake "Id:random.number" --fake-seed-row \
   --fake "Name:name.fullName" --fake-seed-row \
