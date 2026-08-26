@@ -94,8 +94,16 @@ grep -q "Alpha" "$A/t2_out2.csv" && pass "Two sources: branch 2 output" || fail 
 # ----------------------------------------
 echo "--- [3] SQL: single source → alias → SQL processor ---"
 check_t3() {
+    # Content assertion: exactly one row holding COUNT(*)=100 — proves the branch ran
+    # the caller's query (the old helper silently overrode it with SELECT * FROM src,
+    # which produced 100 rows and still passed a ">= 1 row" check).
     local count=$(csv_rows "$1")
-    [ "$count" -ge 1 ] && pass "SQL (single source, $2): got result" || fail "SQL (single source, $2): no output"
+    local cnt=$(awk -F',' 'NR==2{gsub(/\r/,"");print $1}' "$1")
+    if [ "$count" -eq 1 ] && [ "$cnt" -eq 100 ]; then
+        pass "SQL single source ($2): COUNT(*) = 100 over generate:100"
+    else
+        fail "SQL single source ($2): expected 1 row with cnt=100, got rows=$count cnt=$cnt"
+    fi
 }
 run_sql_test "T3: Single Source" \
   "-i \"generate:100\" --fake \"Id:random.number\" --fake \"Val:random.number\" --drop \"GenerateIndex\" --alias src --from src --sql \"SELECT COUNT(*) AS cnt FROM src\"" \
@@ -106,8 +114,14 @@ run_sql_test "T3: Single Source" \
 # ----------------------------------------
 echo "--- [4] SQL JOIN: main + ref ---"
 check_t4() {
+    # LEFT JOIN must keep all 1000 main rows and expose the joined Label column.
     local count=$(csv_rows "$1")
-    [ "$count" -ge 1 ] && pass "SQL JOIN ($2): result produced" || fail "SQL JOIN ($2): no output"
+    local lastCol=$(head -n1 "$1" | awk -F',' '{gsub(/\r/,"");print $NF}')
+    if [ "$count" -eq 1000 ] && [ "$lastCol" = "Label" ]; then
+        pass "SQL JOIN ($2): 1000 rows, Label column present"
+    else
+        fail "SQL JOIN ($2): expected 1000 rows ending in Label column, got rows=$count lastCol=$lastCol"
+    fi
 }
 # Prepare data with specific types
 "$DTPIPE" -i "generate:1000" --fake "Id:random.number" --fake "Name:name.firstName" --drop "GenerateIndex" -o "$A/t4_main.parquet" --strategy Recreate --no-stats
@@ -166,8 +180,16 @@ check_t6 "$A/t6_sql.csv" "duckdb"
 # ----------------------------------------
 echo "--- [7] Diamond (fan-out → two filtered branches → SQL join) ---"
 check_t7() {
+    # hi_cnt must be a single-row COUNT over the Score>0 branch. random.number yields
+    # [0,1) floats so the split itself is data-dependent (often 100/0) — but a silent
+    # query override (SELECT * FROM src) would return 100 ROWS, which rows==1 rejects.
     local count=$(csv_rows "$1")
-    [ "$count" -ge 1 ] && pass "Diamond ($2): result produced" || fail "Diamond ($2): no output"
+    local cnt=$(awk -F',' 'NR==2{gsub(/\r/,"");print $1}' "$1")
+    if [ "$count" -eq 1 ] && [ "$cnt" -ge 0 ] && [ "$cnt" -le 100 ]; then
+        pass "Diamond ($2): hi_cnt = $cnt (single-row COUNT over filtered branch)"
+    else
+        fail "Diamond ($2): expected 1 row with numeric hi_cnt in [0..100], got rows=$count cnt=$cnt"
+    fi
 }
 "$DTPIPE" -i "generate:100" --fake "Id:random.number" --fake "Score:random.number" --drop "GenerateIndex" -o "$A/t7_src.parquet" --strategy Recreate --no-stats
 
@@ -308,7 +330,14 @@ check_t12_all "dummy" "duckdb"
 # ----------------------------------------
 echo "--- [13] Vicious: Large Data & Sparse Nulls ---"
 check_t13() {
-    grep -q "1000" "$1" && pass "Large Data ($2): count matches" || fail "Large Data ($2): wrong count"
+    # Exact content: one row, COUNT(*) = 1000 (grep-based check accepted any file containing "1000").
+    local count=$(csv_rows "$1")
+    local cnt=$(awk -F',' 'NR==2{gsub(/\r/,"");print $1}' "$1")
+    if [ "$count" -eq 1 ] && [ "$cnt" -eq 1000 ]; then
+        pass "Large Data ($2): COUNT(*) = 1000"
+    else
+        fail "Large Data ($2): expected 1 row with cnt=1000, got rows=$count cnt=$cnt"
+    fi
 }
 
 run_sql_test "T13: Large Data" \

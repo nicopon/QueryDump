@@ -182,7 +182,7 @@ public class LinearPipelineServiceTests
             readerFactories: new List<IStreamReaderFactory> { readerFactory },
             writerFactories: new List<IDataWriterFactory> { writerFactoryOverride ?? new NullWriterFactory() },
             transformerFactories: new List<IDataTransformerFactory>(),
-            optionsRegistry: new OptionsRegistry(),
+            optionsRegistry: new OptionsRegistry(Microsoft.Extensions.Logging.Abstractions.NullLogger<OptionsRegistry>.Instance),
             observer: observer,
             logger: NullLogger<ExportService>.Instance,
             hookExecutor: new HookExecutor(observer, NullLogger<HookExecutor>.Instance),
@@ -205,7 +205,7 @@ public class LinearPipelineServiceTests
         var serviceProvider = services.BuildServiceProvider();
 
         var consoleMock = new Mock<IAnsiConsole>();
-        var serviceRegistry = new OptionsRegistry();
+        var serviceRegistry = new OptionsRegistry(Microsoft.Extensions.Logging.Abstractions.NullLogger<OptionsRegistry>.Instance);
         var service = new LinearPipelineService(
             contributors: Array.Empty<DtPipe.Cli.Infrastructure.ICliContributor>(),
             serviceProvider: serviceProvider,

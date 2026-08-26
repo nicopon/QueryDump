@@ -128,6 +128,7 @@ if [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then
     run_script "Transformers"   "$SCRIPT_DIR/validate_transformers.sh"
     run_script "Schema"         "$SCRIPT_DIR/validate_schema.sh"
     run_script "Options"        "$SCRIPT_DIR/validate_options.sh"
+    run_script "Binder parity"  "$SCRIPT_DIR/validate_binder_parity.sh"
     run_script "Docs"           "$SCRIPT_DIR/validate_docs.sh"
     run_script "Hooks"          "$SCRIPT_DIR/validate_hooks.sh"
     run_script "Incremental (Cursor)" "$SCRIPT_DIR/validate_cursor.sh"

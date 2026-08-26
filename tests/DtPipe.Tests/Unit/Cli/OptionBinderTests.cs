@@ -17,6 +17,17 @@ namespace DtPipe.Tests.Unit.Cli;
 /// </summary>
 public class OptionBinderTests
 {
+    /// <summary>Captures Console.Error while running <paramref name="action"/> (console-serial safe by xunit default).</summary>
+    private static string CaptureStderr(Action action)
+    {
+        var original = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        try { action(); }
+        finally { Console.SetError(original); }
+        return captured.ToString();
+    }
+
     public static TheoryData<Type> OptionTypes => new()
     {
         typeof(DtPipe.Adapters.Csv.CsvReaderOptions),
@@ -138,8 +149,11 @@ public class OptionBinderTests
     public void Unknown_Yaml_Key_Warns_When_Lenient()
     {
         var instance = new ProbeOptions();
-        OptionBinder.BindYaml(instance, new Dictionary<string, object?> { ["totally-unknown"] = "v" });
+        var stderr = CaptureStderr(() =>
+            OptionBinder.BindYaml(instance, new Dictionary<string, object?> { ["totally-unknown"] = "v" }));
+
         Assert.Equal("", instance.Known); // untouched
+        Assert.Contains("Unrecognized provider option 'totally-unknown' for 'ProbeOptions'", stderr, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -166,7 +180,9 @@ public class OptionBinderTests
     public void Required_Violation_Warns_When_Lenient()
     {
         var instance = new RequiredOptions();
-        OptionBinder.EnforceRequired(instance, strict: false); // must not throw
+        var stderr = CaptureStderr(() => OptionBinder.EnforceRequired(instance, strict: false)); // must not throw
+
+        Assert.Contains("Required option(s) missing on RequiredOptions: Table", stderr, StringComparison.Ordinal);
     }
 
     [Fact]

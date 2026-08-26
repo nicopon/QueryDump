@@ -21,7 +21,9 @@ public class McpToolsTests
     public McpToolsTests()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<DtPipe.Core.Options.OptionsRegistry>();
+        // Silent logger: these tests exercise tool plumbing, not the F17 missing-options warning.
+        services.AddSingleton(new DtPipe.Core.Options.OptionsRegistry(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<DtPipe.Core.Options.OptionsRegistry>.Instance));
         services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(Array.Empty<IStreamTransformerFactory>());
 
         var readerFactories = new IStreamReaderFactory[] { new DummyReaderFactory() };

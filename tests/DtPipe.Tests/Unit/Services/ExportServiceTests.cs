@@ -48,7 +48,7 @@ public class ExportServiceTests
 			readerFactoryList,
 			writerFactoryList,
 			new List<IDataTransformerFactory>(),
-			new OptionsRegistry(),
+			new OptionsRegistry(Microsoft.Extensions.Logging.Abstractions.NullLogger<OptionsRegistry>.Instance),
 			_mockObserver.Object,
 			_mockLogger.Object,
 			hookExecutor,
@@ -94,7 +94,7 @@ public class ExportServiceTests
 		_mockWriterFactory.Setup(f => f.Create(It.IsAny<OptionsRegistry>())).Returns(mockWriter.Object);
 
 		// Act
-		await _service.RunExportAsync(new PipelineOptions { NoStats = options.NoStats }, "test-source", "target-path", cts.Token, pipeline, _mockReaderFactory.Object, _mockWriterFactory.Object, new OptionsRegistry(), showStatusMessages: true);
+		await _service.RunExportAsync(new PipelineOptions { NoStats = options.NoStats }, "test-source", "target-path", cts.Token, pipeline, _mockReaderFactory.Object, _mockWriterFactory.Object, new OptionsRegistry(Microsoft.Extensions.Logging.Abstractions.NullLogger<OptionsRegistry>.Instance), showStatusMessages: true);
 
 		// Assert
 		_mockObserver.Verify(o => o.ShowIntro("test-source", "target-path"), Times.Once);
@@ -135,7 +135,7 @@ public class PipelinePhaseOrderTests
 
         try
         {
-            var registry = new DtPipe.Core.Options.OptionsRegistry();
+            var registry = new DtPipe.Core.Options.OptionsRegistry(Microsoft.Extensions.Logging.Abstractions.NullLogger<OptionsRegistry>.Instance);
             var readerFactory = new PhaseStubReaderFactory();
             var writerFactory = new PhaseStubWriterFactory(outputCsv);
 
