@@ -237,16 +237,23 @@ public class PipelineLexerTests
 }
 
 [Collection("console-serial")]
-public class RepeatedGlobalWarningTests
+public class RepeatedFlagStrictnessTests
 {
-    private static string ParseCapturingStderr(params string[] args)
+    private static PipelineLexer BuildLexer()
     {
         var registry = new FlagRegistry();
         CoreFlagRegistry.RegisterCoreFlags(registry);
-        // Mirror runtime registration of the CSV reader flags used by these tests.
+        // Mirror runtime registration of the CSV flags used by these tests. At runtime the
+        // reader AND writer contributors both register --csv-separator, merging Stage to
+        // Reader|Writer (FlagStage.Any) — cross-stage repeats are then legitimate.
         foreach (var def in DtPipe.Cli.Infrastructure.CliOptionBuilder.GenerateFlagDefsForType(typeof(DtPipe.Adapters.Csv.CsvReaderOptions)))
-            registry.Register(def with { Stage = FlagStage.Reader });
-        var lexer = new PipelineLexer(registry);
+            registry.Register(def with { Stage = FlagStage.Any });
+        return new PipelineLexer(registry);
+    }
+
+    private static string ParseCapturingStderr(params string[] args)
+    {
+        var lexer = BuildLexer();
 
         var originalError = Console.Error;
         var captured = new StringWriter();
@@ -263,11 +270,44 @@ public class RepeatedGlobalWarningTests
     }
 
     [Fact]
-    public void Repeated_Globals_Warn_On_Last_Wins()
+    public void Repeated_Scalar_Flag_In_Same_Stage_Throws()
     {
-        var output = ParseCapturingStderr("-i", "in.csv", "--csv-separator", ";", "--csv-separator", "|", "-o", "out.csv");
-        Assert.Contains("more than once", output, StringComparison.Ordinal);
-        Assert.Contains("--csv-separator", output, StringComparison.Ordinal);
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            ParseCapturingStderr("-i", "in.csv", "--csv-separator", ";", "--csv-separator", "|", "-o", "out.csv"));
+        Assert.Contains("more than once", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("--csv-separator", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cross_Stage_Repeat_Is_Allowed()
+    {
+        // Reader separator and writer separator are independent bindings in one branch.
+        var pipeline = BuildLexer().Parse(new[] { "-i", "in.csv", "--csv-separator", ";", "-o", "out.csv", "--csv-separator", "|" });
+        Assert.Single(pipeline.Branches);
+    }
+
+    [Fact]
+    public void Repeated_Global_Flag_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            ParseCapturingStderr("-i", "in.csv", "--log", "a.log", "--log", "b.log", "-o", "out.csv"));
+        Assert.Contains("--log", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Positional_Query_After_Explicit_Sql_In_From_Branch_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            ParseCapturingStderr("-i", "in.csv", "--alias", "s", "--from", "s", "--sql", "SELECT 1", "SELECT 2"));
+        Assert.Contains("SQL query provided more than once", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Explicit_Sql_After_Positional_Query_In_From_Branch_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            ParseCapturingStderr("-i", "in.csv", "--alias", "s", "--from", "s", "SELECT 1", "--sql", "SELECT 2"));
+        Assert.Contains("SQL query provided more than once", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

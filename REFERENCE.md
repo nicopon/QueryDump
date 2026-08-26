@@ -204,6 +204,8 @@ If you are coming from Python or SQLAlchemy, use this translation guide to build
 | `--column-types` | `"Id:uuid,Qty:int32"` | Explicit column type declarations for text readers |
 | `--auto-column-types` | | Infer column types from the first 100 rows |
 | `--path` | `"//Product"` | XPath / JSON path for record selection (XML, JsonL) |
+| `--query` / `-q` | `"SELECT ..."` | SQL query executed by database readers (or a path to a `.sql` file) |
+| `--table` / `-t` | `"users"` | Source table name — auto-builds `SELECT * FROM "<table>"` when no `--query` is given (database readers) |
 | `--duck-init` | `"LOAD httpfs"` | **(DuckDB only)** SQL executed after connection open. See [Value Resolution](#value-resolution) |
 
 ---
@@ -318,6 +320,24 @@ Branches are separated implicitly while walking the arguments. One pure function
 
 Neither `--sql` nor boolean processor flags (e.g. `--merge`) trigger a split.
 > Pre-filter large lookup tables upstream before using them as `--ref`.
+
+#### Duplicate flags are an error
+
+A non-repeatable flag may appear **at most once per stage** within a branch — stages being
+reader (before the first transformer), pipeline (transformer scope) and writer (after `-o`).
+A repeated flag in the same stage is a hard error, not a silent last-wins:
+
+```
+# ERROR: --sql provided twice in the same branch
+dtpipe -i src.csv --alias s --from s --sql "SELECT * FROM s" --sql "SELECT count(*) FROM s" -o out.csv
+
+# OK: same flag in two different stages = two independent bindings
+dtpipe -i in.csv --csv-separator ";" -o out.csv --csv-separator "|"
+```
+
+Global scalar flags (`--log`, `--metrics-path`, …) may appear only once per command line.
+The SQL query of a branch must come from exactly one source: an explicit `--sql "<query>"`
+**or** one positional query — combining both is an error.
 
 > **SQL engine**: The `--sql` processor uses DuckDB internally — the same engine available as a read/write provider (`duck:`). This means all DuckDB SQL extensions and functions are available in `--sql` branches. Use `--duck-init` to load extensions before query execution. See [Provider-Specific Options](#provider-specific-options) for details.
 

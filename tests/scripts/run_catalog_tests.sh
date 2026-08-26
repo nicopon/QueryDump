@@ -39,7 +39,7 @@ run_test() {
     local status=$?
 
     # Tests in this list are EXPECTED to fail (non-zero exit code = PASS)
-    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140)$ ]]; then
+    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143)$ ]]; then
         if [ $status -eq 0 ]; then
             echo -e "\e[31mFAILED (Expected error but got success)\e[0m"
             return 1
@@ -434,6 +434,20 @@ run_test "T139" "$DTPIPE -i artifacts/complex_data.jsonl --alias orders --from o
 # wrong_schema has numeric columns (id INTEGER, name INTEGER, ...); test_data.parquet has Id:uuid.
 # ValidateRecreateCompatibility must detect the Guid vs Int32 mismatch and fail with a clear error.
 run_test "T140" "$DTPIPE -i artifacts/test_data.parquet -o \"$PG\" --table \"wrong_schema\" --strategy Recreate"
+
+# T141: [ERROR] Duplicate --sql in the same branch — strict duplicate policy (last-wins removed)
+run_test "T141" "$DTPIPE -i artifacts/test_data.csv --alias s --from s \
+  --sql \"SELECT * FROM s\" --sql \"SELECT count(*) AS c FROM s\" \
+  -o artifacts/output_t141.csv"
+
+# T142: [ERROR] Duplicate scalar flag (--alias) in the same branch stage
+run_test "T142" "$DTPIPE -i artifacts/test_data.csv --alias a --alias b \
+  -o artifacts/output_t142.csv"
+
+# T143: [ERROR] Positional query combined with explicit --sql in the same branch
+run_test "T143" "$DTPIPE -i artifacts/test_data.csv --alias s --from s \
+  \"SELECT Id FROM s\" --sql \"SELECT Val FROM s\" \
+  -o artifacts/output_t143.csv"
 
 echo "----------------------------------------"
 

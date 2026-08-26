@@ -10,9 +10,15 @@ namespace DtPipe.Cli.Pipeline;
 /// Branches are split implicitly by the second occurrence of -i/--input or by any --from flag.
 /// All flags belong to the branch in which they appear, with strict stage-scoping enforced by
 /// BuildBranch: flags must appear in the correct stage (reader before transformers, writer after -o).
+/// Strictness: a non-repeatable flag may appear at most ONCE per stage within a branch, and a
+/// global scalar flag at most once per command line — duplicates are hard errors, not warnings
+/// (the previously silent last-wins behavior made the executed configuration ambiguous).
 /// </summary>
 public class PipelineLexer
 {
+    /// <summary>Coarse execution stage currently being lexed; mirrors BuildBranch's slicing.</summary>
+    private enum LexStage { Reader, Pipeline, Writer }
+
     private readonly FlagRegistry _registry;
 
     public PipelineLexer(FlagRegistry registry)
@@ -27,6 +33,12 @@ public class PipelineLexer
 
         var currentBranchFlags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         var currentBranchArgs = new List<string>();
+
+        // Duplicate-detection state: (flag → stages where it was already consumed) per branch,
+        // plus one process-wide set for global scalar flags. Cleared on branch split.
+        var seenPerStage = new Dictionary<string, HashSet<LexStage>>(StringComparer.OrdinalIgnoreCase);
+        var seenGlobalScalars = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        LexStage currentStage = LexStage.Reader;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -57,23 +69,49 @@ public class PipelineLexer
                     branches.Add(BuildBranch(currentBranchFlags, currentBranchArgs));
                     currentBranchFlags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                     currentBranchArgs  = new List<string>();
+                    seenPerStage.Clear();
+                    currentStage = LexStage.Reader;
                 }
+
+                // Stage transition — mirrors BuildBranch's writer/pipeline boundary detection:
+                // first -o/--output opens the writer stage; the first exact-Pipeline flag opens
+                // the transformer stage (only while still in the reader stage).
+                if (def.Name == "--output")
+                    currentStage = LexStage.Writer;
+                else if (def.Stage == FlagStage.Pipeline && currentStage == LexStage.Reader)
+                    currentStage = LexStage.Pipeline;
 
                 // Global flags go to globalDict only.
                 // Per-branch flags go to both globalDict (for global defaults) and the current branch.
                 globalDict[def.Name] = value ?? "true";
-                if (def.Scope == FlagScope.PerBranch)
-                {
-                    // F17: a repeated non-repeatable flag silently kept only the last
-                    // occurrence — surface it (last-wins behavior is unchanged).
-                    if (def.Arity != FlagArity.Repeatable && currentBranchFlags.ContainsKey(def.Name))
-                        WarnRepeated(token);
 
-                    if (!currentBranchFlags.ContainsKey(def.Name)) currentBranchFlags[def.Name] = new List<string>();
-                    currentBranchFlags[def.Name].Add(value ?? "true");
-                    currentBranchArgs.Add(token);
-                    if (value != null) currentBranchArgs.Add(value);
+                if (def.Scope == FlagScope.Global)
+                {
+                    // --job is a split trigger (multi-job DAGs are legitimate), never a duplicate.
+                    if (def.Arity != FlagArity.Repeatable && def.Name != "--job" && !seenGlobalScalars.Add(def.Name))
+                        throw new InvalidOperationException(
+                            $"Global flag '{def.Name}' appears more than once; a global flag may be specified only once.");
+                    continue;
                 }
+
+                if (def.Arity != FlagArity.Repeatable)
+                {
+                    if (!seenPerStage.TryGetValue(def.Name, out var stages))
+                    {
+                        stages = new HashSet<LexStage>();
+                        seenPerStage[def.Name] = stages;
+                    }
+                    if (!stages.Add(currentStage))
+                        throw new InvalidOperationException(
+                            $"Flag '{token}' appears more than once in the same branch stage ({currentStage.ToString().ToLowerInvariant()}). " +
+                            "Each non-repeatable flag may appear once per stage: reader flags before transformers, " +
+                            "writer flags after -o.");
+                }
+
+                if (!currentBranchFlags.ContainsKey(def.Name)) currentBranchFlags[def.Name] = new List<string>();
+                currentBranchFlags[def.Name].Add(value ?? "true");
+                currentBranchArgs.Add(token);
+                if (value != null) currentBranchArgs.Add(value);
             }
             else
             {
@@ -81,8 +119,14 @@ public class PipelineLexer
                 {
                     // Unknown flag — store as boolean, captured in RawArgs for OptionBinder.
                     globalDict[token] = "true";
-                    if (currentBranchFlags.ContainsKey(token))
-                        WarnRepeated(token);
+                    if (!seenPerStage.TryGetValue(token, out var unknownStages))
+                    {
+                        unknownStages = new HashSet<LexStage>();
+                        seenPerStage[token] = unknownStages;
+                    }
+                    if (!unknownStages.Add(currentStage))
+                        throw new InvalidOperationException(
+                            $"Flag '{token}' appears more than once in the same branch stage ({currentStage.ToString().ToLowerInvariant()}).");
                     if (!currentBranchFlags.ContainsKey(token)) currentBranchFlags[token] = new List<string>();
                     currentBranchFlags[token].Add("true");
                     currentBranchArgs.Add(token);
@@ -96,7 +140,19 @@ public class PipelineLexer
                         branches.Add(BuildBranch(currentBranchFlags, currentBranchArgs));
                         currentBranchFlags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                         currentBranchArgs  = new List<string>();
+                        seenPerStage.Clear();
+                        currentStage = LexStage.Reader;
                     }
+                    if (currentBranchFlags.ContainsKey("--sql") ||
+                        (seenPerStage.TryGetValue("--sql", out var sqlStages) && !sqlStages.Add(LexStage.Pipeline)))
+                    {
+                        throw new InvalidOperationException(
+                            "SQL query provided more than once in the same branch: a positional query cannot be " +
+                            "combined with --sql. Provide a single --sql \"<query>\".");
+                    }
+                    if (!seenPerStage.ContainsKey("--sql"))
+                        seenPerStage["--sql"] = new HashSet<LexStage>();
+                    seenPerStage["--sql"].Add(LexStage.Pipeline);
                     if (!currentBranchFlags.ContainsKey("--sql")) currentBranchFlags["--sql"] = new List<string>();
                     currentBranchFlags["--sql"].Add(token);
                     currentBranchArgs.Add("--sql");
@@ -110,9 +166,6 @@ public class PipelineLexer
 
         return new ParsedPipeline(MapGlobals(globalDict), branches);
     }
-
-    private static void WarnRepeated(string token)
-        => Console.Error.WriteLine($"[dtpipe] Warning: flag '{token}' appears more than once in the same branch; using the last occurrence.");
 
     private GlobalOptions MapGlobals(Dictionary<string, object?> dict)
     {

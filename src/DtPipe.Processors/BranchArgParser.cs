@@ -6,16 +6,17 @@ namespace DtPipe.Processors;
 public static class BranchArgParser
 {
     /// <summary>
-    /// Returns the first value following <paramref name="flag"/>, or <see langword="null"/> if the flag is absent
-    /// or its next token looks like another flag.
+    /// Returns the last value following <paramref name="flag"/> (last-occurrence-wins, matching
+    /// the CLI lexer's documented duplicate policy), or <see langword="null"/> if the flag is absent
+    /// or every occurrence's next token looks like another flag.
     /// </summary>
     public static string? ExtractValue(string[] args, string flag)
     {
-        for (int i = 0; i < args.Length - 1; i++)
+        for (int i = args.Length - 2; i >= 0; i--)
         {
             if (!args[i].Equals(flag, StringComparison.OrdinalIgnoreCase)) continue;
             var val = args[i + 1];
-            if (val.StartsWith('-') && val.Length > 1 && !char.IsDigit(val[1])) return null;
+            if (val.StartsWith('-') && val.Length > 1 && !char.IsDigit(val[1])) continue;
             return val;
         }
         return null;
