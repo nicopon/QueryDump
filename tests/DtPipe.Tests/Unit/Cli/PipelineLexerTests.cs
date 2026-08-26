@@ -20,8 +20,8 @@ public class PipelineLexerTests
 
         // Reader-specific flags (FlagStage.Reader)
         _registry.Register(new FlagDef("--fake", new[] { "-f" }, FlagArity.Scalar, FlagScope.PerBranch, "fake transformer", FlagStage.Pipeline));
-        _registry.Register(new FlagDef("--sql",  Array.Empty<string>(), FlagArity.Scalar,  FlagScope.PerBranch, "sql processor",   FlagStage.Pipeline));
-        _registry.Register(new FlagDef("--merge", Array.Empty<string>(), FlagArity.Boolean, FlagScope.PerBranch, "merge processor", FlagStage.Pipeline));
+        _registry.Register(new FlagDef("--sql",  Array.Empty<string>(), FlagArity.Scalar,  FlagScope.PerBranch, "sql processor",   FlagStage.Pipeline, ProcessorTrigger: true));
+        _registry.Register(new FlagDef("--merge", Array.Empty<string>(), FlagArity.Boolean, FlagScope.PerBranch, "merge processor", FlagStage.Pipeline, ProcessorTrigger: true));
 
         // Shared reader+writer flags (FlagStage.Any = Reader | Writer)
         _registry.Register(new FlagDef("--table", new[] { "-t" }, FlagArity.Scalar, FlagScope.PerBranch, "table", FlagStage.Any));
@@ -315,5 +315,28 @@ public class RepeatedFlagStrictnessTests
     {
         var output = ParseCapturingStderr("-i", "in.csv", "-o", "out.csv", "--no-stats");
         Assert.DoesNotContain("Warning: flag", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Transformer_Options_May_Repeat_Across_Instances()
+    {
+        // Multi-instance idiom: every --fake starts a new transformer instance whose
+        // options (--fake-seed-row) scope to that instance — repetition is legitimate.
+        var registry = new FlagRegistry();
+        CoreFlagRegistry.RegisterCoreFlags(registry);
+        registry.Register(new FlagDef("--fake", Array.Empty<string>(), FlagArity.Scalar, FlagScope.PerBranch, "fake transformer", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--fake-seed-row", Array.Empty<string>(), FlagArity.Boolean, FlagScope.PerBranch, "seed per row", FlagStage.Pipeline));
+        registry.Register(new FlagDef("--drop", Array.Empty<string>(), FlagArity.Scalar, FlagScope.PerBranch, "drop column", FlagStage.Pipeline));
+
+        var pipeline = new PipelineLexer(registry).Parse(new[]
+        {
+            "-i", "generate:20",
+            "--fake", "Id:random.number", "--fake-seed-row",
+            "--fake", "Name:name.fullName", "--fake-seed-row",
+            "--drop", "GenerateIndex",
+            "-o", "out.csv"
+        });
+
+        Assert.Single(pipeline.Branches);
     }
 }

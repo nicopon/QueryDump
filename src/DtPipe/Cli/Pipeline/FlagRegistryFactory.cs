@@ -41,7 +41,8 @@ public static class FlagRegistryFactory
                     isBoolean ? FlagArity.Boolean : FlagArity.Scalar,
                     FlagScope.PerBranch,
                     stf.ComponentName,
-                    FlagStage.Pipeline));
+                    FlagStage.Pipeline,
+                    ProcessorTrigger: true));
             }
         }
 

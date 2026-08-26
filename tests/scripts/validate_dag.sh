@@ -41,8 +41,13 @@ run_sql_test() {
     local check_func="$3"
 
     echo "  [SQL Engine: DuckDB] $name..."
-    local sql="SELECT * FROM src"
-    eval "\"$DTPIPE\" $args --sql \"$sql\" -o \"$A/sql_out.csv\" --no-stats"
+    # Default query ONLY when the caller did not provide its own --sql:
+    # duplicating --sql in one branch is a hard error (strict duplicate policy),
+    # and silently overriding the caller's query was exactly the old bug class.
+    if [[ "$args" != *"--sql"* ]]; then
+        args="$args --sql \"SELECT * FROM src\""
+    fi
+    eval "\"$DTPIPE\" $args -o \"$A/sql_out.csv\" --no-stats"
     $check_func "$A/sql_out.csv" "duckdb"
 }
 
@@ -78,7 +83,7 @@ Y,Beta
 EOF
 
 "$DTPIPE" \
-  -i "$A/t2_src1.csv" --column-types "Id:int32,Val:string" -o "$A/t2_out1.csv" --no-stats \
+  -i "$A/t2_src1.csv" --column-types "Id:int32,Val:string" -o "$A/t2_out1.csv" \
   -i "$A/t2_src2.csv" --column-types "Code:string,Label:string" -o "$A/t2_out2.csv" --no-stats
 
 grep -q "A" "$A/t2_out1.csv" && pass "Two sources: branch 1 output" || fail "Two sources: branch 1 missing"
@@ -126,7 +131,7 @@ echo "--- [5] Fan-out (tee): one source → two branches ---"
 
 "$DTPIPE" \
   -i "$A/t5_src.csv" --column-types "Id:double" --alias s \
-  --from s -o "$A/t5_destA.csv" --no-stats \
+  --from s -o "$A/t5_destA.csv" \
   --from s -o "$A/t5_destB.csv" --no-stats
 
 COUNT_A=$(csv_rows "$A/t5_destA.csv")
@@ -149,7 +154,7 @@ echo "  [SQL Engine: DuckDB] T6: Fan-out + SQL..."
 rm -f "$A/t6_passthru.csv" "$A/t6_sql.csv"
 "$DTPIPE" \
   -i "parquet:$A/t6_src.parquet" --alias s \
-  --from s -o "$A/t6_passthru.csv" --no-stats \
+  --from s -o "$A/t6_passthru.csv" \
   --from s --sql "SELECT COUNT(*) AS total FROM s" -o "$A/t6_sql.csv" --no-stats
 
 COUNT_PT=$(csv_rows "$A/t6_passthru.csv")
@@ -185,7 +190,7 @@ rm -f "$A/t8_outA.csv" "$A/t8_outB.csv"
   --from m --ref r \
     --sql "SELECT COUNT(*) AS total FROM m" \
     --alias joined \
-  --from joined -o "$A/t8_outA.csv" --no-stats \
+  --from joined -o "$A/t8_outA.csv" \
   --from joined -o "$A/t8_outB.csv" --no-stats
 
 COUNT_A=$(csv_rows "$A/t8_outA.csv")
@@ -348,7 +353,7 @@ echo "1,A" >> "$A/t15_src.csv"
 echo "  [DAG Validator] T15: Expecting failure for shared state file..."
 set +e
 "$DTPIPE" -i "$A/t15_src.csv" --alias s \
-  --from s -o "$A/t15_out1.csv" --cursor "Id" --state "$A/t15_shared.sync" --no-stats \
+  --from s -o "$A/t15_out1.csv" --cursor "Id" --state "$A/t15_shared.sync" \
   --from s -o "$A/t15_out2.csv" --cursor "Id" --state "$A/t15_shared.sync" --no-stats > "$A/t15_error.log" 2>&1
 EXIT_CODE=$?
 set -e

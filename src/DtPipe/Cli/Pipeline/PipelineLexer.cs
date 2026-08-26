@@ -94,7 +94,7 @@ public class PipelineLexer
                     continue;
                 }
 
-                if (def.Arity != FlagArity.Repeatable)
+                if (def.Arity != FlagArity.Repeatable && !IsMultiInstanceOption(def))
                 {
                     if (!seenPerStage.TryGetValue(def.Name, out var stages))
                     {
@@ -166,6 +166,15 @@ public class PipelineLexer
 
         return new ParsedPipeline(MapGlobals(globalDict), branches);
     }
+
+    /// <summary>
+    /// Pipeline-stage transformer options are consumed per INSTANCE by TransformerPipelineBuilder
+    /// (a new instance starts at every trigger-flag recurrence), so repeating them configures the
+    /// next instance — legitimate, not ambiguous. Stream-processor triggers (--sql) and all
+    /// reader/writer/global flags bind once per branch and stay under the duplicate policy.
+    /// </summary>
+    private static bool IsMultiInstanceOption(FlagDef def)
+        => def.Stage == FlagStage.Pipeline && !def.ProcessorTrigger;
 
     private GlobalOptions MapGlobals(Dictionary<string, object?> dict)
     {

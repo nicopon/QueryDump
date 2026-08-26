@@ -339,6 +339,10 @@ Global scalar flags (`--log`, `--metrics-path`, …) may appear only once per co
 The SQL query of a branch must come from exactly one source: an explicit `--sql "<query>"`
 **or** one positional query — combining both is an error.
 
+Transformer options are the exception: a new transformer **instance** starts at every
+trigger-flag recurrence (`--fake A --fake-seed-row --fake B --fake-seed-row` builds two
+instances), so repeating a transformer option configures the next instance and is legal.
+
 > **SQL engine**: The `--sql` processor uses DuckDB internally — the same engine available as a read/write provider (`duck:`). This means all DuckDB SQL extensions and functions are available in `--sql` branches. Use `--duck-init` to load extensions before query execution. See [Provider-Specific Options](#provider-specific-options) for details.
 
 ### Canonical topologies

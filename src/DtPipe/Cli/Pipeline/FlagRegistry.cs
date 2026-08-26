@@ -38,7 +38,8 @@ public record FlagDef(
     FlagScope Scope,
     string? Description = null,
     FlagStage Stage = FlagStage.All,
-    string? ComponentName = null)
+    string? ComponentName = null,
+    bool ProcessorTrigger = false)
 {
     /// <summary>
     /// F8 single source of value-token semantics: a flag consumes the token that follows it
