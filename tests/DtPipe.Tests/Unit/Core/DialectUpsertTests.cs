@@ -79,10 +79,13 @@ public class DialectUpsertTests
     }
 
     [Fact]
-    public void SqlServer_Ignore_Is_Not_Supported()
+    public void SqlServer_Ignore_Omits_WhenMatched_Clause()
     {
-        Assert.Throws<NotSupportedException>(() =>
-            new SqlServerDialect().BuildStagingMerge(Spec(MergeMode.Ignore)));
+        var sql = new SqlServerDialect().BuildStagingMerge(Spec(MergeMode.Ignore, source: "stage"));
+
+        Assert.Contains("MERGE \"tgt\" AS T USING [stage] AS S ON (T.Id = S.[Id])", sql);
+        Assert.DoesNotContain("WHEN MATCHED", sql);          // existing keys are skipped
+        Assert.Contains("WHEN NOT MATCHED THEN INSERT (Id, Val) VALUES (S.[Id], S.[Val]);", sql);
     }
 
     [Fact]

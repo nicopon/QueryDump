@@ -32,11 +32,10 @@ public class SqlServerDialect : BaseSqlDialect
 	public override string? TableDiscoveryQuery => "SELECT TABLE_NAME AS table_name, TABLE_TYPE AS table_type FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME";
 
 	// F9 — TSQL MERGE over a staging table (ported from SqlServerDataWriter).
+	// Ignore mode omits the WHEN MATCHED clause: existing keys are left untouched,
+	// only new keys are inserted (same semantics as ON CONFLICT DO NOTHING).
 	public override string BuildStagingMerge(MergeSpec spec)
 	{
-		if (spec.Mode == MergeMode.Ignore)
-			throw new NotSupportedException("SqlServer staged merge does not support the Ignore strategy.");
-
 		var sb = new System.Text.StringBuilder();
 		sb.Append($"MERGE {spec.QuotedTargetTable} AS T ");
 		sb.Append($"USING [{spec.SourceTable}] AS S ON (");
