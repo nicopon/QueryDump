@@ -29,6 +29,21 @@ public class LinearPipelineServiceTests
         public static string DisplayName => "Stub";
     }
 
+    private sealed class TableQueryOptions : IOptionSet, IQueryAwareOptions, ITableAwareOptions
+    {
+        public static string Prefix => "tq";
+        public static string DisplayName => "TableQuery";
+        public string? Query { get; set; }
+        public string? Table { get; set; }
+    }
+
+    private sealed class WriterTableOptions : IOptionSet, ITableAwareOptions
+    {
+        public static string Prefix => "wt";
+        public static string DisplayName => "WriterTable";
+        public string? Table { get; set; }
+    }
+
     private sealed class BlockingReader : IStreamReader
     {
         public IReadOnlyList<PipeColumnInfo>? Columns => new List<PipeColumnInfo> { new("Id", typeof(int), false) };
@@ -67,6 +82,32 @@ public class LinearPipelineServiceTests
         public IStreamReader Create(OptionsRegistry registry) => _readerProvider();
     }
 
+    private sealed class QueryableStubReaderFactory : IStreamReaderFactory
+    {
+        private readonly Func<IStreamReader> _readerProvider;
+        public QueryableStubReaderFactory(Func<IStreamReader> readerProvider) => _readerProvider = readerProvider;
+        public string ComponentName => "qstub";
+        public string Category => "Test";
+        public Type OptionsType => typeof(TableQueryOptions);
+        public bool CanHandle(string connectionString) => false;
+        public bool RequiresQuery => true;
+        public IEnumerable<Type> GetSupportedOptionTypes() => new[] { typeof(TableQueryOptions) };
+        public IStreamReader Create(OptionsRegistry registry) => _readerProvider();
+    }
+
+    /// <summary>Reader that fails fast at OpenAsync — enough to observe pre-flight binding.</summary>
+    private sealed class MarkerReader : IStreamReader
+    {
+        public IReadOnlyList<PipeColumnInfo>? Columns => new List<PipeColumnInfo> { new("Id", typeof(int), false) };
+        public Task OpenAsync(CancellationToken ct) => throw new InvalidOperationException("marker: stop after reader creation");
+        public async IAsyncEnumerable<ReadOnlyMemory<object?[]>> ReadBatchesAsync(int batchSize, [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            yield break;
+        }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class NullWriterFactory : IDataWriterFactory
     {
         public string ComponentName => "null";
@@ -77,16 +118,28 @@ public class LinearPipelineServiceTests
         public IEnumerable<Type> GetSupportedOptionTypes() => Array.Empty<Type>();
     }
 
+    private sealed class TableStubWriterFactory : IDataWriterFactory
+    {
+        public string ComponentName => "twstub";
+        public string Category => "Test";
+        public Type OptionsType => typeof(WriterTableOptions);
+        public bool CanHandle(string connectionString) => false;
+        public IDataWriter Create(OptionsRegistry registry) => throw new NotSupportedException("writer is never opened in these tests");
+        public IEnumerable<Type> GetSupportedOptionTypes() => Array.Empty<Type>();
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Harness
     // ─────────────────────────────────────────────────────────────────────────
 
-    private static (LinearPipelineService Service, Mock<IAnsiConsole> Console) BuildService(IStreamReaderFactory readerFactory)
+    private static (LinearPipelineService Service, Mock<IAnsiConsole> Console, OptionsRegistry OptionsRegistry) BuildService(
+        IStreamReaderFactory readerFactory,
+        IDataWriterFactory? writerFactoryOverride = null)
     {
         var observer = Mock.Of<IExportObserver>();
         var exportService = new ExportService(
             readerFactories: new List<IStreamReaderFactory> { readerFactory },
-            writerFactories: new List<IDataWriterFactory> { new NullWriterFactory() },
+            writerFactories: new List<IDataWriterFactory> { writerFactoryOverride ?? new NullWriterFactory() },
             transformerFactories: new List<IDataTransformerFactory>(),
             optionsRegistry: new OptionsRegistry(),
             observer: observer,
@@ -103,18 +156,19 @@ public class LinearPipelineServiceTests
         var services = new ServiceCollection();
         services.AddSingleton(exportService);
         services.AddSingleton<IEnumerable<IStreamReaderFactory>>(new List<IStreamReaderFactory> { readerFactory });
-        services.AddSingleton<IEnumerable<IDataWriterFactory>>(new List<IDataWriterFactory> { new NullWriterFactory() });
+        services.AddSingleton<IEnumerable<IDataWriterFactory>>(new List<IDataWriterFactory> { writerFactoryOverride ?? new NullWriterFactory() });
         services.AddSingleton<IEnumerable<IStreamTransformerFactory>>(new List<IStreamTransformerFactory>());
         var serviceProvider = services.BuildServiceProvider();
 
         var consoleMock = new Mock<IAnsiConsole>();
+        var serviceRegistry = new OptionsRegistry();
         var service = new LinearPipelineService(
             contributors: Array.Empty<DtPipe.Cli.Infrastructure.ICliContributor>(),
             serviceProvider: serviceProvider,
             channelRegistry: new MemoryChannelRegistry(),
-            optionsRegistry: new OptionsRegistry(),
+            optionsRegistry: serviceRegistry,
             console: consoleMock.Object);
-        return (service, consoleMock);
+        return (service, consoleMock, serviceRegistry);
     }
 
     private static JobDefinition BlockingJob() => new() { Input = "stub:block", Output = null, Limit = 0 };
@@ -126,7 +180,7 @@ public class LinearPipelineServiceTests
     [Fact]
     public async Task User_Ctrl_C_Returns_130()
     {
-        var (service, _) = BuildService(new StubReaderFactory(() => new BlockingReader()));
+        var (service, _, _) = BuildService(new StubReaderFactory(() => new BlockingReader()));
         using var userCts = new CancellationTokenSource();
 
         var task = service.ExecuteAsync(BlockingJob(), context: null, token: CancellationToken.None, userCancellationToken: userCts.Token);
@@ -142,7 +196,7 @@ public class LinearPipelineServiceTests
     [Fact]
     public async Task Internal_Cancellation_Propagates_Not_Masks()
     {
-        var (service, _) = BuildService(new StubReaderFactory(() => new BlockingReader()));
+        var (service, _, _) = BuildService(new StubReaderFactory(() => new BlockingReader()));
         using var internalCts = new CancellationTokenSource();
 
         var task = service.ExecuteAsync(BlockingJob(), context: null, token: internalCts.Token, userCancellationToken: CancellationToken.None);
@@ -157,7 +211,7 @@ public class LinearPipelineServiceTests
     [Fact]
     public async Task Exception_Chain_Is_Preserved_In_Error_Output()
     {
-        var (service, consoleMock) = BuildService(new StubReaderFactory(() => new FaultedReader()));
+        var (service, consoleMock, _) = BuildService(new StubReaderFactory(() => new FaultedReader()));
 
         var exitCode = await service.ExecuteAsync(new JobDefinition { Input = "stub:fault", Output = "null:-" }, context: null, token: CancellationToken.None, userCancellationToken: CancellationToken.None);
 
@@ -185,5 +239,46 @@ public class LinearPipelineServiceTests
 
         Assert.DoesNotContain("wrapper", formatted, StringComparison.Ordinal);
         Assert.Contains("InvalidOperationException: real cause", formatted, StringComparison.Ordinal);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RequiresQuery auto-build (--table → SELECT * FROM "table")
+    // Regression guard: ITableAwareOptions must be honored on READER options,
+    // not only on writer options (readers are the primary --table users).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RequiresQuery_AutoBuilds_Select_From_Reader_Table()
+    {
+        var readerOptions = new TableQueryOptions { Table = "users_test" };
+        var factory = new QueryableStubReaderFactory(() => new MarkerReader());
+        var (service, _, registry) = BuildService(factory);
+        registry.Register(readerOptions);
+
+        var exitCode = await service.ExecuteAsync(
+            new JobDefinition { Input = "qstub:x" }, context: null,
+            token: CancellationToken.None, userCancellationToken: CancellationToken.None);
+
+        // The marker reader fails after creation — we only care about pre-flight binding.
+        Assert.Equal(1, exitCode);
+        Assert.Equal("SELECT * FROM \"users_test\"", readerOptions.Query);
+    }
+
+    [Fact]
+    public async Task RequiresQuery_Falls_Back_To_Writer_Table_When_Reader_Has_None()
+    {
+        var readerOptions = new TableQueryOptions();
+        var writerOptions = new WriterTableOptions { Table = "same_named" };
+        var readerFactory = new QueryableStubReaderFactory(() => new MarkerReader());
+        var (service, _, registry) = BuildService(readerFactory, new TableStubWriterFactory());
+        registry.Register(readerOptions);
+        registry.Register(writerOptions);
+
+        var exitCode = await service.ExecuteAsync(
+            new JobDefinition { Input = "qstub:x", Output = "twstub:same_named" }, context: null,
+            token: CancellationToken.None, userCancellationToken: CancellationToken.None);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("SELECT * FROM \"same_named\"", readerOptions.Query);
     }
 }

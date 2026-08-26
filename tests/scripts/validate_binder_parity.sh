@@ -137,5 +137,17 @@ run_pair edge_values \
     --sampling-seed -42 --sampling-rate 0.5 \
     -o "$A/e_out.csv" --csv-separator "-" --no-stats
 
+# ----------------------------------------
+echo "--- [f] reader-side --table auto-builds SELECT ---"
+# Regression guard for the F13 capability refactor: QueryableReaderOptions must keep
+# honoring --table (auto-build "SELECT * FROM <table>" when no --query is given),
+# both on the CLI path and through the exported-YAML round-trip.
+rm -f "$A/f_src.db"
+sqlite3 "$A/f_src.db" "CREATE TABLE src_t (Id INTEGER, Val TEXT); INSERT INTO src_t VALUES (1,'a'),(2,'b'),(3,'c');"
+run_pair reader_table \
+    "$A/f_out.csv" \
+    -i "sqlite:$A/f_src.db" --table src_t \
+    -o "$A/f_out.csv" --no-stats
+
 echo ""
 echo "All binder parity checks passed."

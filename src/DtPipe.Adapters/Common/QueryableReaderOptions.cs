@@ -6,7 +6,7 @@ namespace DtPipe.Adapters.Common;
 /// <summary>
 /// Base options for database reader adapters that execute SQL queries.
 /// </summary>
-public abstract class QueryableReaderOptions : DbConnectionOptions, IQueryAwareOptions
+public abstract class QueryableReaderOptions : DbConnectionOptions, IQueryAwareOptions, ITableAwareOptions
 {
     [ComponentOption("--query", Aliases = new[] { "-q" }, Description = "SQL query or file path")]
     public string? Query { get; set; }
