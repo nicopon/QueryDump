@@ -311,10 +311,12 @@ public class YamlCliParityTests
 			}
 		};
 		registry.BeginScope();
-		new DtPipe.Cli.Services.ProviderConfigurationService(contributors, registry)
-			.BindOptions(yamlJob, context: null);
+		var yamlStderr = CaptureStderr(() => new DtPipe.Cli.Services.ProviderConfigurationService(contributors, registry)
+			.BindOptions(yamlJob, context: null));
 		var yamlReader = registry.Get<DtPipe.Adapters.Csv.CsvReaderOptions>();
 		var yamlWriter = registry.Get<DtPipe.Adapters.Csv.CsvWriterOptions>();
+		yamlStderr.Should().NotContain("[dtpipe] Warning",
+			"the shared 'csv:' key feeds both sides — reader-only keys must be skipped silently on the writer");
 
 		// ── CLI path: stage-scoped args ──
 		var cliJob = new DtPipe.Core.Models.JobDefinition { Input = "in.csv", Output = "out.csv" };
@@ -333,6 +335,18 @@ public class YamlCliParityTests
 		cliReader.Separator.Should().Be(yamlReader.Separator).And.Be(";");
 		cliReader.ColumnTypes.Should().Be(yamlReader.ColumnTypes).And.Be("Id:int32");
 		cliWriter.Separator.Should().Be(yamlWriter.Separator).And.Be("|");
+		// Note: CsvWriterOptions has no ColumnTypes property at all — before the
+		// shared-key silence rule, binding the block onto the writer warned on it.
+	}
+
+	private static string CaptureStderr(Action action)
+	{
+		var original = Console.Error;
+		var captured = new StringWriter();
+		Console.SetError(captured);
+		try { action(); }
+		finally { Console.SetError(original); }
+		return captured.ToString();
 	}
 
 	private static class YamlParityStubs

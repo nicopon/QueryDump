@@ -41,12 +41,23 @@ public class ProviderConfigurationService
                 var instance = _registry.GetOrNew(optionsType);
                 bool isWriter = factory is IDataWriterFactory;
 
-                // 1. Bind from ProviderOptions (YAML path)
-                if (job.ProviderOptions != null)
+                // 1. Bind from ProviderOptions (YAML path) — only for the contributor that
+                //    handles the active connection. Binding every homonymous contributor
+                //    sprayed reader-only keys onto writers (and vice versa) and warned.
+                if (job.ProviderOptions != null && HandlesActiveConnection(factory, isWriter ? job.Output : job.Input))
                 {
                     bool strict = globals?.StrictBindings == true;
+
+                    // Shared plain key ("csv:" feeding both sides of a same-named pair):
+                    // some keys legitimately target only one side — skip unknowns silently.
+                    bool sharedPlainKey = _contributors.Any(o =>
+                        o is IDataFactory sibling
+                        && !ReferenceEquals(sibling, factory)
+                        && (sibling is IDataWriterFactory) != isWriter
+                        && sibling.ComponentName.Equals(factory.ComponentName, StringComparison.OrdinalIgnoreCase));
+
                     if (job.ProviderOptions.TryGetValue(factory.ComponentName, out var opts))
-                        Pipeline.OptionBinder.BindYaml(instance, opts, strict);
+                        Pipeline.OptionBinder.BindYaml(instance, opts, strict, ignoreUnknownKeys: sharedPlainKey);
 
                     var suffix = isWriter ? "-writer" : "-reader";
                     if (job.ProviderOptions.TryGetValue(factory.ComponentName + suffix, out var specificOpts))
@@ -81,6 +92,20 @@ public class ProviderConfigurationService
         else if (globals?.AllFlags.TryGetValue("-k", out var kVal) == true)
             globalKey = kVal?.ToString();
         PropagateKey(globalKey);
+    }
+
+    /// <summary>
+    /// Same resolution rule as the engine's ResolveFactory: component-name prefix,
+    /// bare component name, or the factory's own CanHandle verdict.
+    /// </summary>
+    private static bool HandlesActiveConnection(IDataFactory factory, string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return false;
+        var raw = connectionString.Trim();
+        return raw.StartsWith(factory.ComponentName + ":", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals(factory.ComponentName, StringComparison.OrdinalIgnoreCase)
+            || factory.CanHandle(raw);
     }
 
     private void PropagateKey(string? key)

@@ -137,8 +137,11 @@ public static class OptionBinder
     /// <summary>
     /// Binds a provider-options dictionary to an existing instance. Keys are normalized
     /// (strip '-', '_', lowercase); unmapped keys warn (or throw in strict mode).
+    /// When <paramref name="ignoreUnknownKeys"/> is set, unmapped keys are skipped silently —
+    /// used for shared provider-options blocks (e.g. a plain "csv:" key feeding both the
+    /// reader and the writer) where some keys legitimately target only one side.
     /// </summary>
-    public static void BindYaml(object target, IReadOnlyDictionary<string, object?> config, bool strict = false)
+    public static void BindYaml(object target, IReadOnlyDictionary<string, object?> config, bool strict = false, bool ignoreUnknownKeys = false)
     {
         if (config == null || config.Count == 0 || target == null) return;
 
@@ -156,6 +159,8 @@ public static class OptionBinder
 
             if (prop == null)
             {
+                if (ignoreUnknownKeys)
+                    continue;
                 var message = $"Unrecognized provider option '{key}' for '{target.GetType().Name}'. Check the option name against 'dtpipe providers' output.";
                 if (strict)
                     throw new InvalidOperationException(message);
