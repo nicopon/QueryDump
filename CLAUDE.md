@@ -216,7 +216,7 @@ Hardening invariants (F1–F7, fail-closed, non-negotiable — details in `REFER
 - **F4 Non-destructive context** — fact cache + `ConversationWindowManager.Compact`.
 - **F5 Parallel tools** — all `ToolCalls` per turn executed (`Task.WhenAll`; `--sequential` forces serial).
 - **F6 Single YAML path** — `yamlContent` tool arg is sole plan source.
-- **F7 CI gate** — `tests/agentic/analyze-traces.sh --gate` fails on MCP errors / variance / failed mission.
+- **F7 CI gate** — `tests/agentic/analyze-traces.sh --gate` fails on unhandled MCP errors or a failed mission. Its variance criterion applies only when `variance_results.jsonl` holds real replication data; the shipped missions drive their own bash ReAct loop against `dtpipe mcp` and never invoke `dtpipe agent --repeat`, so they produce none. Never record a placeholder variance to fill the file — a criterion that cannot fire is worse than an absent one. The authoritative signal for F1–F7 is the deterministic unit suite (`Unit/Cli/Agent*Tests`, `Unit/Cli/Mcp*Tests`), not this gate.
 
 Mandatory MCP directives:
 1. No hardcoded help — reflect on `[Description]`/`[ComponentHelp]`.

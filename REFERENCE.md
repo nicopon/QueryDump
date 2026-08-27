@@ -717,8 +717,21 @@ than executes. Every unlock flag is documented so nothing is implicit.
 - **Parallel tools.** Every tool call the model emits in a turn is executed (independent ones in
    parallel via `Task.WhenAll`); `--sequential` forces one-at-a-time. Each call yields one
    `tool` message correlated by call id.
-- **CI gate.** `tests/agentic/analyze-traces.sh --gate` fails when (a) unhandled MCP errors,
-   (b) determinism variance above threshold, or (c) a mission failed.
-   `tests/agentic/run-all.sh --gate` propagates it. See `.github/workflows/agentic-ci.yml`.
+- **CI gate.** `tests/agentic/analyze-traces.sh --gate` fails when (a) unhandled MCP errors or
+   (b) a mission failed. A third criterion — determinism variance above `--threshold` — applies
+   only when `variance_results.jsonl` holds replication data; absent data is not a failure.
+   The shipped missions do not produce it: they drive their own ReAct loop against `dtpipe mcp`
+   rather than invoking `dtpipe agent --repeat`, so the variance criterion is currently inert
+   for them. `tests/agentic/run-all.sh --gate` propagates the result.
+   See `.github/workflows/agentic-ci.yml`.
+
+> **What a green agent gate does and does not prove.** It is an end-to-end integration check of
+> the MCP tool surface driven by a real model: a green run means the tools answered without
+> unhandled errors and the missions' data assertions held. It is **not** a deterministic
+> regression gate — a red run does not distinguish a DtPipe regression from a bad model
+> sampling. The guardrail behaviors themselves (F1–F7) are covered deterministically by the
+> unit suite (`AgentExecutorModeTests`, `AgentParallelToolsTests`, `AgentContextStoreTests`,
+> `AgentDeterminismTests`, `AgentYamlExtractionTests`, `McpToolsTests`, …), which is the
+> authoritative signal.
 
 

@@ -248,20 +248,20 @@ Before calling any tool or giving a final answer, state in text:
 
     echo "$ENTRY_JSON" >> "$STATS_FILE"
 
-     # (F3/F7) Determinism variance. A single successful run is by definition deterministic
-     # (variance 0). A replicated mission can export an observed distinct-YAML count via
-     # AGENT_REPEATED_VARIANCE, which run-all --gate consumes through analyze-traces.sh.
-    if [ -n "${AGENTIC_AGENT_REPEAT:-}" ] && [ "${AGENTIC_AGENT_REPEAT}" -gt 1 ] 2>/dev/null; then
-        local VARIANCE_FILE="tests/agentic/artifacts/variance_results.jsonl"
-        local observed_variance="${AGENT_REPEATED_VARIANCE:-0}"
-        jq -n \
-            --arg ts "$TS" \
-            --arg model "$MODEL" \
-            --arg mission "$MISSION_NAME" \
-            --argjson repeats "${AGENTIC_AGENT_REPEAT}" \
-            --argjson variance "$observed_variance" \
-            '{timestamp: $ts, model: $model, mission: $mission, repetitions: $repeats, variance: $variance}' >> "$VARIANCE_FILE"
-    fi
+     # (F3) Determinism variance is deliberately NOT recorded here.
+     #
+     # This runner drives its own ReAct loop in bash (curl -> Ollama, FIFO -> dtpipe mcp);
+     # it never invokes `dtpipe agent`, so no DeterminismReport is produced and there is no
+     # observed distinct-YAML count to report. An earlier version wrote a row using
+     # ${AGENT_REPEATED_VARIANCE:-0} — a variable nothing ever exported — so every row said
+     # "variance: 0" by construction and the gate's variance criterion could never fire.
+     #
+     # analyze-traces.sh treats absent variance data as "not a failure", so writing nothing is
+     # both honest and safe: the criterion simply does not apply to these missions.
+     #
+     # To produce real variance data, the mission must run `dtpipe agent --repeat N` (which does
+     # replicate the planning loop from a fresh conversation — AgentExecutor.cs) and emit the
+     # resulting DeterminismReport.Variance into variance_results.jsonl.
 
     echo "📊 Execution Stats:"
     echo "  - Model: $MODEL"
