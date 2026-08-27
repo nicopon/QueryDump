@@ -295,9 +295,7 @@ public static class PipelineToJobConverter
         var raw = connectionString.Trim();
         foreach (var factory in factories)
         {
-            var prefix = factory.ComponentName + ":";
-            if (raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
-                raw.Equals(factory.ComponentName, StringComparison.OrdinalIgnoreCase))
+            if (ComponentSelector.Matches(raw, factory.ComponentName))
                 return factory;
         }
         return factories.FirstOrDefault(f => f.CanHandle(raw));

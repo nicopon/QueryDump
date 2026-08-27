@@ -49,7 +49,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
 
     public DuckDbDataWriter(string connectionString, DuckDbWriterOptions options, ILogger<DuckDbDataWriter> logger, ITypeMapper typeMapper, IStringContentResolver? resolver = null)
     {
-        _hubInfo = DuckHubConnectionParser.Parse(connectionString);
+        _hubInfo = DuckHubConnectionParser.Parse(options.Variant, connectionString);
         _connectionString = connectionString;
         _options = options;
         _logger = logger;

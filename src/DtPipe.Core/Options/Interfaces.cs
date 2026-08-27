@@ -73,3 +73,14 @@ public interface IKeyAwareOptions
 {
 	string? Key { get; set; }
 }
+
+/// <summary>
+/// Implemented by provider options whose behaviour depends on the "+{variant}" qualifier of the
+/// connection selector (e.g. "duck+mysql:" → variant "mysql"). Lets CliProviderFactory hand the
+/// variant to the provider after the selector has been stripped, so no adapter has to re-parse a
+/// prefix it should never have seen — see <c>ComponentSelector</c>.
+/// </summary>
+public interface IVariantAwareOptions
+{
+	string? Variant { get; set; }
+}

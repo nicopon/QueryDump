@@ -34,8 +34,20 @@ public class CliProviderFactory<TService> : ICliContributor, IDataFactory
 	public string ComponentName => _descriptor.ComponentName;
 	public bool CanHandle(string connectionString)
 	{
-		if (connectionString.StartsWith(_descriptor.ComponentName + ":", StringComparison.OrdinalIgnoreCase)) return true;
+		if (ComponentSelector.Matches(connectionString, _descriptor.ComponentName)) return true;
 		return _descriptor.CanHandle(connectionString);
+	}
+
+	/// <summary>
+	/// Hands the selector's "+{variant}" qualifier to options that declare they need it, so the
+	/// provider never has to re-parse a prefix the router already removed.
+	/// </summary>
+	protected static void ApplyVariant(object? options, string? variant)
+	{
+		if (options is IVariantAwareOptions variantAware)
+		{
+			variantAware.Variant = variant;
+		}
 	}
 	public bool SupportsStdio => _descriptor.SupportsStdio;
 	public Type OptionsType => _descriptor.OptionsType;
@@ -76,6 +88,8 @@ public class CliDataWriterFactory : CliProviderFactory<IDataWriter>, IDataWriter
 			throw new InvalidOperationException($"A target table is required for provider '{_descriptor.ComponentName}'. Use --table \"[name]\"");
 		}
 
+		ApplyVariant(specificOptions, route?.OutputVariant);
+
 		return _descriptor.Create(route?.Output ?? "", specificOptions, _serviceProvider);
 	}
 
@@ -109,8 +123,10 @@ public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStream
 
 		var route = registry.Get<ConnectionRoute>();
 
-		// Connection string is set by LinearPipelineService into ConnectionRoute after stripping the
-		// component-name prefix. Query is set by OptionBinder (CLI path) or MapProcessorProperties (YAML path).
+		// Connection string is set by LinearPipelineService into ConnectionRoute after ComponentSelector
+		// stripped the selector. Query is set by OptionBinder (CLI path) or MapProcessorProperties (YAML path).
+		ApplyVariant(specificOptions, route?.InputVariant);
+
 		var reader = _descriptor.Create(route?.Input ?? "", specificOptions!, _serviceProvider);
 		if (reader is IBatchSizeConfigurable batchConfigurable)
 		{

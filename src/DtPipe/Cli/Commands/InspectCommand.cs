@@ -70,16 +70,20 @@ public class InspectCommand : Command
         var registry = sp.GetRequiredService<OptionsRegistry>();
         var readerFactories = sp.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
 
-        // 1. Resolve the reader using the same mechanism as export
-        //    (parse the prefix, find the factory via ComponentName or CanHandle)
+        // 1. Resolve the reader using the same mechanism as export: ComponentSelector owns the
+        //    "{component}[+{variant}]:" grammar, then CanHandle as fallback. Hand-rolling the
+        //    prefix strip here is what made "inspect -i s3://bucket/key.parquet" hand the provider
+        //    "//bucket/key.parquet" long after the pipeline path had been fixed.
         string effectiveConnectionString = input;
+        string? variant = null;
         IStreamReaderFactory? factory = null;
         foreach (var f in readerFactories)
         {
-            if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
+            var selection = ComponentSelector.Select(input, f.ComponentName);
+            if (selection.Matched)
             {
-                // Strip prefix, set connection string
-                effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
+                effectiveConnectionString = selection.Cleaned;
+                variant = selection.Variant;
 
                 var optionsType = f.GetSupportedOptionTypes().FirstOrDefault();
                 if (optionsType != null)
@@ -119,7 +123,7 @@ public class InspectCommand : Command
         }
 
         // Register routing so CliStreamReaderFactory.Create() can resolve the connection string
-        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty));
+        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty, variant, null));
         // Inject query directly into reader options
         var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
         if (readerOpts != null && !string.IsNullOrWhiteSpace(query))

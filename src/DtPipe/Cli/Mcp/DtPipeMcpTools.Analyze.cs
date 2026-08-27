@@ -81,13 +81,16 @@ public partial class DtPipeMcpTools
         string? query)
     {
         string effectiveConnectionString = input;
+        string? variant = null;
         IStreamReaderFactory? factory = null;
 
         foreach (var f in readerFactories)
         {
-            if (input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
+            var selection = ComponentSelector.Select(input, f.ComponentName);
+            if (selection.Matched)
             {
-                effectiveConnectionString = input.Substring(f.ComponentName.Length + 1);
+                effectiveConnectionString = selection.Cleaned;
+                variant = selection.Variant;
                 factory = f;
                 break;
             }
@@ -109,7 +112,7 @@ public partial class DtPipeMcpTools
 
         ValidatePathSafety(effectiveConnectionString);
 
-        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty));
+        registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty, variant, null));
         var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
         if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
             readerOpts.Query = query;
@@ -162,7 +165,7 @@ public partial class DtPipeMcpTools
                 {
                     foreach (var f in readerFactories)
                     {
-                        if (job.Input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase) || f.CanHandle(job.Input))
+                        if (ComponentSelector.Matches(job.Input, f.ComponentName) || f.CanHandle(job.Input))
                         {
                             query = TryGetQueryFromJob(job, f.ComponentName);
                             break;
@@ -385,7 +388,7 @@ public partial class DtPipeMcpTools
 
         foreach (var f in writerFactories)
         {
-            if (output.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase))
+            if (ComponentSelector.Matches(output, f.ComponentName))
             {
                 factory = f;
                 break;

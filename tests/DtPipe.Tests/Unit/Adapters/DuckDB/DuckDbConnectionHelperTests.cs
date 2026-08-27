@@ -3,26 +3,26 @@ using Xunit;
 
 namespace DtPipe.Tests.Unit.Adapters.DuckDB;
 
+/// <summary>
+/// GetConnectionString only ever sees selector-stripped values: ComponentSelector removes "duck:"
+/// / "duck+mysql:" before any descriptor is called. Earlier tests drove it with the prefix still
+/// attached, which exercised a branch the CLI never took — so "duck:memory" kept creating a
+/// database FILE named "memory" while the suite stayed green. These inputs mirror the runtime.
+/// </summary>
 public class DuckDbConnectionHelperTests
 {
-    /// <summary>
-    /// Both documented in-memory spellings used to produce a database FILE: the leading-colon
-    /// strip turned "duck::memory:" into "memory:" and "duck:memory" was passed through as
-    /// "memory", so runs quietly created a file named "memory" in the working directory.
-    /// </summary>
     [Theory]
-    [InlineData("duck::memory:")]
-    [InlineData("duck:memory")]
-    [InlineData("duck:")]
-    [InlineData("duck::memory")]
+    [InlineData("memory")]
+    [InlineData(":memory:")]
+    [InlineData(":memory")]
     [InlineData("")]
     public void InMemory_Spellings_Map_To_The_Memory_Sentinel(string connectionString)
         => Assert.Equal("Data Source=:memory:;", DuckDbConnectionHelper.GetConnectionString(connectionString));
 
     [Theory]
-    [InlineData("duck:warehouse.duckdb", "Data Source=warehouse.duckdb;")]
-    [InlineData("duck:/tmp/data/w.duckdb", "Data Source=/tmp/data/w.duckdb;")]
     [InlineData("warehouse.duckdb", "Data Source=warehouse.duckdb;")]
+    [InlineData("/tmp/data/w.duckdb", "Data Source=/tmp/data/w.duckdb;")]
+    [InlineData(" spaced.duckdb ", "Data Source=spaced.duckdb;")]
     public void File_Paths_Are_Preserved(string connectionString, string expected)
         => Assert.Equal(expected, DuckDbConnectionHelper.GetConnectionString(connectionString));
 

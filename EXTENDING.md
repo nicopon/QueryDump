@@ -111,8 +111,11 @@ public class MyProviderReaderDescriptor : IProviderDescriptor<IStreamReader>
     public string Category => "Readers";
     public Type OptionsType => typeof(MyProviderReaderOptions);
     public bool RequiresQuery => true;
+    // Content check ONLY — never test for your own "myprovider:" prefix here. CanHandle receives
+    // the RAW connection string, and selector routing ("myprovider:", "myprovider+variant:") is
+    // ComponentSelector's job. Judge by file extension or connection-string keywords instead.
     public bool CanHandle(string connectionString)
-        => connectionString.StartsWith("myprovider:", StringComparison.OrdinalIgnoreCase);
+        => connectionString.EndsWith(".myext", StringComparison.OrdinalIgnoreCase);
 
     public IStreamReader Create(string connectionString, object options, IServiceProvider serviceProvider)
     {

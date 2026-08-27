@@ -18,11 +18,10 @@ public partial class GenerateReader : IStreamReader, IColumnarStreamReader, IReq
 	public GenerateReader(string config, string query, GenerateReaderOptions options)
 	{
 		_options = options;
-		var countStr = config.StartsWith("generate:", StringComparison.OrdinalIgnoreCase)
-			? config["generate:".Length..]
-			: config;
-
-		var parts = countStr.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		// No prefix strip here: ComponentSelector removes "generate:" before the descriptor is
+		// called, and GenerateMetadata.CanHandle is false, so this is the only route in. A
+		// defensive re-strip would be the adapter re-learning a prefix it must not know about.
+		var parts = config.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 		foreach (var part in parts)
 		{
 			if (part.StartsWith("count=", StringComparison.OrdinalIgnoreCase))

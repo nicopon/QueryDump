@@ -45,7 +45,7 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 
 	public DuckDataSourceReader(string connectionString, string query, DuckDbReaderOptions options, ILogger? logger = null, int queryTimeout = 0, IStringContentResolver? resolver = null, IMcpSecurityContext? mcpSecurityContext = null)
 	{
-		_hubInfo = DuckHubConnectionParser.Parse(connectionString);
+		_hubInfo = DuckHubConnectionParser.Parse(options.Variant, connectionString);
 		_connection = new DuckDBConnection(_hubInfo.EffectiveConnectionString);
 
 		ValidateQueryIsSafeSelect(query);

@@ -18,8 +18,7 @@ internal static class DagRenderer
 		if (!string.IsNullOrEmpty(input))
 		{
 			var factory = readerFactories.FirstOrDefault(f =>
-				input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase) ||
-				input.Equals(f.ComponentName, StringComparison.OrdinalIgnoreCase) ||
+				ComponentSelector.Matches(input, f.ComponentName) ||
 				f.CanHandle(input));
 			isColumnar = factory?.YieldsColumnarOutput == true;
 		}
@@ -245,8 +244,7 @@ internal static class DagRenderer
 		if (producer != null && !string.IsNullOrEmpty(producer.Input))
 		{
 			var factory = readerFactories.FirstOrDefault(f =>
-				producer.Input.StartsWith(f.ComponentName + ":", StringComparison.OrdinalIgnoreCase) ||
-				producer.Input.Equals(f.ComponentName, StringComparison.OrdinalIgnoreCase) ||
+				ComponentSelector.Matches(producer.Input, f.ComponentName) ||
 				f.CanHandle(producer.Input));
 			if (factory?.YieldsColumnarOutput == true) return true;
 		}

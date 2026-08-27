@@ -4,23 +4,27 @@ using Xunit;
 
 namespace DtPipe.Tests.Unit.Adapters.DuckDB;
 
+/// <summary>
+/// The parser no longer sees connection-string prefixes: ComponentSelector splits
+/// "duck+mysql:Host=…" into variant "mysql" and details "Host=…" before any adapter is reached.
+/// These tests therefore drive it the way the runtime does — (variant, details) — and the
+/// selector grammar itself is covered by ComponentSelectorTests.
+/// </summary>
 public class DuckHubConnectionParserTests
 {
     [Fact]
-    public void Parse_NormalConnectionString_ReturnsNonHub()
+    public void Parse_NoVariant_ReturnsNonHub()
     {
-        var conn = "mydb.duckdb";
-        var info = DuckHubConnectionParser.Parse(conn);
+        var info = DuckHubConnectionParser.Parse(null, "mydb.duckdb");
 
         Assert.False(info.IsHub);
         Assert.Equal("Data Source=mydb.duckdb;", info.EffectiveConnectionString);
     }
 
     [Fact]
-    public void Parse_DuckMySql_ReturnsHubDetails()
+    public void Parse_MySqlVariant_ReturnsHubDetails()
     {
-        var conn = "duck+mysql:Host=localhost;Database=customers_db;User=root;";
-        var info = DuckHubConnectionParser.Parse(conn);
+        var info = DuckHubConnectionParser.Parse("mysql", "Host=localhost;Database=customers_db;User=root;");
 
         Assert.True(info.IsHub);
         Assert.Equal("mysql", info.Provider);
@@ -38,34 +42,33 @@ public class DuckHubConnectionParserTests
     /// <summary>
     /// Falling back to the bare provider name when no Database=/DbName=/Db= is present let two
     /// ATTACHes in the same process (e.g. one input, one output) collide on the same alias and
-    /// silently USE the wrong catalog. The alias must now be derived from an explicit database
-    /// name in the connection string, or parsing fails closed.
+    /// silently USE the wrong catalog. The alias must be derived from an explicit database name,
+    /// or parsing fails closed.
     /// </summary>
     [Fact]
-    public void Parse_DuckMySql_WithoutDatabaseName_Throws()
+    public void Parse_MySqlVariant_WithoutDatabaseName_Throws()
     {
-        var conn = "duck+mysql:Host=localhost;User=root;";
-
-        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => DuckHubConnectionParser.Parse("mysql", "Host=localhost;User=root;"));
 
         Assert.Contains("must specify a database name", ex.Message);
         Assert.Contains("duck+mysql:", ex.Message);
     }
 
     /// <summary>
-    /// Postgres and SQLite are deliberately not hub providers: DtPipe already has native
-    /// providers for both ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that
-    /// ATTACH cannot reach, so routing them through the hub would be strictly inferior. They must
-    /// fail the same way any other unsupported provider does.
+    /// Postgres and SQLite are deliberately not hub variants: DtPipe already has native providers
+    /// for both ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that ATTACH cannot
+    /// reach, so routing them through the hub would be strictly inferior.
     /// </summary>
     [Theory]
-    [InlineData("duck+pg:Host=127.0.0.1;Db=sales;Password='123';")]
-    [InlineData("duck+postgres:Host=127.0.0.1;Database=sales;")]
-    [InlineData("duck+postgresql:Host=127.0.0.1;Database=sales;")]
-    [InlineData("duck+sqlite:data/prod.db")]
-    public void Parse_NativelySupportedProvider_Throws_With_Supported_List(string conn)
+    [InlineData("pg")]
+    [InlineData("postgres")]
+    [InlineData("postgresql")]
+    [InlineData("sqlite")]
+    public void Parse_NativelySupportedVariant_Throws_With_Supported_List(string variant)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => DuckHubConnectionParser.Parse(variant, "Host=127.0.0.1;Database=sales;"));
 
         Assert.Contains("Unknown DuckDB hub provider", ex.Message);
         Assert.Contains("duck+mysql:", ex.Message);
@@ -73,19 +76,18 @@ public class DuckHubConnectionParserTests
 
     /// <summary>
     /// Object storage is a transport for files, not a relational catalog, so it can never be an
-    /// ATTACH target. "duck+s3:" used to emit INSTALL/LOAD httpfs and silently DROP the URI,
-    /// forcing the user to repeat it inside --query and leaving writes pointed at a catalog that
-    /// does not exist. Failing closed with the working route named is the contract now.
+    /// ATTACH target. Failing closed with the working route named is the contract.
     /// </summary>
     [Theory]
-    [InlineData("duck+s3:s3://my-bucket/files/")]
-    [InlineData("duck+azure:container/blob.parquet")]
-    [InlineData("duck+az:container/blob.parquet")]
-    [InlineData("duck+gs:bucket/key.parquet")]
-    [InlineData("duck+https://example.com/feed.jsonl")]
-    public void Parse_ObjectStorageProvider_Throws_And_Names_The_Working_Route(string conn)
+    [InlineData("s3")]
+    [InlineData("azure")]
+    [InlineData("az")]
+    [InlineData("gs")]
+    [InlineData("https")]
+    public void Parse_ObjectStorageVariant_Throws_And_Names_The_Working_Route(string variant)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => DuckHubConnectionParser.Parse(variant, "bucket/key.parquet"));
 
         Assert.Contains("not a hub target", ex.Message);
         Assert.Contains("--duck-init", ex.Message);
@@ -94,31 +96,30 @@ public class DuckHubConnectionParserTests
 
     /// <summary>
     /// The open "_ => provider" fallback forwarded any unknown provider into the TYPE clause,
-    /// producing invalid SQL such as "ATTACH ... (TYPE EXCEL)". Unknown providers must fail with
-    /// the supported list instead of a raw DuckDB parse error.
+    /// producing invalid SQL such as "ATTACH ... (TYPE EXCEL)".
     /// </summary>
     [Theory]
-    [InlineData("duck+excel:data.xlsx")]
-    [InlineData("duck+mssql:Server=localhost;Database=db;")]
-    [InlineData("duck+bigquery:project=p;")]
-    [InlineData("duck+nonsense:whatever")]
-    [InlineData("duck+:whatever")]
-    public void Parse_UnknownProvider_Throws_With_Supported_List(string conn)
+    [InlineData("excel")]
+    [InlineData("mssql")]
+    [InlineData("bigquery")]
+    [InlineData("nonsense")]
+    public void Parse_UnknownVariant_Throws_With_Supported_List(string variant)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => DuckHubConnectionParser.Parse(variant, "whatever"));
 
         Assert.Contains("Unknown DuckDB hub provider", ex.Message);
         Assert.Contains("duck+mysql:", ex.Message);
     }
 
-    /// <summary>Plain "duck:" connections and file paths keep bypassing the hub entirely.</summary>
+    /// <summary>Plain DuckDB targets carry no variant and must bypass the hub entirely.</summary>
     [Theory]
-    [InlineData("duck:memory")]
-    [InlineData("duck::memory:")]
+    [InlineData("memory")]
+    [InlineData(":memory:")]
     [InlineData("data/warehouse.duckdb")]
-    public void Parse_NonHubConnection_IsNotAffected(string conn)
+    public void Parse_NonHubConnection_IsNotAffected(string details)
     {
-        var info = DuckHubConnectionParser.Parse(conn);
+        var info = DuckHubConnectionParser.Parse(null, details);
 
         Assert.False(info.IsHub);
         Assert.Empty(info.InitSqlStatements);

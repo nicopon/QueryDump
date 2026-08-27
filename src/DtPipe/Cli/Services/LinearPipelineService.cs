@@ -124,8 +124,8 @@ public class LinearPipelineService
 
         // 1. Resolve Reader. A typed input endpoint bypasses connection-string resolution
         // entirely: the factory is picked by capability and the channel alias handed over.
-        (IStreamReaderFactory? readerFactory, string cleanedInput) = inputEndpoint != null
-            ? (PickChannelReader(inputEndpoint.Kind), inputEndpoint.Alias)
+        (IStreamReaderFactory? readerFactory, string cleanedInput, string? inputVariant) = inputEndpoint != null
+            ? (PickChannelReader(inputEndpoint.Kind), inputEndpoint.Alias, (string?)null)
             : ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
 
         // 2. Resolve Stream Transformer (SQL / Merge / …): CLI args when present, else the YAML JobDefinition.
@@ -164,6 +164,7 @@ public class LinearPipelineService
         // connection-string resolution for explicit -o targets.
         IDataWriterFactory? writerFactory = null;
         string cleanedOutput;
+        string? outputVariant = null;
         if (outputEndpoint != null)
         {
             writerFactory = PickChannelWriter(outputEndpoint.Kind);
@@ -174,7 +175,7 @@ public class LinearPipelineService
             cleanedOutput = job.Output ?? "";
             if (!string.IsNullOrEmpty(job.Output))
             {
-                (writerFactory, cleanedOutput) = ResolveFactory<IDataWriterFactory>(job.Output, _writerFactories);
+                (writerFactory, cleanedOutput, outputVariant) = ResolveFactory<IDataWriterFactory>(job.Output, _writerFactories);
             }
         }
 
@@ -257,7 +258,7 @@ public class LinearPipelineService
         }
 
         // 4. Register routing so factory Create() methods can resolve adapter connection strings.
-        _optionsRegistry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(cleanedInput, cleanedOutput));
+        _optionsRegistry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(cleanedInput, cleanedOutput, inputVariant, outputVariant));
 
         // 5. Build Pipeline (Transformers)
         // For CLI-originated branches (have raw args), always use TransformerPipelineBuilder
@@ -304,7 +305,7 @@ public class LinearPipelineService
                         _console.Write(new Spectre.Console.Markup($"[yellow]Warning: No output specified. Running in validation mode.[/]{Environment.NewLine}"));
                     }
 
-                    (writerFactory, _) = ResolveFactory<IDataWriterFactory>("null:", _writerFactories);
+                    (writerFactory, _, _) = ResolveFactory<IDataWriterFactory>("null:", _writerFactories);
                 }
 
                 if (writerFactory == null)
@@ -339,24 +340,22 @@ public class LinearPipelineService
         }
     }
 
-    private static (T? Factory, string Cleaned) ResolveFactory<T>(string raw, IEnumerable<T> factories) where T : class, IDataFactory
+    /// <summary>
+    /// Routes a connection string to its provider. The "{component}[+{variant}]:" grammar — including
+    /// the rule that a remote URI is not a selector — belongs to <see cref="ComponentSelector"/>, so
+    /// every routing site in the CLI resolves identically.
+    /// </summary>
+    private static (T? Factory, string Cleaned, string? Variant) ResolveFactory<T>(string raw, IEnumerable<T> factories) where T : class, IDataFactory
     {
         raw = raw.Trim();
-        // "s3://bucket/key.parquet" is a URI, not a "component:value" selector: stripping the
-        // "s3:" prefix would hand the provider "//bucket/key.parquet". Scheme-carrying strings
-        // are matched through CanHandle and reach the provider intact.
-        var isUri = DtPipe.Adapters.Common.ConnectionUri.HasRemoteScheme(raw);
         foreach (var factory in factories)
         {
-            var prefix = factory.ComponentName + ":";
-            if (!isUri && raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                return (factory, raw[prefix.Length..].Trim());
-            // Bare component name (e.g. "-o csv") → maps to stdio "-"
-            if (string.Equals(raw, factory.ComponentName, StringComparison.OrdinalIgnoreCase))
-                return (factory, "-");
+            var selection = ComponentSelector.Select(raw, factory.ComponentName);
+            if (selection.Matched)
+                return (factory, selection.Cleaned, selection.Variant);
         }
         var match = factories.FirstOrDefault(f => f.CanHandle(raw));
-        return (match, raw);
+        return (match, raw, null);
     }
 
     // F5 — capability-based selection of internal channel transports. DI wraps

@@ -95,6 +95,35 @@ public class RemoteUriClaimTests
             "Violations: " + string.Join(", ", violations));
     }
 
+    /// <summary>
+    /// The sibling half of the CanHandle guard, at the routing layer. A remote URI must never be
+    /// mistaken for a "{component}:" selector: "s3://bucket/key.parquet" starts with "s3:" but
+    /// stripping it hands the provider "//bucket/key.parquet". Only the pipeline path had this
+    /// guard, so "inspect -i s3://…" and the MCP analyze tools still mangled the URI. Now that
+    /// ComponentSelector owns the grammar, assert it for every registered component at once.
+    /// </summary>
+    [Theory]
+    [InlineData("s3://bucket/data.parquet")]
+    [InlineData("s3a://bucket/data.csv")]
+    [InlineData("azure://container/blob.jsonl")]
+    [InlineData("az://container/blob.ndjson")]
+    [InlineData("gs://bucket/data.parquet")]
+    [InlineData("https://example.com/feed.jsonl")]
+    public void No_Component_Selector_Strips_A_Remote_Uri(string uri)
+    {
+        var stripping = AllFactories()
+            .Select(pair => (pair.Entry.ComponentName,
+                             Selection: ComponentSelector.Select(uri, pair.Entry.ComponentName)))
+            .Where(x => x.Selection.Matched)
+            .Select(x => $"{x.ComponentName} → '{x.Selection.Cleaned}'")
+            .Distinct()
+            .ToList();
+
+        Assert.True(stripping.Count == 0,
+            $"'{uri}' is a URI, not a selector; stripping it corrupts the connection string. " +
+            "Offenders: " + string.Join(", ", stripping));
+    }
+
     [Theory]
     [InlineData("s3://bucket/data.parquet")]
     [InlineData("azure://c/b.parquet")]

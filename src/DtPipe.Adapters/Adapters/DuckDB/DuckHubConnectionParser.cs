@@ -42,30 +42,29 @@ public static class DuckHubConnectionParser
         "s3", "s3a", "azure", "az", "gs", "gcs", "http", "https",
     };
 
-    public static DuckHubConnectionInfo Parse(string connectionString)
+    /// <summary>
+    /// Builds the ATTACH plan for a hub connection.
+    /// <para>
+    /// Takes the variant and the connection details separately: <c>ComponentSelector</c> has already
+    /// split "duck+mysql:Host=…" into variant "mysql" and details "Host=…". This method used to
+    /// re-parse the "duck+" prefix itself, which is exactly the prefix knowledge an adapter is not
+    /// supposed to carry.
+    /// </para>
+    /// </summary>
+    /// <param name="variant">The selector variant ("mysql"), or null/empty for a non-hub connection.</param>
+    /// <param name="connectionDetails">The selector-stripped connection string.</param>
+    public static DuckHubConnectionInfo Parse(string? variant, string connectionDetails)
     {
-        if (string.IsNullOrWhiteSpace(connectionString) || !connectionString.StartsWith("duck+", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(variant))
         {
             return new DuckHubConnectionInfo
             {
                 IsHub = false,
-                EffectiveConnectionString = DuckDbConnectionHelper.GetConnectionString(connectionString)
+                EffectiveConnectionString = DuckDbConnectionHelper.GetConnectionString(connectionDetails)
             };
         }
 
-        var colonIdx = connectionString.IndexOf(':');
-        if (colonIdx == -1)
-        {
-            return new DuckHubConnectionInfo
-            {
-                IsHub = false,
-                EffectiveConnectionString = DuckDbConnectionHelper.GetConnectionString(connectionString)
-            };
-        }
-
-        var prefix = connectionString.Substring(0, colonIdx);
-        var provider = prefix.Substring(5).ToLowerInvariant(); // skip "duck+"
-        var connectionDetails = connectionString.Substring(colonIdx + 1);
+        var provider = variant.Trim().ToLowerInvariant();
 
         if (!SupportedProviders.TryGetValue(provider, out var extensionName))
         {
@@ -92,7 +91,7 @@ public static class DuckHubConnectionParser
             Provider = provider,
             Alias = alias,
             ConnectionDetails = connectionDetails,
-            EffectiveConnectionString = "Data Source=:memory:;",
+            EffectiveConnectionString = DuckDbConnectionHelper.InMemoryConnectionString,
             InitSqlStatements = initSqls
         };
     }

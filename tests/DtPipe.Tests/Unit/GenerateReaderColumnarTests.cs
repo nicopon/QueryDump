@@ -12,7 +12,8 @@ public class GenerateReaderColumnarTests
     {
         // Setup
         var options = new GenerateReaderOptions { RowCount = 100 };
-        var reader = new GenerateReader("generate:100", "", options);
+        // Selector-stripped form, as the descriptor receives it at runtime.
+        var reader = new GenerateReader("100", "", options);
         await reader.OpenAsync();
 
         // Act

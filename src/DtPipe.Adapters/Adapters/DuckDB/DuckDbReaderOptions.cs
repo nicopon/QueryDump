@@ -11,11 +11,17 @@ namespace DtPipe.Adapters.DuckDB;
 	examples: new[] {
 		"main:\n  input: \"duck:warehouse.duckdb\"\n  provider-options:\n    duck:\n      query: \"SELECT * FROM sales\"\n      duck-init: \"LOAD httpfs; SET s3_region='eu-west-1';\"\n  output: \"parquet:sales.parquet\""
 	})]
-public class DuckDbReaderOptions : QueryableReaderOptions, IProviderOptions
+public class DuckDbReaderOptions : QueryableReaderOptions, IProviderOptions, IVariantAwareOptions
 {
 	public static string Prefix => DuckDbConstants.ProviderName;
 	public static string DisplayName => "DuckDB Reader";
 
 	[ComponentOption("--duck-init", Description = "SQL executed after connection open (e.g. LOAD httpfs; SET s3_region='...'). Prefix with @ to load from a file.")]
 	public string? InitSql { get; set; }
+
+	/// <summary>
+	/// Selector variant ("mysql" for "duck+mysql:"), set by the router. Not a CLI flag: it is
+	/// routing data the adapter must not re-derive from the connection string.
+	/// </summary>
+	public string? Variant { get; set; }
 }

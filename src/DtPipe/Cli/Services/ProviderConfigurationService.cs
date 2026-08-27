@@ -103,8 +103,7 @@ public class ProviderConfigurationService
         if (string.IsNullOrWhiteSpace(connectionString))
             return false;
         var raw = connectionString.Trim();
-        return raw.StartsWith(factory.ComponentName + ":", StringComparison.OrdinalIgnoreCase)
-            || raw.Equals(factory.ComponentName, StringComparison.OrdinalIgnoreCase)
+        return ComponentSelector.Matches(raw, factory.ComponentName)
             || factory.CanHandle(raw);
     }
 
