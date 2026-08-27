@@ -653,7 +653,7 @@ dtpipe mcp
 
 ### AI Agent Subcommand (`dtpipe agent`)
 
-Launches an interactive or automated ReAct AI agent loop for data integration tasks. The agent auto-discovers local Ollama models, renders compact TUI status lines, provides an interactive step inspector (trajectory viewer), renders Spectre.Console DAG topology boxes, and offers 1-click YAML file exports.
+Launches an interactive or automated ReAct AI agent loop for data integration tasks. The agent runs against a local Ollama install or the OpenAI API (`--provider`), auto-discovers local Ollama models, renders compact TUI status lines, provides an interactive step inspector (trajectory viewer), renders Spectre.Console DAG topology boxes, and offers 1-click YAML file exports.
 
 ```bash
 dtpipe agent [<prompt>] [options]
@@ -662,8 +662,10 @@ dtpipe agent [<prompt>] [options]
 | Option | Alias | Description | Default |
 |:---|:---|:---|:---|
 | `<prompt>` | `-p`, `--prompt` | Task description for the AI agent | *(Interactive prompt if omitted)* |
-| `--model` | `-m` | Ollama model name (e.g. `gemma4:12b-mlx`, `qwen2.5-coder:7b`) | *(Auto-discovered from Ollama)* |
-| `--url` | `-u` | Ollama API endpoint URL | `http://localhost:11434` |
+| `--provider` | | LLM provider: `ollama` (local) or `openai` | `ollama` |
+| `--api-key` | | API key for the `openai` provider. Falls back to the `DTPIPE_LLM_API_KEY` environment variable | *(unset)* |
+| `--model` | `-m` | Model name, provider-dependent (e.g. `gemma4:12b-mlx`, `qwen2.5-coder:7b` for Ollama; `gpt-4o` for OpenAI) | *(Auto-discovered from Ollama)* |
+| `--url` | `-u` | API endpoint URL | `http://localhost:11434` (ollama) · `https://api.openai.com` (openai) |
 | `--max-iterations` | | Maximum ReAct loop iterations per turn | `25` |
 | `--interactive` | `-i` | Force interactive model selection and prompt entry | `false` |
 | `--mode` | | Operating mode: `plan` designs/validates only (no execution); `execute`/`autonomous` may run through the guardrails | `plan` |
