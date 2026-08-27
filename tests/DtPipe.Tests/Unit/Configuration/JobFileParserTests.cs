@@ -286,6 +286,7 @@ joined:
 }
 
 
+[Collection("console-serial")]
 public class YamlCliParityTests
 {
 	/// <summary>

@@ -15,9 +15,10 @@ namespace DtPipe.Tests.Unit.Cli;
 /// 2. CLI args and the equivalent YAML dictionary produce equal options objects.
 /// 3. Unknown YAML keys warn (lenient) or throw (strict).
 /// </summary>
+[Collection("console-serial")]
 public class OptionBinderTests
 {
-    /// <summary>Captures Console.Error while running <paramref name="action"/> (console-serial safe by xunit default).</summary>
+    /// <summary>Captures Console.Error while running <paramref name="action"/>. The class joins the console-serial collection: the redirect is process-wide, so a test writing to stderr in another collection would land in this capture.</summary>
     private static string CaptureStderr(Action action)
     {
         var original = Console.Error;
