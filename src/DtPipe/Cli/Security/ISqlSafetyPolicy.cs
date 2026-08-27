@@ -73,6 +73,17 @@ public sealed class DefaultSqlSafetyPolicy : ISqlSafetyPolicy
         @"(read_parquet|read_csv|read_csv_auto|read_json)\s*\(\s*['""]?(https?|s3|ftp|gs)://",
         RegexOptions.Compiled);
 
+    /// <summary>
+    /// A bare object-storage URI reaches the network without any SQL around it: the s3/azure
+    /// providers turn "input: s3://bucket/key.parquet" into a remote fetch on their own. Scanning
+    /// only for read_parquet(...) left that path ungated, so connection strings are matched too.
+    /// Limited to the schemes a provider actually dials, so an http link in a comment is not a
+    /// false positive.
+    /// </summary>
+    private static readonly Regex ObjectStorageUriRegex = new(
+        @"(?i)(^|[\s'""=:,\[(])(s3a?|azure|az)://",
+        RegexOptions.Compiled);
+
         public SqlSafetyResult Analyze(string sql, SqlSafetyOptions options)
            {
             if (string.IsNullOrWhiteSpace(sql))
@@ -88,7 +99,7 @@ public sealed class DefaultSqlSafetyPolicy : ISqlSafetyPolicy
                  .OrderBy(v => v)
                  .ToList();
 
-            bool networkDetected = NetworkRegex.IsMatch(sql);
+            bool networkDetected = NetworkRegex.IsMatch(sql) || ObjectStorageUriRegex.IsMatch(sql);
 
             if (destructiveMatches.Count > 0 && !options.AllowDestructive)
                  {
@@ -101,7 +112,8 @@ public sealed class DefaultSqlSafetyPolicy : ISqlSafetyPolicy
             if (networkDetected && !options.AllowNetwork)
                  {
                 violations.Add(
-                     "Network access detected in SQL (LOAD httpfs/azure or remote read_parquet/read_csv). " +
+                     "Network access detected (LOAD httpfs/azure, remote read_parquet/read_csv, " +
+                     "or an s3://, azure:// connection string). " +
                      "Set --allow-network to permit (default: deny).");
                  }
 

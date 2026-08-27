@@ -113,26 +113,58 @@ fi
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 4: DuckDB S3 / MinIO (httpfs) ---"
 if nc -z 127.0.0.1 9000 2>/dev/null || nc -w 2 127.0.0.1 9000 2>/dev/null; then
-    S3_INIT="INSTALL httpfs; LOAD httpfs; SET s3_endpoint='127.0.0.1:9000'; SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin'; SET s3_use_ssl=false; SET s3_url_style='path';"
+    S3_OPTS=(--s3-endpoint "http://127.0.0.1:9000" --s3-access-key minioadmin --s3-secret-key minioadmin)
     S3_TARGET="s3://dtpipe-test-bucket/users.parquet"
-    STAGE_DB="$TMP_DIR/s3_stage.duckdb"
 
-    # Object-storage targets must go through the DuckDB engine (httpfs): a plain
-    # '-o s3://...' is rejected by design — file providers never claim remote schemes.
-    echo "Testing write to MinIO S3 bucket via DuckDB httpfs (stage + post-exec COPY): ..."
-    "$DTPIPE" -i "$SRC_CSV" -o "duck:$STAGE_DB" --table "users" --strategy Recreate \
-        --post-exec "$S3_INIT COPY (SELECT * FROM users) TO '$S3_TARGET' (FORMAT PARQUET);" --no-stats
+    # Primary route: the s3:// provider streams through DuckDB's httpfs in-process.
+    echo "Testing write to MinIO S3 bucket via the s3:// provider: ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "$S3_TARGET" "${S3_OPTS[@]}" --no-stats
 
-    echo "Testing read from MinIO S3 bucket via DuckDB httpfs: ..."
-    "$DTPIPE" -i "duck:memory" --duck-init "$S3_INIT" \
-        --query "SELECT * FROM read_parquet('$S3_TARGET')" -o "$TMP_DIR/s3_read.csv" --no-stats
+    echo "Testing read from MinIO S3 bucket via the s3:// provider: ..."
+    "$DTPIPE" -i "$S3_TARGET" "${S3_OPTS[@]}" -o "$TMP_DIR/s3_read.csv" --no-stats
 
     OUT_LINES=$(wc -l < "$TMP_DIR/s3_read.csv" | tr -d ' ')
     if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
         echo "FAIL: Expected $SRC_LINES lines in S3/MinIO output, got $OUT_LINES"
         exit 1
     fi
-    echo "  -> Write and Read Parquet on MinIO S3: PASSED ($OUT_LINES lines matched)"
+    echo "  -> Write and Read Parquet on MinIO S3 via provider: PASSED ($OUT_LINES lines matched)"
+
+    # Globbing is native to the read function, not something the provider re-implements.
+    echo "Testing glob read across multiple S3 objects: ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "s3://dtpipe-test-bucket/glob/a.csv" "${S3_OPTS[@]}" --no-stats
+    "$DTPIPE" -i "$SRC_CSV" -o "s3://dtpipe-test-bucket/glob/b.csv" "${S3_OPTS[@]}" --no-stats
+    "$DTPIPE" -i "s3://dtpipe-test-bucket/glob/*.csv" "${S3_OPTS[@]}" -o "$TMP_DIR/s3_glob.csv" --no-stats
+
+    GLOB_LINES=$(wc -l < "$TMP_DIR/s3_glob.csv" | tr -d ' ')
+    EXPECTED_GLOB=$(( (SRC_LINES - 1) * 2 + 1 ))
+    if [ "$GLOB_LINES" -ne "$EXPECTED_GLOB" ]; then
+        echo "FAIL: Expected $EXPECTED_GLOB lines from the S3 glob, got $GLOB_LINES"
+        exit 1
+    fi
+    echo "  -> Glob read across S3 objects: PASSED ($GLOB_LINES lines matched)"
+
+    # Legacy route kept as a regression: --duck-init + read_parquet must keep working for
+    # anything the closed format map does not cover.
+    S3_INIT="INSTALL httpfs; LOAD httpfs; SET s3_endpoint='127.0.0.1:9000'; SET s3_access_key_id='minioadmin'; SET s3_secret_access_key='minioadmin'; SET s3_use_ssl=false; SET s3_url_style='path';"
+    echo "Testing legacy --duck-init read of the same object: ..."
+    "$DTPIPE" -i "duck:memory" --duck-init "$S3_INIT" \
+        --query "SELECT * FROM read_parquet('$S3_TARGET')" -o "$TMP_DIR/s3_read_legacy.csv" --no-stats
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/s3_read_legacy.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines from the legacy duck-init route, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Legacy --duck-init route: PASSED ($OUT_LINES lines matched)"
+
+    # duck+s3: is not a hub target and must fail closed with the working route named.
+    echo "Testing that duck+s3: is rejected: ..."
+    if "$DTPIPE" -i "duck+s3:$S3_TARGET" --query "SELECT 1" -o "$TMP_DIR/hub_s3.csv" --no-stats >/dev/null 2>&1; then
+        echo "FAIL: duck+s3: was accepted; object storage is not an ATTACH target."
+        exit 1
+    fi
+    echo "  -> duck+s3: rejected as expected"
 else
     echo "SKIP: MinIO container (port 9000) not reachable."
 fi
@@ -168,23 +200,33 @@ echo -e "\n--- Test 6: DuckDB Azure Blob Storage (Azurite) ---"
 if nc -z 127.0.0.1 10000 2>/dev/null || nc -w 2 127.0.0.1 10000 2>/dev/null; then
     AZURE_INIT="INSTALL azure; LOAD azure; CREATE SECRET azurite_secret (TYPE AZURE, CONNECTION_STRING 'DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;');"
     AZURE_TARGET="azure://dtpipe-azure-bucket/users.parquet"
-    AZ_STAGE_DB="$TMP_DIR/az_stage.duckdb"
+    AZ_CONN="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
 
-    # Same rule as test 4: remote schemes go through the DuckDB engine.
-    echo "Testing write to Azure Blob Storage (Azurite) via DuckDB azure (stage + post-exec COPY): ..."
-    "$DTPIPE" -i "$SRC_CSV" -o "duck:$AZ_STAGE_DB" --table "users" --strategy Recreate \
-        --post-exec "$AZURE_INIT COPY (SELECT * FROM users) TO '$AZURE_TARGET' (FORMAT PARQUET);" --no-stats
+    # Primary route: the azure:// provider streams through DuckDB's azure extension.
+    echo "Testing write to Azure Blob Storage (Azurite) via the azure:// provider: ..."
+    "$DTPIPE" -i "$SRC_CSV" -o "$AZURE_TARGET" --azure-connection-string "$AZ_CONN" --no-stats
 
-    echo "Testing read from Azure Blob Storage (Azurite) via DuckDB azure: ..."
-    "$DTPIPE" -i "duck:memory" --duck-init "$AZURE_INIT" \
-        --query "SELECT * FROM read_parquet('$AZURE_TARGET')" -o "$TMP_DIR/azure_read.csv" --no-stats
+    echo "Testing read from Azure Blob Storage (Azurite) via the azure:// provider: ..."
+    "$DTPIPE" -i "$AZURE_TARGET" --azure-connection-string "$AZ_CONN" -o "$TMP_DIR/azure_read.csv" --no-stats
 
     OUT_LINES=$(wc -l < "$TMP_DIR/azure_read.csv" | tr -d ' ')
     if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
         echo "FAIL: Expected $SRC_LINES lines in Azure output, got $OUT_LINES"
         exit 1
     fi
-    echo "  -> Write and Read Parquet on Azure Blob (Azurite): PASSED ($OUT_LINES lines matched)"
+    echo "  -> Write and Read Parquet on Azure Blob via provider: PASSED ($OUT_LINES lines matched)"
+
+    # Legacy route kept as a regression.
+    echo "Testing legacy --duck-init read of the same blob: ..."
+    "$DTPIPE" -i "duck:memory" --duck-init "$AZURE_INIT" \
+        --query "SELECT * FROM read_parquet('$AZURE_TARGET')" -o "$TMP_DIR/azure_read_legacy.csv" --no-stats
+
+    OUT_LINES=$(wc -l < "$TMP_DIR/azure_read_legacy.csv" | tr -d ' ')
+    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
+        echo "FAIL: Expected $SRC_LINES lines from the legacy Azure duck-init route, got $OUT_LINES"
+        exit 1
+    fi
+    echo "  -> Legacy --duck-init route (Azure): PASSED ($OUT_LINES lines matched)"
 else
     echo "SKIP: Azurite container (port 10000) not reachable."
 fi

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace DtPipe.Adapters.DuckDB;
@@ -16,6 +18,32 @@ public class DuckHubConnectionInfo
 
 public static class DuckHubConnectionParser
 {
+    /// <summary>
+    /// Closed allowlist of hub providers: a "duck+{provider}:" connection means ATTACH, so a
+    /// provider only belongs here once its "ATTACH … (TYPE …)" form has been verified. An open
+    /// fallback used to forward any unknown provider straight into the TYPE clause, which
+    /// generated invalid SQL ("TYPE AZURE", "TYPE EXCEL") and surfaced as a raw DuckDB parse
+    /// error instead of an actionable message. Maps the user-facing alias to the extension name.
+    /// </summary>
+    private static readonly Dictionary<string, string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["pg"] = "postgres",
+        ["postgres"] = "postgres",
+        ["postgresql"] = "postgres",
+        ["mysql"] = "mysql",
+        ["sqlite"] = "sqlite",
+    };
+
+    /// <summary>
+    /// Object-storage schemes that users reasonably expect to work as a hub. They never can:
+    /// ATTACH integrates a relational catalog, while object storage is a transport for files.
+    /// Listed only so the error can name the route that does work.
+    /// </summary>
+    private static readonly HashSet<string> ObjectStorageProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "s3", "s3a", "azure", "az", "gs", "gcs", "http", "https",
+    };
+
     public static DuckHubConnectionInfo Parse(string connectionString)
     {
         if (string.IsNullOrWhiteSpace(connectionString) || !connectionString.StartsWith("duck+", StringComparison.OrdinalIgnoreCase))
@@ -41,40 +69,24 @@ public static class DuckHubConnectionParser
         var provider = prefix.Substring(5).ToLowerInvariant(); // skip "duck+"
         var connectionDetails = connectionString.Substring(colonIdx + 1);
 
-        var extensionName = provider switch
+        if (!SupportedProviders.TryGetValue(provider, out var extensionName))
         {
-            "pg" or "postgres" or "postgresql" => "postgres",
-            "mysql" => "mysql",
-            "sqlite" => "sqlite",
-            "s3" or "http" or "https" => "httpfs",
-            _ => provider
-        };
+            throw new InvalidOperationException(BuildUnsupportedProviderMessage(provider));
+        }
 
         var alias = GetDatabaseAlias(provider, connectionDetails);
 
-        string[] initSqls;
-        if (extensionName == "httpfs")
+        var typeParam = extensionName.ToUpperInvariant();
+        // DuckDB ATTACH connectionDetails needs to be single-quoted.
+        // Escape single quotes inside connectionDetails.
+        var escapedDetails = connectionDetails.Replace("'", "''");
+        var initSqls = new[]
         {
-            initSqls = new[]
-            {
-                "INSTALL httpfs;",
-                "LOAD httpfs;"
-            };
-        }
-        else
-        {
-            var typeParam = extensionName.ToUpperInvariant();
-            // DuckDB ATTACH connectionDetails needs to be single-quoted.
-            // Escape single quotes inside connectionDetails.
-            var escapedDetails = connectionDetails.Replace("'", "''");
-            initSqls = new[]
-            {
-                $"INSTALL {extensionName};",
-                $"LOAD {extensionName};",
-                $"ATTACH '{escapedDetails}' AS {alias} (TYPE {typeParam});",
-                $"USE {alias};"
-            };
-        }
+            $"INSTALL {extensionName};",
+            $"LOAD {extensionName};",
+            $"ATTACH '{escapedDetails}' AS {alias} (TYPE {typeParam});",
+            $"USE {alias};"
+        };
 
         return new DuckHubConnectionInfo
         {
@@ -85,6 +97,25 @@ public static class DuckHubConnectionParser
             EffectiveConnectionString = "Data Source=:memory:;",
             InitSqlStatements = initSqls
         };
+    }
+
+    private static string BuildUnsupportedProviderMessage(string provider)
+    {
+        var supported = string.Join(", ", SupportedProviders.Keys.Select(p => $"duck+{p}:"));
+        var shown = provider.Length == 0 ? "(empty)" : provider;
+
+        if (ObjectStorageProviders.Contains(provider))
+        {
+            return $"'duck+{provider}:' is not a hub target. The hub prefix means ATTACH, which integrates a " +
+                   "relational catalog; object storage holds files, not catalogs. Read or write those locations " +
+                   "through the DuckDB engine instead: " +
+                   "-i duck:memory --duck-init \"INSTALL httpfs; LOAD httpfs; SET s3_region='...'\" " +
+                   $"--query \"SELECT * FROM read_parquet('{provider}://bucket/key.parquet')\", or COPY ... TO the " +
+                   $"same URI via --post-exec. Supported hub providers: {supported}.";
+        }
+
+        return $"Unknown DuckDB hub provider '{shown}'. Supported hub providers: {supported}. " +
+               "Other DuckDB extensions are reachable with --duck-init (INSTALL/LOAD) plus --query.";
     }
 
     private static string GetDatabaseAlias(string provider, string connectionDetails)

@@ -396,9 +396,69 @@ DuckDB-file variants use the same mechanism).
 `--duck-init` value forms: `keyring://alias`, `${{keyring://alias}}`, `${{ENV_VAR}}`,
 `@/path/file.sql` — composable, full syntax in [REFERENCE.md#value-resolution](./REFERENCE.md#value-resolution) and [REFERENCE.md#provider-specific-options](./REFERENCE.md#provider-specific-options).
 
+### Object storage: S3 and Azure Blob
+
+Object-storage locations are ordinary inputs and outputs, handled by the DuckDB engine in-process.
+Reads stream straight from the object — nothing is downloaded to a temp file first.
+
+```bash
+# Read a Parquet object from S3, write a local CSV
+dtpipe -i "s3://analytics/events/2026-08-26.parquet" --s3-region eu-west-1 -o events.csv
+
+# Write to a MinIO bucket (an explicit http:// endpoint selects path-style, no TLS)
+dtpipe -i sales.csv -o "s3://warehouse/sales/2026-08.parquet" \
+  --s3-endpoint "http://127.0.0.1:9000" \
+  --s3-access-key "${{keyring://minio-key}}" \
+  --s3-secret-key "${{keyring://minio-secret}}"
+
+# Azure Blob round-trip
+dtpipe -i "azure://reports/daily.parquet" --azure-connection-string "${{keyring://azure-conn}}" -o daily.csv
+dtpipe -i daily.csv -o "azure://reports/daily-copy.parquet" --azure-connection-string "${{keyring://azure-conn}}"
+
+# Glob across many objects — partitioned layouts read as one stream
+dtpipe -i "s3://analytics/events/dt=*/part-*.parquet" --s3-region eu-west-1 -o all_events.parquet
+
+# Object storage to object storage, with different credentials on each side
+dtpipe -i "s3://source-bucket/in.parquet" --s3-access-key "${{keyring://src-key}}" --s3-secret-key "${{keyring://src-secret}}" \
+       -o "s3://target-bucket/out.parquet" --s3-access-key "${{keyring://dst-key}}" --s3-secret-key "${{keyring://dst-secret}}"
+```
+
+With no `--s3-access-key` / `--s3-secret-key`, the ambient credential chain is used (`AWS_*`
+environment variables, shared config, instance profile) — the usual CI and EC2 setup needs no flags.
+
+In a YAML job:
+
+```yaml
+main:
+  input: "s3://analytics/events/2026-08-*.parquet"
+  provider-options:
+    s3:
+      s3-region: "eu-west-1"
+      s3-secret-key: "${{keyring://aws-secret}}"
+  output: "events.parquet"
+```
+
+Notes:
+- Format comes from the extension (`.parquet`, `.csv`, `.tsv`, `.json`, `.jsonl`, `.ndjson`).
+  Anything else is refused with the supported list — use `--duck-init` + `--query` for other formats.
+- A write replaces the target key and is issued only once the pipeline completes, so a failed run
+  leaves the existing object intact. `--strategy` does not apply to objects.
+- The `httpfs` / `azure` DuckDB extensions are installed on first use, so the host needs access to
+  DuckDB's extension repository once.
+
 ### DuckDB Hub connections (`duck+{provider}:`)
 
-DtPipe supports native DuckDB Hub connections using the `duck+{provider}:` prefix. This transparently handles loading the extension (`mysql`, `postgres`, `sqlite`, `httpfs`) and running the appropriate `ATTACH` command.
+DtPipe supports native DuckDB Hub connections using the `duck+{provider}:` prefix. This transparently
+handles loading the extension and running the appropriate `ATTACH` command.
+
+The hub is **relational only** — `ATTACH` integrates another database as a SQL catalog. Supported
+providers are `duck+pg:` / `duck+postgres:` / `duck+postgresql:`, `duck+mysql:`, and `duck+sqlite:`;
+anything else fails with the supported list rather than emitting invalid SQL.
+
+Object storage (`s3://`, `azure://`, `https://`…) is **not** a hub target — it holds files, not
+catalogs. Reach those locations through the DuckDB engine with `--duck-init` instead (see
+[DuckDB Extensions and Cloud Storage](#duckdb-extensions-and-cloud-storage) above). Other DuckDB extensions
+(`excel`, `ducklake`, …) are reached the same way.
 
 ```bash
 # Read from a MySQL database via DuckDB Hub

@@ -342,10 +342,14 @@ public class LinearPipelineService
     private static (T? Factory, string Cleaned) ResolveFactory<T>(string raw, IEnumerable<T> factories) where T : class, IDataFactory
     {
         raw = raw.Trim();
+        // "s3://bucket/key.parquet" is a URI, not a "component:value" selector: stripping the
+        // "s3:" prefix would hand the provider "//bucket/key.parquet". Scheme-carrying strings
+        // are matched through CanHandle and reach the provider intact.
+        var isUri = DtPipe.Adapters.Common.ConnectionUri.HasRemoteScheme(raw);
         foreach (var factory in factories)
         {
             var prefix = factory.ComponentName + ":";
-            if (raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            if (!isUri && raw.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 return (factory, raw[prefix.Length..].Trim());
             // Bare component name (e.g. "-o csv") → maps to stdio "-"
             if (string.Equals(raw, factory.ComponentName, StringComparison.OrdinalIgnoreCase))

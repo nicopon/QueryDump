@@ -39,7 +39,7 @@ run_test() {
     local status=$?
 
     # Tests in this list are EXPECTED to fail (non-zero exit code = PASS)
-    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143|144)$ ]]; then
+    if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143|144|145|146)$ ]]; then
         if [ $status -eq 0 ]; then
             echo -e "\e[31mFAILED (Expected error but got success)\e[0m"
             return 1
@@ -449,10 +449,18 @@ run_test "T143" "$DTPIPE -i artifacts/test_data.csv --alias s --from s \
   \"SELECT Id FROM s\" --sql \"SELECT Val FROM s\" \
   -o artifacts/output_t143.csv"
 
-# T144: [ERROR] Object-storage URI claimed by a local-file writer.
-# File providers must never treat "s3://..." as a local path (that bug silently
-# created a literal "s3:" directory). Object storage goes through the DuckDB engine.
-run_test "T144" "$DTPIPE -i artifacts/test_data.csv -o \"s3://dtpipe-test-bucket/t144.parquet\""
+# T144: [ERROR] Object-storage URI with a format outside the closed extension map.
+# The s3/azure providers resolve the format from the extension and refuse anything else,
+# so this fails the same way with or without a reachable bucket. A local-file writer must
+# never claim it either — that bug silently created a literal "s3:" directory.
+run_test "T144" "$DTPIPE -i artifacts/test_data.csv -o \"s3://dtpipe-test-bucket/t144.avro\""
+
+# T145: [ERROR] Remote scheme that no provider claims. Only s3/s3a and azure/az are
+# routed to object storage; gs:// must fail closed rather than land on the filesystem.
+run_test "T145" "$DTPIPE -i artifacts/test_data.csv -o \"gs://dtpipe-test-bucket/t145.parquet\""
+
+# T146: [ERROR] Object-storage URI naming a container but no key: there are no bytes there.
+run_test "T146" "$DTPIPE -i artifacts/test_data.csv -o \"s3://dtpipe-test-bucket\""
 
 echo "----------------------------------------"
 

@@ -94,6 +94,57 @@ public class DefaultSqlSafetyPolicyTests
               var result = DefaultSqlSafetyPolicy.DryRunYaml(yaml, new SqlSafetyOptions());
               Assert.True(result.Allowed);
                 }
+        /// <summary>
+        /// F2 regression: the s3/azure providers fetch over the network without any SQL in the
+        /// job, so scanning only for read_parquet(...) let "input: s3://..." bypass the gate.
+        /// </summary>
+        [Theory]
+        [InlineData("s3://bucket/data.parquet")]
+        [InlineData("s3a://bucket/data.csv")]
+        [InlineData("azure://container/blob.parquet")]
+        [InlineData("az://container/blob.parquet")]
+        public void ObjectStorage_ConnectionString_Is_Blocked_Without_AllowNetwork(string connectionString)
+        {
+            var result = _policy.Analyze(connectionString, new SqlSafetyOptions());
+
+            Assert.False(result.Allowed);
+            Assert.True(result.NetworkDetected);
+            Assert.Contains(result.Violations, v => v.Contains("--allow-network"));
+        }
+
+        [Theory]
+        [InlineData("s3://bucket/data.parquet")]
+        [InlineData("azure://container/blob.parquet")]
+        public void ObjectStorage_ConnectionString_Is_Allowed_With_AllowNetwork(string connectionString)
+        {
+            var result = _policy.Analyze(connectionString, new SqlSafetyOptions { AllowNetwork = true });
+
+            Assert.True(result.Allowed);
+            Assert.True(result.NetworkDetected);
+        }
+
+        [Fact]
+        public void DryRunYaml_Blocks_ObjectStorage_Input()
+        {
+            var yaml = "main:\n  input: \"s3://bucket/events.parquet\"\n  output: \"out.csv\"\n";
+
+            var result = DefaultSqlSafetyPolicy.DryRunYaml(yaml, new SqlSafetyOptions());
+
+            Assert.False(result.Allowed);
+            Assert.True(result.NetworkDetected);
+        }
+
+        /// <summary>Local jobs must stay clean: the scheme match must not fire on ordinary paths.</summary>
+        [Theory]
+        [InlineData("main:\n  input: \"data.csv\"\n  output: \"out.parquet\"\n")]
+        [InlineData("SELECT * FROM sales WHERE region = 'az'")]
+        [InlineData("SELECT * FROM read_parquet('local/s3_archive.parquet')")]
+        public void Local_Jobs_Do_Not_Trip_The_Network_Gate(string text)
+        {
+            var result = _policy.Analyze(text, new SqlSafetyOptions());
+
+            Assert.False(result.NetworkDetected);
+        }
 }
 
 /// <summary>
@@ -139,4 +190,5 @@ public class DefaultApprovalGateTests
                var noApply = new ApprovalRequest { Apply = false, Interactive = true };
                Assert.False(gate.Approve(noApply));
                 }
+
 }

@@ -161,6 +161,8 @@ dtpipe -i duck:memory --duck-init "keyring://s3-init" ...
 | **XML** | ✅ | — | `xml:` / `.xml` | — | ✅ |
 | **Apache Arrow** | ✅ | ✅ | `arrow:` / `.arrow` | — | ✅ |
 | **Parquet** | ✅ | ✅ | `parquet:` / `.parquet` | — | ✅ |
+| **S3 object storage** | ✅ | ✅ | `s3://` / `s3a://` | — | — | See [Object storage](#object-storage-s3-azure) |
+| **Azure Blob** | ✅ | ✅ | `azure://` / `az://` | — | — | See [Object storage](#object-storage-s3-azure) |
 | **Data Gen** | ✅ | — | `generate:N` | — | — |
 | **Null** | — | ✅ | `null:` | — | — |
 | **Checksum** | — | ✅ | `checksum:` | — | — |
@@ -273,10 +275,55 @@ into one step; a different flag type starts a new step.
 > `--pre-exec`, `--post-exec` etc. accept inline SQL or a file path (`@scripts/pre.sql` or a `.sql` file path).
 > `--duck-init` runs on the DuckDB connection before reads or writes (unlike `--pre-exec` which runs on the target DB after connection).
 
-> **Object storage (`s3://`, `azure://`, `https://`…)** is not a local-file target: file providers
-> never claim remote-scheme URIs. Read or write such locations through the DuckDB engine
-> (`--duck-init "INSTALL httpfs; …"` + `read_parquet('s3://…')` / `COPY … TO 's3://…'`) —
-> see the MinIO/Azurite scenarios in `tests/scripts/validate_duck_hub.sh`.
+### Object storage (`s3://`, `azure://`)
+
+Object-storage locations are first-class inputs and outputs. They go through the DuckDB engine
+already in the process, so globs, range requests and multipart uploads work without any extra
+dependency. Reads stream: no object is downloaded to a temp file first. Writes stage the rows
+before uploading (a Parquet footer is only known at the end), spilling to the temp directory if
+the output exceeds memory.
+
+```bash
+dtpipe -i s3://bucket/events/2026-08-*.parquet --s3-region eu-west-1 -o events.csv
+dtpipe -i sales.csv -o azure://reports/sales.parquet --azure-connection-string "${{keyring://azure-conn}}"
+```
+
+| Provider | Schemes | Options |
+|:---|:---|:---|
+| `s3` | `s3://`, `s3a://` | `--s3-endpoint`, `--s3-region`, `--s3-access-key`, `--s3-secret-key`, `--s3-session-token`, `--s3-url-style` |
+| `azure` | `azure://`, `az://` | `--azure-connection-string`, `--azure-account-name`, `--azure-account-key`, `--azure-sas`, `--azure-endpoint` |
+
+- **Format** comes from the extension, through a closed map: `.parquet`, `.csv`, `.tsv`, `.json`,
+  `.jsonl`, `.ndjson`. Anything else is an error naming the supported set — no content sniffing.
+  For a format outside that map, use `--duck-init` + `--query` with the matching DuckDB function.
+- **Credentials** accept the usual value forms (`${{keyring://alias}}`, `${{ENV_VAR}}`, `@file`).
+  Leave the key pair unset to use the ambient credential chain (env, shared config, instance
+  profile). Secrets are scoped to their bucket/container, so a read and a write in the same
+  pipeline can use different credentials.
+- **Writes replace the target key.** Object storage has no append or upsert, so `--strategy` does
+  not apply. The upload is issued once the pipeline completes: a failed run leaves the existing
+  object untouched rather than replacing it with a partial one.
+- **Reads glob natively**: `s3://bucket/dt=*/part-*.parquet` reads every match.
+- `https://`, `gs://` and other schemes are **not** claimed by any provider, and object storage is
+  never a hub target (`duck+s3:` fails closed). Reach those through the DuckDB engine
+  (`--duck-init "INSTALL httpfs; …"` + `read_parquet(…)` / `COPY … TO …`) — see the MinIO/Azurite
+  scenarios in `tests/scripts/validate_duck_hub.sh`.
+- Object-storage connection strings count as network access for the agent guardrails: a job using
+  one needs `--allow-network` (see [Agent Guardrails](#agent-guardrails)).
+- The `httpfs` / `azure` extensions are installed from DuckDB's extension repository on first use,
+  so the host needs access to it once (or an extension directory already holding them).
+
+---|:---|:---|
+| `duck+pg:` / `duck+postgres:` / `duck+postgresql:` | `postgres` | `TYPE POSTGRES` |
+| `duck+mysql:` | `mysql` | `TYPE MYSQL` |
+| `duck+sqlite:` | `sqlite` | `TYPE SQLITE` |
+
+Any other provider fails with the supported list rather than forwarding an unverified name into the
+`TYPE` clause. Other DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached through
+`--duck-init` + `--query` / `--post-exec`, not through the hub prefix.
+
+> Extensions are `INSTALL`ed on first use, which needs network access to the DuckDB extension
+> repository unless they are already present in the local extension directory.
 
 ---
 

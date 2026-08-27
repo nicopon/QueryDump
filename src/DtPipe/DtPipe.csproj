@@ -55,11 +55,6 @@
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
-  <!-- Include Embedded Resources for offline extensions -->
-  <ItemGroup>
-    <EmbeddedResource Include="Resources\Extensions\**\*" />
-  </ItemGroup>
-
   <!-- Exclude test project folder from compilation -->
   <ItemGroup>
     <Compile Remove="DtPipe.Tests\**" />

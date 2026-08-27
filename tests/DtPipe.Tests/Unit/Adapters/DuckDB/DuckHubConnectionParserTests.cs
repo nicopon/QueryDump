@@ -67,18 +67,58 @@ public class DuckHubConnectionParserTests
         Assert.Equal("USE prod;", info.InitSqlStatements[3]);
     }
 
-    [Fact]
-    public void Parse_DuckS3_ReturnsHttpfsWithoutAttach()
+    /// <summary>
+    /// Object storage is a transport for files, not a relational catalog, so it can never be an
+    /// ATTACH target. "duck+s3:" used to emit INSTALL/LOAD httpfs and silently DROP the URI,
+    /// forcing the user to repeat it inside --query and leaving writes pointed at a catalog that
+    /// does not exist. Failing closed with the working route named is the contract now.
+    /// </summary>
+    [Theory]
+    [InlineData("duck+s3:s3://my-bucket/files/")]
+    [InlineData("duck+azure:container/blob.parquet")]
+    [InlineData("duck+az:container/blob.parquet")]
+    [InlineData("duck+gs:bucket/key.parquet")]
+    [InlineData("duck+https://example.com/feed.jsonl")]
+    public void Parse_ObjectStorageProvider_Throws_And_Names_The_Working_Route(string conn)
     {
-        var conn = "duck+s3:s3://my-bucket/files/";
+        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+
+        Assert.Contains("not a hub target", ex.Message);
+        Assert.Contains("--duck-init", ex.Message);
+        Assert.Contains("duck+sqlite:", ex.Message);
+    }
+
+    /// <summary>
+    /// The open "_ => provider" fallback forwarded any unknown provider into the TYPE clause,
+    /// producing invalid SQL such as "ATTACH ... (TYPE EXCEL)". Unknown providers must fail with
+    /// the supported list instead of a raw DuckDB parse error.
+    /// </summary>
+    [Theory]
+    [InlineData("duck+excel:data.xlsx")]
+    [InlineData("duck+mssql:Server=localhost;Database=db;")]
+    [InlineData("duck+bigquery:project=p;")]
+    [InlineData("duck+nonsense:whatever")]
+    [InlineData("duck+:whatever")]
+    public void Parse_UnknownProvider_Throws_With_Supported_List(string conn)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+
+        Assert.Contains("Unknown DuckDB hub provider", ex.Message);
+        Assert.Contains("duck+pg:", ex.Message);
+        Assert.Contains("duck+mysql:", ex.Message);
+        Assert.Contains("duck+sqlite:", ex.Message);
+    }
+
+    /// <summary>Plain "duck:" connections and file paths keep bypassing the hub entirely.</summary>
+    [Theory]
+    [InlineData("duck:memory")]
+    [InlineData("duck::memory:")]
+    [InlineData("data/warehouse.duckdb")]
+    public void Parse_NonHubConnection_IsNotAffected(string conn)
+    {
         var info = DuckHubConnectionParser.Parse(conn);
 
-        Assert.True(info.IsHub);
-        Assert.Equal("s3", info.Provider);
-        Assert.Equal("s3", info.Alias);
-        
-        Assert.Equal(2, info.InitSqlStatements.Length);
-        Assert.Equal("INSTALL httpfs;", info.InitSqlStatements[0]);
-        Assert.Equal("LOAD httpfs;", info.InitSqlStatements[1]);
+        Assert.False(info.IsHub);
+        Assert.Empty(info.InitSqlStatements);
     }
 }
