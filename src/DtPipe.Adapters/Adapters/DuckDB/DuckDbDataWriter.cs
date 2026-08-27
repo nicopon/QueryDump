@@ -71,14 +71,7 @@ public sealed class DuckDbDataWriter : IColumnarDataWriter, ISchemaInspector, IK
         }
         else
         {
-            if (_hubInfo.IsHub && (_hubInfo.Provider == "pg" || _hubInfo.Provider == "postgres" || _hubInfo.Provider == "postgresql"))
-            {
-                _unquotedSchema = "public";
-            }
-            else
-            {
-                _unquotedSchema = null;
-            }
+            _unquotedSchema = null;
             _unquotedTable = _options.Table;
         }
         _quotedTargetTableName = BuildQuotedTableName(_unquotedSchema, _unquotedTable);

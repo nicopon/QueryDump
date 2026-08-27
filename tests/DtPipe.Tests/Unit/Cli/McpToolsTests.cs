@@ -97,12 +97,25 @@ public class McpToolsTests
     [InlineData("Host=localhost;Database=mydb;Username=postgres;Password=123;")]
     [InlineData("Server=myServer;Database=db;User Id=uid;Password=pwd;")]
     [InlineData("sqlite:Host=dummy;Database=ignored;")]
+    [InlineData("duck+mysql:Host=localhost;Database=mydb;User=root;")]
     [InlineData(":memory:")]
     [InlineData("-")]
     public void ValidatePathSafety_DbConnectionStringOrSpecial_SkipsCheck(string path)
     {
         // Should not throw even though it doesn't represent a valid file path inside CWD
         InvokeValidatePathSafety(path);
+    }
+
+    /// <summary>
+    /// A blanket "StartsWith(duck+)" bypass used to exempt every hub connection string from path
+    /// safety unconditionally, regardless of its content. Hub strings are relational connection
+    /// strings (Host=/Database=/...), covered above, and get no special-cased exemption anymore —
+    /// anything shaped like a workspace-escaping path is still checked the same way "duck:" is.
+    /// </summary>
+    [Fact]
+    public void ValidatePathSafety_DuckHubPrefix_NoLongerBlanketBypassed()
+    {
+        Assert.Throws<UnauthorizedAccessException>(() => InvokeValidatePathSafety("duck+sqlite:/../../outside.db"));
     }
 
     [Fact]

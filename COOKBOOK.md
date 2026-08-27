@@ -451,14 +451,23 @@ Notes:
 DtPipe supports native DuckDB Hub connections using the `duck+{provider}:` prefix. This transparently
 handles loading the extension and running the appropriate `ATTACH` command.
 
-The hub is **relational only** — `ATTACH` integrates another database as a SQL catalog. Supported
-providers are `duck+pg:` / `duck+postgres:` / `duck+postgresql:`, `duck+mysql:`, and `duck+sqlite:`;
-anything else fails with the supported list rather than emitting invalid SQL.
+The hub is **relational only** — `ATTACH` integrates another database as a SQL catalog. The only
+supported provider is `duck+mysql:`; anything else fails with the supported list rather than
+emitting invalid SQL.
 
-Object storage (`s3://`, `azure://`, `https://`…) is **not** a hub target — it holds files, not
-catalogs. Reach those locations through the DuckDB engine with `--duck-init` instead (see
+PostgreSQL and SQLite are **not** hub targets: use the native `pg:`/`postgres:` and `sqlite:`
+providers instead. They already cover those databases with more capability (COPY, bulk load,
+upsert) than an `ATTACH` catalog can reach, so `duck+pg:` and `duck+sqlite:` would be strictly
+worse — they fail closed rather than being offered as a working, inferior route.
+
+Object storage (`s3://`, `azure://`, `https://`…) is **not** a hub target either — it holds files,
+not catalogs. Reach those locations through the DuckDB engine with `--duck-init` instead (see
 [DuckDB Extensions and Cloud Storage](#duckdb-extensions-and-cloud-storage) above). Other DuckDB extensions
 (`excel`, `ducklake`, …) are reached the same way.
+
+The connection string must include an explicit database name (`Database=`, `DbName=`, or `Db=`),
+which becomes the `ATTACH` alias — omitting it fails closed instead of guessing an alias that could
+collide with another attached catalog in the same pipeline.
 
 ```bash
 # Read from a MySQL database via DuckDB Hub
@@ -466,13 +475,6 @@ dtpipe \
   -i "duck+mysql:Host=localhost;Database=mydb;User=root;" \
   --query "SELECT * FROM mydb.users" \
   -o users.parquet
-
-# Export directly into an attached SQLite file using DuckDB Hub
-dtpipe \
-  -i users.csv \
-  -o "duck+sqlite:data/prod.db" \
-  --table "users" \
-  --strategy Recreate
 ```
 
 ### Recommended: credentials in the OS keyring

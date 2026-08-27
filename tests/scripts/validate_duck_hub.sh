@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# validate_duck_hub.sh — Integration test for duck+{provider}: hub connections (SQLite, Postgres, MySQL, S3/MinIO, Azure/Azurite, Excel) and retry policy
+# validate_duck_hub.sh — Integration test for duck+{provider}: hub connections (MySQL, S3/MinIO, Azure/Azurite, Excel) and retry policy
 
 set -euo pipefail
 
@@ -38,52 +38,30 @@ fi
 SRC_LINES=$(wc -l < "$SRC_CSV" | tr -d ' ')
 
 # ------------------------------------------------------------------------------
-# 1. Test SQLite via duck+sqlite:
+# 1. duck+sqlite: is rejected — the native "sqlite:" provider covers this with
+#    more capability (COPY/bulk, upsert) than an ATTACH catalog ever could.
 # ------------------------------------------------------------------------------
-echo -e "\n--- Test 1: DuckDB Hub (duck+sqlite:) ---"
+echo -e "\n--- Test 1: DuckDB Hub (duck+sqlite:) is rejected ---"
 SQLITE_TGT="$TMP_DIR/hub_target.sqlite"
 
-echo "Testing write via duck+sqlite: ..."
-"$DTPIPE" -i "$SRC_CSV" -o "duck+sqlite:$SQLITE_TGT" --table "users" --strategy Recreate --no-stats --retry
-
-if [ ! -f "$SQLITE_TGT" ]; then
-    echo "FAIL: Target SQLite DB $SQLITE_TGT was not created."
+if "$DTPIPE" -i "$SRC_CSV" -o "duck+sqlite:$SQLITE_TGT" --table "users" --strategy Recreate --no-stats >/dev/null 2>&1; then
+    echo "FAIL: duck+sqlite: was accepted; SQLite has a native provider and is not a hub target."
     exit 1
 fi
-echo "  -> Write via duck+sqlite: PASSED"
-
-echo "Testing read via duck+sqlite: ..."
-"$DTPIPE" -i "duck+sqlite:$SQLITE_TGT" --query "SELECT * FROM users ORDER BY Id" -o "$TMP_DIR/sqlite_read.csv" --no-stats --retry
-
-OUT_LINES=$(wc -l < "$TMP_DIR/sqlite_read.csv" | tr -d ' ')
-if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
-    echo "FAIL: Expected $SRC_LINES lines in SQLite output, got $OUT_LINES"
-    exit 1
-fi
-echo "  -> Read via duck+sqlite: PASSED ($OUT_LINES lines matched)"
+echo "  -> duck+sqlite: rejected as expected"
 
 # ------------------------------------------------------------------------------
-# 2. Test PostgreSQL via duck+pg:
+# 2. duck+pg: is rejected — the native "pg:"/"postgres:" provider covers this
+#    with more capability (COPY, upsert) than an ATTACH catalog ever could.
 # ------------------------------------------------------------------------------
-echo -e "\n--- Test 2: DuckDB Hub (duck+pg:) ---"
+echo -e "\n--- Test 2: DuckDB Hub (duck+pg:) is rejected ---"
 PG_CONN="duck+pg:host=127.0.0.1 port=5440 dbname=integration user=postgres password=password"
 
-if nc -z 127.0.0.1 5440 2>/dev/null || nc -w 2 127.0.0.1 5440 2>/dev/null; then
-    echo "Testing write via duck+pg: ..."
-    "$DTPIPE" -i "$SRC_CSV" -o "$PG_CONN" --table "duck_pg_users" --strategy Recreate --no-stats --retry
-
-    echo "Testing read via duck+pg: ..."
-    "$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM duck_pg_users ORDER BY Id" -o "$TMP_DIR/pg_read.csv" --no-stats --retry
-
-    OUT_LINES=$(wc -l < "$TMP_DIR/pg_read.csv" | tr -d ' ')
-    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
-        echo "FAIL: Expected $SRC_LINES lines in Postgres output, got $OUT_LINES"
-        exit 1
-    fi
-    echo "  -> Write and Read via duck+pg: PASSED ($OUT_LINES lines matched)"
-else
-    echo "SKIP: PostgreSQL container (port 5440) not reachable."
+if "$DTPIPE" -i "$SRC_CSV" -o "$PG_CONN" --table "duck_pg_users" --strategy Recreate --no-stats >/dev/null 2>&1; then
+    echo "FAIL: duck+pg: was accepted; PostgreSQL has a native provider and is not a hub target."
+    exit 1
 fi
+echo "  -> duck+pg: rejected as expected"
 
 # ------------------------------------------------------------------------------
 # 3. Test MySQL via duck+mysql:

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -24,14 +23,13 @@ public static class DuckHubConnectionParser
     /// fallback used to forward any unknown provider straight into the TYPE clause, which
     /// generated invalid SQL ("TYPE AZURE", "TYPE EXCEL") and surfaced as a raw DuckDB parse
     /// error instead of an actionable message. Maps the user-facing alias to the extension name.
+    /// Postgres and SQLite are deliberately absent: DtPipe already has native providers for both
+    /// ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that ATTACH cannot reach, so
+    /// the hub route is strictly inferior there. MySQL stays because no native provider exists yet.
     /// </summary>
     private static readonly Dictionary<string, string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["pg"] = "postgres",
-        ["postgres"] = "postgres",
-        ["postgresql"] = "postgres",
         ["mysql"] = "mysql",
-        ["sqlite"] = "sqlite",
     };
 
     /// <summary>
@@ -133,21 +131,11 @@ public static class DuckHubConnectionParser
             }
         }
 
-        // Try to get filename for sqlite
-        if (provider == "sqlite")
-        {
-            try
-            {
-                var fileName = Path.GetFileNameWithoutExtension(connectionDetails);
-                if (!string.IsNullOrEmpty(fileName))
-                {
-                    var safeName = Regex.Replace(fileName, @"[^a-zA-Z0-9_]", "_");
-                    if (safeName.Length > 0) return safeName;
-                }
-            }
-            catch { }
-        }
-
-        return provider;
+        // Falling back to the bare provider name let two ATTACHes without an explicit database
+        // (e.g. one input, one output) collide on the same alias and silently USE the wrong
+        // catalog. Fail closed instead of guessing.
+        throw new InvalidOperationException(
+            $"'duck+{provider}:' connection string must specify a database name (Database=, DbName=, or Db=) " +
+            "so the attached catalog gets a unique, unambiguous alias.");
     }
 }

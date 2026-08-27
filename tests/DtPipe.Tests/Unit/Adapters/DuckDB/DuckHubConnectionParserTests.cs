@@ -27,7 +27,7 @@ public class DuckHubConnectionParserTests
         Assert.Equal("customers_db", info.Alias);
         Assert.Equal("Host=localhost;Database=customers_db;User=root;", info.ConnectionDetails);
         Assert.Equal("Data Source=:memory:;", info.EffectiveConnectionString);
-        
+
         Assert.Equal(4, info.InitSqlStatements.Length);
         Assert.Equal("INSTALL mysql;", info.InitSqlStatements[0]);
         Assert.Equal("LOAD mysql;", info.InitSqlStatements[1]);
@@ -35,36 +35,40 @@ public class DuckHubConnectionParserTests
         Assert.Equal("USE customers_db;", info.InitSqlStatements[3]);
     }
 
+    /// <summary>
+    /// Falling back to the bare provider name when no Database=/DbName=/Db= is present let two
+    /// ATTACHes in the same process (e.g. one input, one output) collide on the same alias and
+    /// silently USE the wrong catalog. The alias must now be derived from an explicit database
+    /// name in the connection string, or parsing fails closed.
+    /// </summary>
     [Fact]
-    public void Parse_DuckPostgres_ReturnsHubDetails()
+    public void Parse_DuckMySql_WithoutDatabaseName_Throws()
     {
-        var conn = "duck+pg:Host=127.0.0.1;Db=sales;Password='123';";
-        var info = DuckHubConnectionParser.Parse(conn);
+        var conn = "duck+mysql:Host=localhost;User=root;";
 
-        Assert.True(info.IsHub);
-        Assert.Equal("pg", info.Provider);
-        Assert.Equal("sales", info.Alias);
-        Assert.Equal(4, info.InitSqlStatements.Length);
-        Assert.Equal("INSTALL postgres;", info.InitSqlStatements[0]);
-        Assert.Equal("LOAD postgres;", info.InitSqlStatements[1]);
-        Assert.Equal("ATTACH 'Host=127.0.0.1;Db=sales;Password=''123'';' AS sales (TYPE POSTGRES);", info.InitSqlStatements[2]);
-        Assert.Equal("USE sales;", info.InitSqlStatements[3]);
+        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
+
+        Assert.Contains("must specify a database name", ex.Message);
+        Assert.Contains("duck+mysql:", ex.Message);
     }
 
-    [Fact]
-    public void Parse_DuckSqlite_ReturnsHubDetails()
+    /// <summary>
+    /// Postgres and SQLite are deliberately not hub providers: DtPipe already has native
+    /// providers for both ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that
+    /// ATTACH cannot reach, so routing them through the hub would be strictly inferior. They must
+    /// fail the same way any other unsupported provider does.
+    /// </summary>
+    [Theory]
+    [InlineData("duck+pg:Host=127.0.0.1;Db=sales;Password='123';")]
+    [InlineData("duck+postgres:Host=127.0.0.1;Database=sales;")]
+    [InlineData("duck+postgresql:Host=127.0.0.1;Database=sales;")]
+    [InlineData("duck+sqlite:data/prod.db")]
+    public void Parse_NativelySupportedProvider_Throws_With_Supported_List(string conn)
     {
-        var conn = "duck+sqlite:data/prod.db";
-        var info = DuckHubConnectionParser.Parse(conn);
+        var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
 
-        Assert.True(info.IsHub);
-        Assert.Equal("sqlite", info.Provider);
-        Assert.Equal("prod", info.Alias);
-        Assert.Equal(4, info.InitSqlStatements.Length);
-        Assert.Equal("INSTALL sqlite;", info.InitSqlStatements[0]);
-        Assert.Equal("LOAD sqlite;", info.InitSqlStatements[1]);
-        Assert.Equal("ATTACH 'data/prod.db' AS prod (TYPE SQLITE);", info.InitSqlStatements[2]);
-        Assert.Equal("USE prod;", info.InitSqlStatements[3]);
+        Assert.Contains("Unknown DuckDB hub provider", ex.Message);
+        Assert.Contains("duck+mysql:", ex.Message);
     }
 
     /// <summary>
@@ -85,7 +89,7 @@ public class DuckHubConnectionParserTests
 
         Assert.Contains("not a hub target", ex.Message);
         Assert.Contains("--duck-init", ex.Message);
-        Assert.Contains("duck+sqlite:", ex.Message);
+        Assert.Contains("duck+mysql:", ex.Message);
     }
 
     /// <summary>
@@ -104,9 +108,7 @@ public class DuckHubConnectionParserTests
         var ex = Assert.Throws<InvalidOperationException>(() => DuckHubConnectionParser.Parse(conn));
 
         Assert.Contains("Unknown DuckDB hub provider", ex.Message);
-        Assert.Contains("duck+pg:", ex.Message);
         Assert.Contains("duck+mysql:", ex.Message);
-        Assert.Contains("duck+sqlite:", ex.Message);
     }
 
     /// <summary>Plain "duck:" connections and file paths keep bypassing the hub entirely.</summary>

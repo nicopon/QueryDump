@@ -243,9 +243,13 @@ public partial class DtPipeMcpTools
     internal static void ValidatePathSafety(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
-        if (path.StartsWith("duck+", StringComparison.OrdinalIgnoreCase)) return;
 
-        // Clean query/parameters from SQLite/DuckDB connection strings
+        // Clean query/parameters from SQLite/DuckDB connection strings. This also covers
+        // "duck+{provider}:" hub connection strings (e.g. "duck+mysql:Host=...;Database=...;") —
+        // they are relational connection strings, not file paths, and are already recognized by
+        // the Host=/Server=/User Id=/Database= check below. An earlier blanket
+        // StartsWith("duck+") bypass skipped this check unconditionally regardless of content,
+        // exempting the whole class by prefix instead of by shape.
         string cleanPath = path;
         int semicolonIndex = cleanPath.IndexOf(';');
         if (semicolonIndex >= 0)

@@ -138,7 +138,7 @@ DtPipe detects providers from file extensions (`.csv`, `.parquet`…) or explici
 | **Databases** | PostgreSQL, SQLite, DuckDB, SQL Server, Oracle | `pg:`, `sqlite:`, `duck:`, `mssql:`, `ora:` |
 | **Files** | CSV, JsonL, Parquet, Arrow, XML | `csv:`, `jsonl:`, `parquet:`, `arrow:`, `xml:` |
 | **Object storage** | S3-compatible, Azure Blob | `s3://bucket/key.parquet`, `azure://container/blob.csv` |
-| **Special** | Data Gen (source), Null/Checksum (sink), DuckDB Hub (relational only) | `generate:N`, `null:`, `duck+{pg\|mysql\|sqlite}:` |
+| **Special** | Data Gen (source), Null/Checksum (sink), DuckDB Hub (MySQL only) | `generate:N`, `null:`, `duck+mysql:` |
 
 > Use `keyring://alias` anywhere a connection string is expected. DtPipe resolves it from the OS keychain at runtime. Run `dtpipe secret set prod-db "pg:..."` to store a secret.
 

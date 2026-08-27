@@ -313,14 +313,29 @@ dtpipe -i sales.csv -o azure://reports/sales.parquet --azure-connection-string "
 - The `httpfs` / `azure` extensions are installed from DuckDB's extension repository on first use,
   so the host needs access to it once (or an extension directory already holding them).
 
----|:---|:---|
-| `duck+pg:` / `duck+postgres:` / `duck+postgresql:` | `postgres` | `TYPE POSTGRES` |
+### DuckDB Hub connections (`duck+{provider}:`)
+
+The hub prefix means `ATTACH`: it integrates another database as a SQL catalog inside the DuckDB
+instance already running in-process. It is relational only — a catalog, not a file transport.
+
+| Hub prefix | Extension | ATTACH type |
+|:---|:---|:---|
 | `duck+mysql:` | `mysql` | `TYPE MYSQL` |
-| `duck+sqlite:` | `sqlite` | `TYPE SQLITE` |
+
+PostgreSQL and SQLite are intentionally not hub targets: the native `pg:`/`postgres:` and `sqlite:`
+providers already cover them with capability an ATTACH catalog cannot reach (COPY, bulk load,
+upsert), so routing them through the hub would be strictly inferior. `duck+pg:`, `duck+postgres:`,
+`duck+postgresql:`, and `duck+sqlite:` fail with the supported list, same as any unrecognized
+provider. MySQL stays because no native provider exists yet.
 
 Any other provider fails with the supported list rather than forwarding an unverified name into the
 `TYPE` clause. Other DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached through
 `--duck-init` + `--query` / `--post-exec`, not through the hub prefix.
+
+The connection string must carry an explicit database name (`Database=`, `DbName=`, or `Db=`),
+which becomes the ATTACH alias. Without one, parsing fails closed rather than guessing an alias —
+falling back to the bare provider name let two ATTACHes in the same process (e.g. one input, one
+output) collide on the same alias and silently `USE` the wrong catalog.
 
 > Extensions are `INSTALL`ed on first use, which needs network access to the DuckDB extension
 > repository unless they are already present in the local extension directory.
