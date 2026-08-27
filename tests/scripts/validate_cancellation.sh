@@ -81,9 +81,10 @@ fi
 # ----------------------------------------
 echo "--- [2] DAG (fan-out, 3 branches) Ctrl-C ---"
 rm -f "$A/d1.csv" "$A/d2.csv" "$A/d3.csv"
+# --no-stats is global (GlobalOptions.NoStats): once for the whole run, not per branch.
 launch_interruptible "$DTPIPE" -i generate:100000000 --alias s \
-  --from s -o "$A/d1.csv" --no-stats \
-  --from s -o "$A/d2.csv" --no-stats \
+  --from s -o "$A/d1.csv" \
+  --from s -o "$A/d2.csv" \
   --from s -o "$A/d3.csv" --no-stats &
 PROC=$!
 sleep 2

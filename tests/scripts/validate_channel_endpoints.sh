@@ -87,8 +87,10 @@ expect_rows "$A/t3.csv" 3 "topology 3: join"
 expect_rows "$A/t4.csv" 9 "topology 4: merge"
 
 # [5] Fan-out (tee)
+# --no-stats is a global flag (GlobalOptions.NoStats), so it is spelled once for the whole
+# run: repeating it per branch is rejected since the duplicate-flag policy landed.
 "$DTPIPE" -i generate:6 --alias s \
-  --from s -o "$A/t5a.csv" --no-stats \
+  --from s -o "$A/t5a.csv" \
   --from s -o "$A/t5b.csv" --no-stats > /dev/null 2>&1 || fail "topology 5 failed"
 expect_rows "$A/t5a.csv" 6 "topology 5a: fan-out consumer A"
 expect_rows "$A/t5b.csv" 6 "topology 5b: fan-out consumer B"
@@ -105,7 +107,7 @@ expect_rows "$A/t6.csv" 6 "topology 6: diamond"
 "$DTPIPE" -i "csv:$A/src.csv" --column-types "Id:int32" --alias m \
   -i "csv:$A/src.csv" --column-types "Id:int32" --alias r \
   --from m --ref r --sql "SELECT m.Id FROM m JOIN r ON m.Id = r.Id" --alias joined \
-  --from joined -o "$A/t7a.csv" --no-stats \
+  --from joined -o "$A/t7a.csv" \
   --from joined -o "$A/t7b.csv" --no-stats > /dev/null 2>&1 || fail "topology 7 failed"
 expect_rows "$A/t7a.csv" 4 "topology 7a: join→fan-out A"
 expect_rows "$A/t7b.csv" 4 "topology 7b: join→fan-out B"
