@@ -154,6 +154,7 @@ dtpipe -i duck:memory --duck-init "keyring://s3-init" ...
 | **DuckDB** | ✅ | ✅ | `duck:` | ✅ | — | `--duck-init` supported |
 | **SQLite** | ✅ | ✅ | `sqlite:` | ✅ | — |
 | **PostgreSQL** | ✅ | ✅ | `pg:` | ✅ | — |
+| **MySQL / MariaDB** | ✅ | ✅ | `mysql:` | ✅ | — | Bulk needs `local_infile=ON`; see [MySQL](#mysql) |
 | **Oracle** | ✅ | ✅ | `ora:` | ✅ | — |
 | **SQL Server** | ✅ | ✅ | `mssql:` | ✅ | — |
 | **CSV** | ✅ | ✅ | `csv:` / `.csv` | — | ✅ |
@@ -187,6 +188,7 @@ If you are coming from Python or SQLAlchemy, use this translation guide to build
 | Database | Prefix | Python URI Format | ADO.NET Format (DtPipe) |
 |:---|:---|:---|:---|
 | **PostgreSQL** | `pg:` | `postgresql://user:pass@host:port/db` | `pg:Host=host;Port=port;Database=db;Username=user;Password=pass` |
+| **MySQL** | `mysql:` | `mysql+pymysql://user:pass@host:port/db` | `mysql:Server=host;Port=3306;Database=db;User ID=user;Password=pass` |
 | **SQL Server** | `mssql:` | `mssql+pyodbc://user:pass@host/db` | `mssql:Server=host;Database=db;User Id=user;Password=pass;TrustServerCertificate=True` |
 | **SQLite** | `sqlite:` | `sqlite:///path/to/file.db` | `sqlite:Data Source=path/to/file.db` |
 | **Oracle** | `ora:` | `oracle+oracledb://user:pass@host:port/?service_name=service` | `ora:Data Source=host:port/service;User Id=user;Password=pass` |
@@ -573,6 +575,65 @@ enrich:
 ## Incremental Loading
 
 DtPipe supports cursor-driven incremental loading to transfer only new or updated records since the last successful run.
+### MySQL
+
+The `mysql:` prefix is **required**. Unlike file providers, MySQL is never inferred from the
+connection string's content: `Server=host;Database=db` is character-for-character what a SQL
+Server connection string looks like, so any content heuristic would claim connections belonging
+to the other provider. Same deliberate choice as `pg:`, `mssql:`, and `ora:`.
+
+```bash
+dtpipe -i "pg:Host=localhost;Database=prod;Username=postgres;Password=pass" \
+       --query "SELECT * FROM orders" \
+       -o "mysql:Server=localhost;Port=3306;Database=analytics;User ID=root;Password=pass" \
+       --table orders --strategy Upsert --key order_id
+```
+
+#### Insert modes
+
+| `--insert-mode` | Mechanism | Requirement |
+|:---|:---|:---|
+| `Bulk` (default) | `MySqlBulkCopy` | `local_infile=ON` on the server |
+| `Standard` | Batched multi-row `INSERT` | none |
+
+`MySqlBulkCopy` is built on `LOAD DATA LOCAL INFILE`, which needs two independent switches: the
+client flag (dtpipe sets it for you) **and** the server's `local_infile`, which is **OFF by
+default since MySQL 8** and requires `SUPER` to change. dtpipe probes `@@GLOBAL.local_infile`
+once per run; when it is off, it warns and falls back to batched `INSERT` rather than failing
+mid-stream. To enable the fast path:
+
+```sql
+SET GLOBAL local_infile = 1;   -- or local_infile=ON in my.cnf, to survive a restart
+```
+
+#### Upsert and the unique-index requirement
+
+`--strategy Upsert` and `--strategy Ignore` generate `INSERT … ON DUPLICATE KEY UPDATE`. MySQL
+fires that clause on **the table's own PRIMARY KEY or UNIQUE indexes** — there is no way to name
+a conflict target as `ON CONFLICT (…)` does in PostgreSQL. Two consequences worth knowing:
+
+* **No matching index, no upsert.** If no unique index covers exactly the key columns, the clause
+  degenerates into a plain `INSERT` and duplicates accumulate silently. dtpipe checks for such an
+  index and, when it is missing, warns and falls back to an explicit `DELETE`+`INSERT` that
+  produces the correct result more slowly. Add the index to get the fast path.
+* **Other unique indexes also fire.** A row conflicting on an unrelated `UNIQUE` column is updated
+  too. That is MySQL's semantics, not dtpipe's; it has no equivalent in the other providers.
+
+`--key` may be omitted: the writer reads the target's primary key from `information_schema` and
+uses it. Pass `--key` explicitly when the target has several unique indexes and you need a
+specific one, or when the table does not exist yet and dtpipe must generate the `PRIMARY KEY`.
+
+#### Type mapping notes
+
+| Source CLR type | MySQL type | Note |
+|:---|:---|:---|
+| `Guid` | `CHAR(36)` | MySQL has no UUID type; `CHAR(36)` is what round-trips back to `Guid` |
+| `bool` | `TINYINT(1)` | a bare `TINYINT` would come back as a number |
+| `decimal` | `DECIMAL(38,9)` | MySQL's ceiling is `DECIMAL(65,30)` |
+| `DateTime` | `DATETIME(6)` | |
+| `DateTimeOffset` | `DATETIME(6)` | **the zone offset is not preserved** — MySQL has no offset-carrying type |
+| `string` | `LONGTEXT`, or `VARCHAR(255)` when part of the key | `LONGTEXT` cannot be indexed without a prefix length |
+
 
 ### Overview
 

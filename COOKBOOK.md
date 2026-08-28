@@ -270,7 +270,7 @@ dtpipe \
   --strategy Upsert \
   --key "OrderId"
 
-# High-speed bulk insert (PG / Oracle / MSSQL)
+# High-speed bulk insert (PG / Oracle / MSSQL / MySQL)
 dtpipe \
   -i large_export.parquet \
   -o "pg:Host=localhost;Database=prod" \
@@ -285,6 +285,43 @@ dtpipe \
   --table "users" \
   --auto-migrate
 ```
+
+### MySQL upsert
+
+The `mysql:` prefix is required — a MySQL connection string is indistinguishable from a SQL
+Server one by content alone.
+
+```bash
+# PostgreSQL → MySQL, syncing on the primary key
+dtpipe \
+  -i "pg:Host=localhost;Database=prod;Username=postgres;Password=pass" \
+  --query "SELECT * FROM orders" \
+  -o "mysql:Server=localhost;Port=3306;Database=analytics;User ID=root;Password=pass" \
+  --table "orders" \
+  --strategy Upsert \
+  --key "order_id"
+
+# --key may be omitted: the target's PRIMARY KEY is read from information_schema
+dtpipe \
+  -i orders.parquet \
+  -o "mysql:Server=localhost;Database=analytics;User ID=root;Password=pass" \
+  --table "orders" --strategy Upsert
+```
+
+Two MySQL-specific behaviours are worth knowing before relying on this in production:
+
+* **Upsert needs a unique index.** `ON DUPLICATE KEY UPDATE` fires on the table's own PRIMARY KEY
+  or UNIQUE indexes; MySQL offers no way to name a conflict target. Without an index covering the
+  key columns the clause would degrade to a plain `INSERT` and pile up duplicates, so dtpipe
+  checks first and falls back to a slower `DELETE`+`INSERT` with a warning. Add the index to get
+  the fast path.
+* **Bulk loading needs the server's consent.** `--insert-mode Bulk` uses `MySqlBulkCopy`, i.e.
+  `LOAD DATA LOCAL INFILE`, which requires `local_infile=ON` — **off by default since MySQL 8**.
+  dtpipe probes it and falls back to batched `INSERT` with a warning rather than failing
+  mid-transfer. Enable it with `SET GLOBAL local_infile = 1;` (or in `my.cnf` to survive a
+  restart).
+
+See [REFERENCE.md#mysql](./REFERENCE.md#mysql) for the full type mapping.
 
 ### Pre/post execution hooks
 

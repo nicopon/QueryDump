@@ -135,7 +135,7 @@ DtPipe detects providers from file extensions (`.csv`, `.parquet`…) or explici
 
 | Provider family | Examples | Prefix |
 |:---|:---|:---|
-| **Databases** | PostgreSQL, SQLite, DuckDB, SQL Server, Oracle | `pg:`, `sqlite:`, `duck:`, `mssql:`, `ora:` |
+| **Databases** | PostgreSQL, MySQL, SQLite, DuckDB, SQL Server, Oracle | `pg:`, `mysql:`, `sqlite:`, `duck:`, `mssql:`, `ora:` |
 | **Files** | CSV, JsonL, Parquet, Arrow, XML | `csv:`, `jsonl:`, `parquet:`, `arrow:`, `xml:` |
 | **Object storage** | S3-compatible, Azure Blob | `s3://bucket/key.parquet`, `azure://container/blob.csv` |
 | **Special** | Data Gen (source), Null/Checksum (sink), DuckDB Hub (MySQL only) | `generate:N`, `null:`, `duck+mysql:` |
@@ -148,7 +148,7 @@ DtPipe detects providers from file extensions (`.csv`, `.parquet`…) or explici
 
 ## Key Concepts
 
-*   **Providers — where data comes from and goes to.** DtPipe reads from databases (`pg:`, `mssql:`, `ora:`, `sqlite:`, `duck:`) and files (`csv:`, `parquet:`, `jsonl:`…), and writes to the same set. The provider is inferred from the file extension or an explicit prefix. See [Providers](./REFERENCE.md#providers) for the full list.
+*   **Providers — where data comes from and goes to.** DtPipe reads from databases (`pg:`, `mysql:`, `mssql:`, `ora:`, `sqlite:`, `duck:`) and files (`csv:`, `parquet:`, `jsonl:`…), and writes to the same set. The provider is inferred from the file extension or an explicit prefix. See [Providers](./REFERENCE.md#providers) for the full list.
 *   **Transformers — what happens in between.** Flags like `--fake`, `--mask`, `--compute`, `--filter`, `--rename` are chained left-to-right on every row. Example: anonymize, then derive a column, then filter: `--fake "email:internet.email" --compute "fullName:row.first+' '+row.last" --filter "row.age>=18"`. See [COOKBOOK.md](./COOKBOOK.md#schema-transformations).
 *   **DAG pipelines — combine or split streams.** Use `--alias` to name a source, then `--from` / `--ref` / `--sql` / `--merge` to join, union or fan-out without temp files. Typical uses: enrich a stream with a lookup table, or write one source to two sinks at once. See [DAG Syntax](./REFERENCE.md#dag-syntax) and [DAG recipes](./COOKBOOK.md#dag-pipelines-multi-source).
 *   **YAML jobs — make it repeatable.** Any CLI pipeline can be saved with `--export-job pipeline.yaml` and replayed with `dtpipe --job pipeline.yaml` (CI/CD, cron, overrides via CLI). See [YAML Job Schema](./REFERENCE.md#yaml-job-file-schema).
