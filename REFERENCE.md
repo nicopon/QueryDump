@@ -320,24 +320,27 @@ dtpipe -i sales.csv -o azure://reports/sales.parquet --azure-connection-string "
 The hub prefix means `ATTACH`: it integrates another database as a SQL catalog inside the DuckDB
 instance already running in-process. It is relational only — a catalog, not a file transport.
 
-| Hub prefix | Extension | ATTACH type |
-|:---|:---|:---|
-| `duck+mysql:` | `mysql` | `TYPE MYSQL` |
+> **There are no supported hub providers.** The prefix is retained only so that typing one fails
+> with an actionable message instead of an obscure DuckDB parse error.
 
-PostgreSQL and SQLite are intentionally not hub targets: the native `pg:`/`postgres:` and `sqlite:`
-providers already cover them with capability an ATTACH catalog cannot reach (COPY, bulk load,
-upsert), so routing them through the hub would be strictly inferior. `duck+pg:`, `duck+postgres:`,
-`duck+postgresql:`, and `duck+sqlite:` fail with the supported list, same as any unrecognized
-provider. MySQL stays because no native provider exists yet.
+The rule has always been *no hub route where a native provider exists*: `ATTACH` reaches a catalog,
+but not `COPY`, bulk load, or upsert, so the native route is strictly more capable. PostgreSQL and
+SQLite were excluded on that ground from the start. `duck+mysql:` was the last entry, kept only
+while MySQL had no native provider — since [`mysql:`](#mysql) landed, the same rule empties the
+list.
 
-Any other provider fails with the supported list rather than forwarding an unverified name into the
-`TYPE` clause. Other DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached through
-`--duck-init` + `--query` / `--post-exec`, not through the hub prefix.
+| You typed | Use instead |
+|:---|:---|
+| `duck+mysql:`, `duck+mariadb:` | `mysql:` |
+| `duck+pg:`, `duck+postgres:`, `duck+postgresql:` | `pg:` |
+| `duck+sqlite:` | `sqlite:` |
+| `duck+mssql:`, `duck+sqlserver:` | `mssql:` |
+| `duck+oracle:`, `duck+ora:` | `ora:` |
+| `duck+s3:`, `duck+azure:`, `duck+gs:`, `duck+https:` | `s3://` / `azure://`, or `--duck-init` + `--query` |
 
-The connection string must carry an explicit database name (`Database=`, `DbName=`, or `Db=`),
-which becomes the ATTACH alias. Without one, parsing fails closed rather than guessing an alias —
-falling back to the bare provider name let two ATTACHes in the same process (e.g. one input, one
-output) collide on the same alias and silently `USE` the wrong catalog.
+Any other name fails rather than forwarding an unverified provider into the `TYPE` clause. Other
+DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached through `--duck-init` +
+`--query` / `--post-exec`, which is unaffected by any of the above.
 
 > Extensions are `INSTALL`ed on first use, which needs network access to the DuckDB extension
 > repository unless they are already present in the local extension directory.
@@ -572,9 +575,6 @@ enrich:
   output: "result.parquet"
 ```
 
-## Incremental Loading
-
-DtPipe supports cursor-driven incremental loading to transfer only new or updated records since the last successful run.
 ### MySQL
 
 The `mysql:` prefix is **required**. Unlike file providers, MySQL is never inferred from the

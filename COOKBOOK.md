@@ -483,36 +483,31 @@ Notes:
 - The `httpfs` / `azure` DuckDB extensions are installed on first use, so the host needs access to
   DuckDB's extension repository once.
 
-### DuckDB Hub connections (`duck+{provider}:`)
+### DuckDB Hub connections (`duck+{provider}:`) — retired
 
-DtPipe supports native DuckDB Hub connections using the `duck+{provider}:` prefix. This transparently
-handles loading the extension and running the appropriate `ATTACH` command.
+The `duck+{provider}:` prefix meant `ATTACH`: integrating another database as a SQL catalog inside
+the in-process DuckDB. **It now accepts nothing.** The prefix is kept only so that typing one gives
+an actionable error instead of an obscure DuckDB parse failure.
 
-The hub is **relational only** — `ATTACH` integrates another database as a SQL catalog. The only
-supported provider is `duck+mysql:`; anything else fails with the supported list rather than
-emitting invalid SQL.
-
-PostgreSQL and SQLite are **not** hub targets: use the native `pg:`/`postgres:` and `sqlite:`
-providers instead. They already cover those databases with more capability (COPY, bulk load,
-upsert) than an `ATTACH` catalog can reach, so `duck+pg:` and `duck+sqlite:` would be strictly
-worse — they fail closed rather than being offered as a working, inferior route.
-
-Object storage (`s3://`, `azure://`, `https://`…) is **not** a hub target either — it holds files,
-not catalogs. Reach those locations through the DuckDB engine with `--duck-init` instead (see
-[DuckDB Extensions and Cloud Storage](#duckdb-extensions-and-cloud-storage) above). Other DuckDB extensions
-(`excel`, `ducklake`, …) are reached the same way.
-
-The connection string must include an explicit database name (`Database=`, `DbName=`, or `Db=`),
-which becomes the `ATTACH` alias — omitting it fails closed instead of guessing an alias that could
-collide with another attached catalog in the same pipeline.
+The rule was always *no hub route where a native provider exists* — `ATTACH` reaches a catalog, but
+not `COPY`, bulk load, or upsert, so the native route is strictly more capable. PostgreSQL and
+SQLite were excluded on that basis from the start. `duck+mysql:` was the last one left, and only
+because MySQL had no native provider; [`mysql:`](./REFERENCE.md#mysql) closed that gap.
 
 ```bash
-# Read from a MySQL database via DuckDB Hub
+# Was: -i "duck+mysql:Host=localhost;Database=mydb;User=root;"
+# Now: the native provider, which also brings bulk load and upsert
 dtpipe \
-  -i "duck+mysql:Host=localhost;Database=mydb;User=root;" \
-  --query "SELECT * FROM mydb.users" \
+  -i "mysql:Server=localhost;Database=mydb;User ID=root;Password=pass" \
+  --query "SELECT * FROM users" \
   -o users.parquet
 ```
+
+Object storage (`s3://`, `azure://`, `https://`…) was never a hub target either — it holds files,
+not catalogs. Reach those locations through the DuckDB engine with `--duck-init` (see
+[DuckDB Extensions and Cloud Storage](#duckdb-extensions-and-cloud-storage) above), or through the
+`s3://` / `azure://` providers. Other DuckDB extensions (`excel`, `ducklake`, …) are reached the
+same way, and none of that is affected by the hub prefix's retirement.
 
 ### Recommended: credentials in the OS keyring
 

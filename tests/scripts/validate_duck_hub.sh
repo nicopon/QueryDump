@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# validate_duck_hub.sh — Integration test for duck+{provider}: hub connections (MySQL, S3/MinIO, Azure/Azurite, Excel) and retry policy
+# validate_duck_hub.sh — Integration test for the duck+{provider}: hub prefix (now an empty
+# allowlist: every attachable database has a native provider), plus the DuckDB-engine routes
+# that remain — S3/MinIO, Azure/Azurite, Excel — and --duck-init secret resolution.
 
 set -euo pipefail
 
@@ -64,27 +66,24 @@ fi
 echo "  -> duck+pg: rejected as expected"
 
 # ------------------------------------------------------------------------------
-# 3. Test MySQL via duck+mysql:
+# 3. duck+mysql: is rejected in both directions — the native "mysql:" provider reaches
+#    MySqlBulkCopy and ON DUPLICATE KEY UPDATE, which an ATTACH catalog cannot. The hub
+#    allowlist is empty. End-to-end coverage of the native provider is in validate_mysql.sh.
 # ------------------------------------------------------------------------------
-echo -e "\n--- Test 3: DuckDB Hub (duck+mysql:) ---"
+echo -e "\n--- Test 3: DuckDB Hub (duck+mysql:) is rejected ---"
 MYSQL_CONN="duck+mysql:host=127.0.0.1 port=3306 database=integration user=testuser password=password"
 
-if nc -z 127.0.0.1 3306 2>/dev/null || nc -w 2 127.0.0.1 3306 2>/dev/null; then
-    echo "Testing write via duck+mysql: ..."
-    "$DTPIPE" -i "$SRC_CSV" -o "$MYSQL_CONN" --table "duck_mysql_users" --strategy Recreate --no-stats --retry
-
-    echo "Testing read via duck+mysql: ..."
-    "$DTPIPE" -i "$MYSQL_CONN" --query "SELECT * FROM duck_mysql_users ORDER BY Id" -o "$TMP_DIR/mysql_read.csv" --no-stats --retry
-
-    OUT_LINES=$(wc -l < "$TMP_DIR/mysql_read.csv" | tr -d ' ')
-    if [ "$SRC_LINES" -ne "$OUT_LINES" ]; then
-        echo "FAIL: Expected $SRC_LINES lines in MySQL output, got $OUT_LINES"
-        exit 1
-    fi
-    echo "  -> Write and Read via duck+mysql: PASSED ($OUT_LINES lines matched)"
-else
-    echo "SKIP: MySQL container (port 3306) not reachable."
+if "$DTPIPE" -i "$SRC_CSV" -o "$MYSQL_CONN" --table "duck_mysql_users" --strategy Recreate --no-stats >/dev/null 2>&1; then
+    echo "FAIL: duck+mysql: was accepted for write; MySQL has a native provider and is not a hub target."
+    exit 1
 fi
+echo "  -> duck+mysql: rejected for write as expected"
+
+if "$DTPIPE" -i "$MYSQL_CONN" --query "SELECT 1" -o "$TMP_DIR/mysql_read.csv" --no-stats >/dev/null 2>&1; then
+    echo "FAIL: duck+mysql: was accepted for read; MySQL has a native provider and is not a hub target."
+    exit 1
+fi
+echo "  -> duck+mysql: rejected for read as expected"
 
 # ------------------------------------------------------------------------------
 # 4. Test S3 Object Storage (MinIO) via DuckDB httpfs / duck+s3:

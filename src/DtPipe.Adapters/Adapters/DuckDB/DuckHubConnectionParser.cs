@@ -18,19 +18,18 @@ public class DuckHubConnectionInfo
 public static class DuckHubConnectionParser
 {
     /// <summary>
-    /// Closed allowlist of hub providers: a "duck+{provider}:" connection means ATTACH, so a
-    /// provider only belongs here once its "ATTACH … (TYPE …)" form has been verified. An open
-    /// fallback used to forward any unknown provider straight into the TYPE clause, which
-    /// generated invalid SQL ("TYPE AZURE", "TYPE EXCEL") and surfaced as a raw DuckDB parse
-    /// error instead of an actionable message. Maps the user-facing alias to the extension name.
-    /// Postgres and SQLite are deliberately absent: DtPipe already has native providers for both
-    /// ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that ATTACH cannot reach, so
-    /// the hub route is strictly inferior there. MySQL stays because no native provider exists yet.
+    /// Hub providers accepted as an ATTACH target, mapped to their DuckDB extension name.
+    /// <para>
+    /// Empty, and meant to stay so: a hub route only ever covers a database DtPipe cannot reach
+    /// natively, and ATTACH gives a catalog but neither COPY, bulk load nor upsert. Every
+    /// attachable database now has a native provider, so every variant is refused.
+    /// </para>
+    /// <para>
+    /// An entry is interpolated verbatim into the TYPE clause, so adding an unverified one
+    /// yields invalid SQL ("TYPE EXCEL") and a raw DuckDB parse error.
+    /// </para>
     /// </summary>
-    private static readonly Dictionary<string, string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["mysql"] = "mysql",
-    };
+    private static readonly Dictionary<string, string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Object-storage schemes that users reasonably expect to work as a hub. They never can:
@@ -98,7 +97,6 @@ public static class DuckHubConnectionParser
 
     private static string BuildUnsupportedProviderMessage(string provider)
     {
-        var supported = string.Join(", ", SupportedProviders.Keys.Select(p => $"duck+{p}:"));
         var shown = provider.Length == 0 ? "(empty)" : provider;
 
         if (ObjectStorageProviders.Contains(provider))
@@ -108,11 +106,18 @@ public static class DuckHubConnectionParser
                    "through the DuckDB engine instead: " +
                    "-i duck:memory --duck-init \"INSTALL httpfs; LOAD httpfs; SET s3_region='...'\" " +
                    $"--query \"SELECT * FROM read_parquet('{provider}://bucket/key.parquet')\", or COPY ... TO the " +
-                   $"same URI via --post-exec. Supported hub providers: {supported}.";
+                   "same URI via --post-exec.";
         }
 
-        return $"Unknown DuckDB hub provider '{shown}'. Supported hub providers: {supported}. " +
-               "Other DuckDB extensions are reachable with --duck-init (INSTALL/LOAD) plus --query.";
+        // Deliberately names no provider prefix. Mapping "duck+postgres:" to "pg:" would mean this
+        // DuckDB component carrying a list of every other provider's name — a copy of the component
+        // catalog that nothing verifies and that rots the day a provider is added or renamed.
+        // "dtpipe providers" is the live list; pointing at it cannot go stale.
+        return $"'duck+{shown}:' is not a supported connection. The hub prefix means ATTACH, and no database is " +
+               "routed that way: ATTACH exposes a catalog but not COPY, bulk load or upsert, so a native provider " +
+               "is always the better route. If it is a database, use its own prefix instead — run " +
+               "\"dtpipe providers\" for the list. Other DuckDB extensions are reachable with --duck-init " +
+               "(INSTALL/LOAD) plus --query.";
     }
 
     private static string GetDatabaseAlias(string provider, string connectionDetails)

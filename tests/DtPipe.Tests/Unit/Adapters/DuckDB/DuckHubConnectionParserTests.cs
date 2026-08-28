@@ -9,6 +9,11 @@ namespace DtPipe.Tests.Unit.Adapters.DuckDB;
 /// "duck+mysql:Host=…" into variant "mysql" and details "Host=…" before any adapter is reached.
 /// These tests therefore drive it the way the runtime does — (variant, details) — and the
 /// selector grammar itself is covered by ComponentSelectorTests.
+/// <para>
+/// The hub allowlist is empty: a hub route only ever covers a database with no native provider,
+/// and every attachable one now has it. The prefix exists solely to fail with an actionable
+/// message naming the native route, instead of an obscure DuckDB parse error.
+/// </para>
 /// </summary>
 public class DuckHubConnectionParserTests
 {
@@ -21,57 +26,28 @@ public class DuckHubConnectionParserTests
         Assert.Equal("Data Source=mydb.duckdb;", info.EffectiveConnectionString);
     }
 
-    [Fact]
-    public void Parse_MySqlVariant_ReturnsHubDetails()
-    {
-        var info = DuckHubConnectionParser.Parse("mysql", "Host=localhost;Database=customers_db;User=root;");
-
-        Assert.True(info.IsHub);
-        Assert.Equal("mysql", info.Provider);
-        Assert.Equal("customers_db", info.Alias);
-        Assert.Equal("Host=localhost;Database=customers_db;User=root;", info.ConnectionDetails);
-        Assert.Equal("Data Source=:memory:;", info.EffectiveConnectionString);
-
-        Assert.Equal(4, info.InitSqlStatements.Length);
-        Assert.Equal("INSTALL mysql;", info.InitSqlStatements[0]);
-        Assert.Equal("LOAD mysql;", info.InitSqlStatements[1]);
-        Assert.Equal("ATTACH 'Host=localhost;Database=customers_db;User=root;' AS customers_db (TYPE MYSQL);", info.InitSqlStatements[2]);
-        Assert.Equal("USE customers_db;", info.InitSqlStatements[3]);
-    }
-
     /// <summary>
-    /// Falling back to the bare provider name when no Database=/DbName=/Db= is present let two
-    /// ATTACHes in the same process (e.g. one input, one output) collide on the same alias and
-    /// silently USE the wrong catalog. The alias must be derived from an explicit database name,
-    /// or parsing fails closed.
-    /// </summary>
-    [Fact]
-    public void Parse_MySqlVariant_WithoutDatabaseName_Throws()
-    {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => DuckHubConnectionParser.Parse("mysql", "Host=localhost;User=root;"));
-
-        Assert.Contains("must specify a database name", ex.Message);
-        Assert.Contains("duck+mysql:", ex.Message);
-    }
-
-    /// <summary>
-    /// Postgres and SQLite are deliberately not hub variants: DtPipe already has native providers
-    /// for both ("pg:"/"postgres:", "sqlite:") with COPY/bulk/upsert support that ATTACH cannot
-    /// reach, so routing them through the hub would be strictly inferior.
+    /// A refused database must get advice, not just a refusal — but the message names no provider
+    /// prefix on purpose. Doing so would put a copy of the component catalog inside this DuckDB
+    /// component, unverifiable and stale the day a provider is renamed; it points at
+    /// "dtpipe providers", the live list, instead.
     /// </summary>
     [Theory]
+    [InlineData("mysql")]
+    [InlineData("mariadb")]
     [InlineData("pg")]
     [InlineData("postgres")]
-    [InlineData("postgresql")]
     [InlineData("sqlite")]
-    public void Parse_NativelySupportedVariant_Throws_With_Supported_List(string variant)
+    [InlineData("mssql")]
+    [InlineData("oracle")]
+    public void Parse_DatabaseVariant_Throws_And_Points_At_The_Live_Provider_List(string variant)
     {
         var ex = Assert.Throws<InvalidOperationException>(
             () => DuckHubConnectionParser.Parse(variant, "Host=127.0.0.1;Database=sales;"));
 
-        Assert.Contains("Unknown DuckDB hub provider", ex.Message);
-        Assert.Contains("duck+mysql:", ex.Message);
+        Assert.Contains("not a supported connection", ex.Message);
+        Assert.Contains("use its own prefix", ex.Message);
+        Assert.Contains("dtpipe providers", ex.Message);
     }
 
     /// <summary>
@@ -91,7 +67,6 @@ public class DuckHubConnectionParserTests
 
         Assert.Contains("not a hub target", ex.Message);
         Assert.Contains("--duck-init", ex.Message);
-        Assert.Contains("duck+mysql:", ex.Message);
     }
 
     /// <summary>
@@ -100,16 +75,29 @@ public class DuckHubConnectionParserTests
     /// </summary>
     [Theory]
     [InlineData("excel")]
-    [InlineData("mssql")]
     [InlineData("bigquery")]
     [InlineData("nonsense")]
-    public void Parse_UnknownVariant_Throws_With_Supported_List(string variant)
+    public void Parse_UnknownVariant_Throws_And_Points_At_DuckInit(string variant)
     {
         var ex = Assert.Throws<InvalidOperationException>(
             () => DuckHubConnectionParser.Parse(variant, "whatever"));
 
-        Assert.Contains("Unknown DuckDB hub provider", ex.Message);
-        Assert.Contains("duck+mysql:", ex.Message);
+        Assert.Contains("not a supported connection", ex.Message);
+        Assert.Contains("--duck-init", ex.Message);
+    }
+
+    /// <summary>
+    /// Pins the empty allowlist. Re-adding a hub provider must be a deliberate edit that also
+    /// revisits this test, not something that slips in because nothing asserted the state.
+    /// </summary>
+    [Fact]
+    public void No_Variant_Is_Accepted_As_A_Hub_Target()
+    {
+        foreach (var variant in new[] { "mysql", "pg", "sqlite", "mssql", "oracle", "duckdb", "excel", "s3" })
+        {
+            Assert.Throws<InvalidOperationException>(
+                () => DuckHubConnectionParser.Parse(variant, "Host=localhost;Database=db;"));
+        }
     }
 
     /// <summary>Plain DuckDB targets carry no variant and must bypass the hub entirely.</summary>
