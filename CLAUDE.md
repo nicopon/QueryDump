@@ -8,6 +8,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 All code, comments, commit messages, and documentation **must** be written in English. This is a hard requirement — no exceptions.
 
+> **Not enforced** — no check exists. Discipline only.
+
+## Comments
+
+A comment documents the code **as it is now**: what it does, what contract it must honour, what breaks if the next person changes it. It is not a changelog.
+
+**Do not write the code's biography.** Cut anything whose subject is a past state or an editing decision — *"used to"*, *"previously"*, *"the old behaviour"*, *"this was renamed because"*, *"the point of naming it is"*. That history already lives in git, `.notes/` and `CHANGELOG.md`; a second copy in the source only rots and buries what a reader actually needs.
+
+**One narrow exception — the deterrent.** Naming a past failure is justified when it stops a *specific* future mistake. `ComponentSelector`'s "reimplemented at seven sites, the copies drifted" and `DuckDbConnectionHelper`'s "the defensive re-check made `duck:memory` create a FILE named memory" both earn their place: a maintainer who removes the guard reproduces the bug. **Test to apply: name the mistake the comment prevents.** If you cannot, it is a story — delete it.
+
+Also cut:
+
+- **Restating the signature** — `<returns>` paraphrasing `<summary>`, or a `<remarks>` that repeats both.
+- **Rhetorical emphasis** — *"the whole point"*, *"and that is the finished state"*.
+- **Worked examples and figures** that belong in a test or the changelog.
+- **Enumerating what another component owns.** A list of other providers' names, prefixes or strategies is stale the day one is added or renamed, and nothing verifies it. Point at the live source instead (`dtpipe providers`, the enum itself). Two such lists have already been removed after going wrong.
+
+Length is not the measure — `DagOrchestrator`'s broadcast description and `ArrowSchemaSerializer`'s type-encoding table are long and earn every line. Subject is the measure.
+
+> **Not enforced** — no check exists, and none is plausible: "does this comment prevent a mistake" is not decidable by a grep. Discipline only.
+
 ## Build & Run
 
 Prefer `./build.sh` for a full build (runs unit tests + produces a self-contained binary in `dist/release/`):
@@ -37,7 +58,7 @@ For unit tests only (no Docker required):
 
 ```bash
 dotnet test tests/DtPipe.Tests/DtPipe.Tests.csproj --filter "FullyQualifiedName~.Unit."
-dotnet test tests/DtPipe.Tests/ --filter "FullyQualifiedName~CliDagParserTests"
+dotnet test tests/DtPipe.Tests/ --filter "FullyQualifiedName~PipelineLexerTests"
 ```
 
 `test_local.sh` sets `DTPIPE_TEST_REUSE_INFRA=true` to connect to fixed-port containers started by `tests/infra/start_infra.sh`. Use `tests/infra/stop_infra.sh` to tear them down. Shell-based integration scripts are also in `tests/scripts/`.
@@ -75,7 +96,9 @@ Before committing engine changes, verify the three canonical cases:
 2. Two-branch DAG (independent branches)
 3. DAG with SQL processor (`--from` + `--sql`)
 
-Golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical shapes. `CliDagParser_GoldenTests.cs` verifies `CliDagParser.Parse(args)` produces them. Add a new topology → add a golden definition + round-trip test in `JobDagDefinition_JsonTests.cs`.
+Golden DAG fixtures in `GoldenDagDefinitions.cs` are the canonical shapes, consumed by the engine suites (`DagOrchestratorTests`, `ChannelInjectionTests`, `EngineInvariantsTests`, `JobDagDefinition_JsonTests`). The CLI side — args → DAG — is covered separately by `PipelineLexerTests` and `PipelineToJobConverterTests`. Add a new topology → add a golden definition + round-trip test in `JobDagDefinition_JsonTests.cs`.
+
+> **Enforced by** those suites (CI). **Not covered:** nothing ties CLI arguments to the golden shapes — the engine and the parser are guarded, the bridge between them is not — and nothing verifies that a change to `DagOrchestrator` or `LinearPipelineService` arrives with a test. That obligation is discipline.
 
 ## Architecture Overview
 
@@ -127,7 +150,7 @@ Every adapter implements `IProviderDescriptor<TService>` and is registered in `P
 - **A remote URI is never a selector.** The grammar ends in `(?!//)`, so `s3://bucket/key.parquet` is not read as an `s3:` prefix and reaches the provider intact. This is a property of the grammar, not a guard each caller must remember.
 - **Variants reach the provider as data, not as text to re-parse.** `ComponentSelector` splits `duck+mysql:Host=…` into variant `mysql` + details `Host=…`; the router puts the variant on `ConnectionRoute.InputVariant`/`OutputVariant`, and `CliProviderFactory` pushes it onto options implementing `IVariantAwareOptions`. The selector owns the *syntax*; which variants are valid stays the provider's business (`DuckHubConnectionParser`) — and as of the native `mysql:` provider its allowlist is empty, so the grammar still parses `duck+mysql:` while the provider rejects it. That split is the point: a retired variant is a provider decision, not a grammar change.
 
-Guarded by `ComponentSelectorTests` and `RemoteUriClaimTests.No_Component_Selector_Strips_A_Remote_Uri` (catalog-wide).
+> **Enforced by** `ComponentSelectorTests` and `RemoteUriClaimTests.No_Component_Selector_Strips_A_Remote_Uri`, both CI, the second catalog-wide — a new provider is covered without editing the test. **Not covered:** a routing site that bypasses `ComponentSelector` entirely; only the sites that use it are verified.
 
 ### DAG Pipeline
 
@@ -180,6 +203,8 @@ Verbose branch-level logging to stderr.
 
 Cancellation never masks as success (F16): `LinearPipelineService` discriminates the dedicated user token from internal cancellation sources and returns 130 on user shutdown; internal cancellation propagates. In DAG runs, a branch reporting 130 makes `DagOrchestrator` cancel the rest and return 130. The only intentional cancellation-swallowing site is `DagOrchestrator.ExecuteBranchAsync`'s orphaned-producer path (returning 0 is normal fan-out operation when consumers complete).
 
+> **Enforced by** `tests/scripts/validate_cancellation.sh` (F16), local — it drives real interrupts, so it needs a live process rather than a unit test.
+
 ## Pipeline Design Principles
 
 ### No magic conversions in the engine core
@@ -196,7 +221,30 @@ Forbidden:
 - Changing `ArrowTypeMapper` / `PipeColumnInfo` to compensate for an adapter
 - Branching in `ExportService`/`PipelineExecutor`/`DagOrchestrator` on adapter identity
 
+> **Partly enforced.** `tests/scripts/validate_core_boundary.sh` keeps concrete SQL/dialect/cursor classes out of `DtPipe.Core`. **Not covered:** the three bullets above — no check looks for a branch on adapter identity inside the engine. Discipline.
+
 Canonical UUID: `FixedSizeBinaryType(16)` + Field metadata `ARROW:extension:name = arrow.uuid`, RFC 4122 big-endian (`ArrowTypeMapper.ToArrowUuidBytes` / `FromArrowUuidBytes`).
+
+### Representation rules are named for themselves, not for Arrow
+
+Two conventions are needed **outside** Arrow as well — a database `BINARY(16)` column wants RFC 4122
+byte order, and a row-mode DB parameter needs the same temporal rule — so each lives under its own
+name in `Apache.Arrow.Serialization/Mapping/`, with the Arrow-facing spellings delegating to it:
+
+| Rule | Owner | Arrow-facing spelling |
+|---|---|---|
+| RFC 4122 big-endian byte order | `Rfc4122Guid.ToBigEndianBytes` / `FromBigEndianBytes` | `ArrowTypeMap.ToArrowUuidBytes` / `FromArrowUuidBytes` |
+| Zone-less `DateTime` handling | `TemporalNormalization.ToOffset` / `ToWallClock` | called directly by `ArrowTypeMap.GetValue` and the readers |
+
+**`TemporalNormalization` owns both directions on purpose.** A `DateTime` with
+`Kind=Unspecified` is a wall clock with no zone; `new DateTimeOffset(dt)` and
+`TimestampArray.Builder.Append(DateTime)` both resolve it against `TimeZoneInfo.Local`, which put
+the machine's time zone inside the data path — the same rows produced different bytes in Paris and
+in Tokyo, sometimes on a different calendar day. The write and read halves drifted apart once
+already; keeping them in one class is the fix's whole point, and they must be changed together.
+
+Guarded by `validate_core_boundary.sh` (no `new DateTimeOffset(` outside the rule) and
+`validate_temporal.sh` (the real binary under two `TZ` values must produce identical output).
 
 ## Apache.Arrow.Serialization
 
@@ -212,12 +260,16 @@ DtPipe.Core               ← ArrowTypeMapper is facade over ArrowTypeMap
 
 `ArrowTypeMap` (`Mapping/ArrowTypeMap.cs`) is the canonical CLR↔Arrow map; `ArrowTypeMapper` in Core is a facade. `FixedSizeBinaryArrayBuilder` lives only in `Apache.Arrow.Serialization/Reflection/FixedSizeBinaryArrayBuilder.cs` — Core consumes it via project reference (single definition). See `EXTENDING.md` for `ArrowSerializer`/`ArrowDeserializer` usage.
 
+> **Enforced by** `tests/scripts/validate_core_boundary.sh`, which fails on any `using DtPipe.` or project reference to DtPipe from either standalone Arrow library. **Note:** `tests/Apache.Arrow.Serialization.Tests` is **never run by `build.sh`**, which only executes `tests/DtPipe.Tests --filter ".Unit."` — two failures currently sit there unnoticed.
+
 ## Adding a New Adapter
 
 See `EXTENDING.md` for full patterns. Key rules:
 - **Row writers**: build `ColumnConverterFactory.Build(sourceClrType, targetClrType)` once per column at init; never per-cell `ValueConverter.ConvertValue()`.
 - **Columnar writers**: implement `IColumnarDataWriter`; use `ArrowTypeMapper.GetValueForField(array, field, i)` when a `Field` is available.
 - **Text readers**: implement `IColumnTypeInferenceCapable` for `--auto-column-types`.
+
+> **Not enforced** — nothing checks that a writer builds its converters per column rather than per cell, nor that a text reader opts into inference. Both are performance and capability defaults a new adapter silently loses. Discipline only.
 
 ### Arrow ↔ CLR mapping: no heuristics
 
@@ -228,6 +280,8 @@ Key APIs:
 - `GetField(name, clrType, nullable)` → `Field` with metadata — use instead of `new Field(...)`
 - `GetClrTypeFromField(Field)` / `GetValueForField(array, field, i)` — metadata-aware (e.g. `arrow.uuid` → `Guid`)
 - `GetClrType(IArrowType)` / `GetValue(array, i)` — storage-only
+
+> **Not enforced** — no check distinguishes a legitimate storage-only call from one that should have been metadata-aware. Round-trip behaviour is covered indirectly (`ArrowAdapterTests`, `validate_temporal.sh`), which catches the symptom, not the wrong call. Discipline only.
 
 ## MCP Server & Agentic Integration
 
@@ -243,7 +297,18 @@ Hardening invariants (F1–F7, fail-closed, non-negotiable — details in `REFER
 - **F7 CI gate** — `tests/agentic/analyze-traces.sh --gate` fails on unhandled MCP errors or a failed mission. Its variance criterion applies only when `variance_results.jsonl` holds real replication data; the shipped missions drive their own bash ReAct loop against `dtpipe mcp` and never invoke `dtpipe agent --repeat`, so they produce none. Never record a placeholder variance to fill the file — a criterion that cannot fire is worse than an absent one. The authoritative signal for F1–F7 is the deterministic unit suite (`Unit/Cli/Agent*Tests`, `Unit/Cli/Mcp*Tests`), not this gate.
 
 Mandatory MCP directives:
-1. No hardcoded help — reflect on `[Description]`/`[ComponentHelp]`.
-2. In-memory execution via `JobFileParser` + `JobService.ExecutePipelineAsync()` — no temp files/shell proxies.
-3. Auto table discovery on `inspect` without a query, plus actionable hints on validation errors.
-4. Fail-closed — default `apply=false`, reject on ambiguity.
+1. No hardcoded help — reflect on `[Description]`/`[ComponentHelp]`. *(Not enforced: nothing tests `GetGeneralHelp`. The adapter and transformer lists it prints are derived from the factories, so they cannot drift — but a hardcoded block added elsewhere would pass unnoticed.)*
+2. In-memory execution via `JobFileParser` + `JobService.ExecutePipelineAsync()` — no temp files/shell proxies. *(Not enforced — discipline.)*
+3. Auto table discovery on `inspect` without a query, plus actionable hints on validation errors. *(Not enforced — discipline.)*
+4. Fail-closed — default `apply=false`, reject on ambiguity. *(Enforced by `ExecuteYamlJobGuardrailTests`, CI.)*
+
+### Writing adapter help (`[Description]` / `[ComponentHelp]`)
+
+`get-adapter-help` is the only view a model gets of an adapter, so these attributes are a contract, not decoration.
+
+- **Say what reflection cannot.** Option names, types and descriptions are already emitted from the properties. `usageNotes` exists for what they cannot convey: prerequisites (MySQL bulk needs `local_infile=ON` server-side), silent fallbacks, and semantics that make an option dangerous — `--strategy Upsert` requires a PRIMARY KEY or UNIQUE index covering the key columns, or MySQL appends duplicates instead of updating. **An option a model can set without knowing its failure mode is worse than one it cannot see.**
+- **Reader and writer each carry their own attributes, and both are emitted.** The writer's is not a redundant copy of the reader's — it is where write semantics live.
+- **The component's own side of an example stays concrete; the counterpart side is a placeholder** (`<adapter-prefix>:<target>` / `<source>`). Naming a real adapter anchors the model on an unrelated component, and a verbatim copy silently writes a file nobody asked for — where a placeholder fails closed with "No writer factory resolved". The one exception is `generate:` ↔ `null:`, where the pairing itself is the lesson.
+- **Name the driver and say the key list is open.** ADO.NET fixes the `Key=Value` form but not the vocabulary, so there is no single specification to point at: the option set belongs to the provider's driver (Npgsql, MySqlConnector, …). Naming it is what lets a model reach past the keys shown, and steers it away from a different driver's options.
+
+`McpAdapterHelpTests` enforces the mechanical half over the whole catalog — both roles present, counterpart placeholders, driver named. The first point is the one only a human can honour.

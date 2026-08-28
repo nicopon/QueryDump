@@ -634,6 +634,9 @@ specific one, or when the table does not exist yet and dtpipe must generate the 
 | `DateTimeOffset` | `DATETIME(6)` | **the zone offset is not preserved** — MySQL has no offset-carrying type |
 | `string` | `LONGTEXT`, or `VARCHAR(255)` when part of the key | `LONGTEXT` cannot be indexed without a prefix length |
 
+## Incremental Loading
+
+DtPipe supports cursor-driven incremental loading to transfer only new or updated records since the last successful run.
 
 ### Overview
 
