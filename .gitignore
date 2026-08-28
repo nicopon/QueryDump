@@ -75,3 +75,6 @@ nuget-packages/*
 # Agentic E2E tests
 tests/agentic/artifacts/
 tests/agentic/artifacts/
+
+# Local agent workspace
+.opencode/
