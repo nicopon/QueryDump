@@ -1,5 +1,6 @@
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Exporters.Json;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Loggers;
 using BenchmarkDotNet.Running;
@@ -27,5 +28,9 @@ internal sealed class InProcessConfig : ManualConfig
         AddJob(Job.ShortRun.WithToolchain(InProcessEmitToolchain.Instance));
         AddLogger(ConsoleLogger.Default);
         AddColumnProvider(DefaultColumnProviders.Instance);
+        // Full JSON carries Statistics.Mean/Min/StdDev as raw nanoseconds. The CSV
+        // exporter formats them ("16.00 \u03bcs"), which no gate can parse safely —
+        // tests/scripts/micro_perf_gate.sh reads this file.
+        AddExporter(JsonExporter.Full);
     }
 }

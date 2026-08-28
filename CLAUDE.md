@@ -42,6 +42,30 @@ dotnet test tests/DtPipe.Tests/ --filter "FullyQualifiedName~CliDagParserTests"
 
 `test_local.sh` sets `DTPIPE_TEST_REUSE_INFRA=true` to connect to fixed-port containers started by `tests/infra/start_infra.sh`. Use `tests/infra/stop_infra.sh` to tear them down. Shell-based integration scripts are also in `tests/scripts/`.
 
+### Performance Gate
+
+Three tiers, deliberately unequal in where they run:
+
+| Tier | What | Where | Threshold |
+|---|---|---|---|
+| Micro | `tests/scripts/micro_perf_gate.sh` — BenchmarkDotNet in-process on the hot conversion paths, no infra | CI, every push | Wide (detects a ×2) |
+| Macro complete | 15 scenarios incl. Oracle / SQL Server | Local only, `experiments/dtpipe-sandbox` | 15 % |
+| Macro light | file↔file + PostgreSQL subset | Optional, nightly, only if micro proves insufficient | Wide |
+
+The complete macro tier stays out of CI for two independent reasons: free runners
+cannot host Oracle and SQL Server, and — this one holds regardless — a shared cloud
+runner has 20-50 % duration variance, so a 15 % gate there produces random red, not
+signal. Same two-level structure the project already uses for tests (CI unit,
+`validate_vitals.sh` local).
+
+**A baseline records the machine it was measured on, and the gate refuses to compare
+across two different ones** (exit 2, no verdict) rather than render a misleading one.
+`--allow-foreign-host` overrides the refusal and clamps the threshold to ≥ 50 %; that
+is what the CI job passes, since the committed baseline is from the reference machine.
+
+Update the micro baseline with `./tests/scripts/micro_perf_gate.sh --update` on the
+reference machine, and only when a change is a deliberate, understood shift.
+
 ### Engine Change Obligations
 
 Any change to `DagOrchestrator` **must** be covered in `DagOrchestratorTests.cs`, and any change to `LinearPipelineService` in `OrderedPipelineTests.cs`. Both validate without the CLI.

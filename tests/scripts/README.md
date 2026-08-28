@@ -77,6 +77,42 @@ DtPipe uses a centralized Docker infrastructure for all integration tests.
 | **`bench.sh`** | Linear pipeline throughput (100k→CSV, CSV→Parquet, Parquet+transforms), DuckDB 1M rows. |
 | **`benchmark_dtpipe_columnar.sh`** | Zero-copy columnar path performance. |
 | **`generate_benchmark_datasets.sh`** | Generates large Parquet/CSV datasets for JOIN benchmarks. |
+| **`micro_perf_gate.sh`** | Micro performance gate — BenchmarkDotNet in-process on the hot conversion paths, compared against a versioned baseline. Runs in CI on every push. |
+
+#### The three-tier performance gate
+
+| Tier | What | Where | Threshold |
+|:---|:---|:---|:---|
+| **Micro** | `micro_perf_gate.sh` — BenchmarkDotNet, no infrastructure | CI, every push | Wide (detects a ×2) |
+| **Macro complete** | 15 scenarios incl. Oracle and SQL Server | Local only, `dtpipe-sandbox` repo, tag ritual | 15 % |
+| **Macro light** | file↔file + PostgreSQL subset | Optional, nightly — only if micro proves insufficient | Wide |
+
+The complete macro tier stays out of CI for two independent reasons. The practical
+one: free runners cannot host Oracle and SQL Server containers. The methodological
+one, which holds even if that changed: a shared cloud runner has 20-50 % duration
+variance, so a 15 % gate there produces random red rather than signal.
+
+**Baselines carry a machine fingerprint and the gate refuses to compare across two.**
+Comparing durations measured on different hardware does not give a weaker verdict, it
+gives a misleading one. `--allow-foreign-host` overrides the refusal and clamps the
+threshold to no tighter than 50 % — which is exactly what CI passes, since the
+committed baseline was recorded on the reference machine and every runner is foreign.
+
+The baseline is `tests/DtPipe.Benchmarks/baselines/micro_perf.json` — it lives with the
+benchmark project, not in `tests/scripts/baselines/`, which holds golden *data* fixtures.
+
+```bash
+# Record a baseline on this machine
+./tests/scripts/micro_perf_gate.sh --update
+
+# Compare (strict — refuses a foreign host)
+./tests/scripts/micro_perf_gate.sh
+
+# Just print the numbers, compare nothing
+./tests/scripts/micro_perf_gate.sh --report-only
+```
+
+Exit codes: `0` pass · `1` regression · `2` refused to render a verdict · `3` setup error.
 
 ### 🛠️ Utilities
 | Script | Description |
