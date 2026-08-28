@@ -1,5 +1,5 @@
 using System.Globalization;
-using DtPipe.Core.Infrastructure.Arrow;
+using Apache.Arrow.Serialization.Mapping;
 
 namespace DtPipe.Core.Helpers;
 
@@ -61,21 +61,23 @@ public static class ValueConverter
         {
             if (underlyingTarget == typeof(Guid))
             {
-                // Arrow bytes are RFC 4122 big-endian; convert to .NET Guid
-                if (bArr.Length == 16) return ArrowTypeMapper.FromArrowUuidBytes(bArr);
+                // Interchange byte order is RFC 4122 big-endian; convert to .NET Guid.
+                if (bArr.Length == 16) return Rfc4122Guid.FromBigEndianBytes(bArr);
             }
         }
 
         if (val is Guid gVal)
         {
-            // Produce RFC 4122 big-endian bytes for Arrow FixedSizeBinary(16) columns
-            if (underlyingTarget == typeof(byte[])) return ArrowTypeMapper.ToArrowUuidBytes(gVal);
+            // Produce RFC 4122 big-endian bytes: a BINARY(16) parameter wants the same layout
+            // Arrow does.
+            if (underlyingTarget == typeof(byte[])) return Rfc4122Guid.ToBigEndianBytes(gVal);
             if (underlyingTarget == typeof(string)) return gVal.ToString();
         }
 
         if (val is DateTime dtVal && underlyingTarget == typeof(DateTimeOffset))
         {
-            return new DateTimeOffset(dtVal);
+            // Must stay symmetric with the DateTimeOffset -> DateTime case just below.
+            return TemporalNormalization.ToOffset(dtVal);
         }
 
         if (val is DateTimeOffset dtoVal && underlyingTarget == typeof(DateTime))

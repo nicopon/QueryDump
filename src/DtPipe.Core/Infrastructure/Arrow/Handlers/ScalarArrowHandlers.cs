@@ -218,9 +218,10 @@ internal class TimestampHandler : ScalarArrowHandler<TimestampType, TimestampArr
     protected override void AppendValueTyped(TimestampArray.Builder b, object v)
     {
         if (v is DateTimeOffset dto) b.Append(dto);
-        else if (v is DateTime dt) b.Append(dt);
-        else if (v is DateOnly d) b.Append(d.ToDateTime(TimeOnly.MinValue));
-        else b.Append(Convert.ToDateTime(v));
+        // Same rule as the columnar readers, so the row-mode bridge cannot drift from them.
+        else if (v is DateTime dt) b.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(dt));
+        else if (v is DateOnly d) b.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(d.ToDateTime(TimeOnly.MinValue)));
+        else b.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(Convert.ToDateTime(v)));
     }
 }
 

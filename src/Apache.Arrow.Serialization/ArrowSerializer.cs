@@ -296,7 +296,8 @@ public static class ArrowSerializer
             }
             if (underlyingType == typeof(DateTime))
             {
-                return (val, builder) => ((TimestampArray.Builder)builder).Append((DateTime)val);
+                return (val, builder) => ((TimestampArray.Builder)builder).Append(
+                    Mapping.TemporalNormalization.ToOffset((DateTime)val));
             }
             if (underlyingType == typeof(DateTimeOffset))
             {

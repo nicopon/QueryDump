@@ -37,7 +37,30 @@ if grep -rqE 'ProjectReference Include="[^"]*DtPipe' "$PROJECT_ROOT/src/Apache.A
 fi
 pass "standalone Arrow libraries remain DtPipe-free"
 
-# 3. ArrowBridge project, when extracted, must not reference DtPipe projects.
+# 3. Temporal hygiene: nothing may invent a time zone for a zone-less DateTime.
+#
+# "new DateTimeOffset(dt)" resolves a Kind=Unspecified value against TimeZoneInfo.Local, putting
+# the host's time zone into the data path and making the same input produce different output on
+# different machines. The rule lives in exactly one place; this check keeps it there.
+#
+# Scope, stated honestly: this catches the constructor, not every way a bare DateTime can reach
+# TimestampArray.Builder.Append — that hazard depends on the argument's static type and is not
+# expressible as a grep (Date32/Date64 builders take DateTime legitimately, and share a file with
+# the timestamp handler). tests/scripts/validate_temporal.sh is the net for that half: it runs the
+# real binary under two TZ values and fails if the outputs differ.
+TEMPORAL_RULE="Mapping/TemporalNormalization.cs"
+DTO_HITS=$(grep -rn "new DateTimeOffset(" "$PROJECT_ROOT/src/" --include="*.cs" 2>/dev/null \
+    | grep -v "/obj/" \
+    | grep -v "$TEMPORAL_RULE" \
+    | sed 's://.*::' \
+    | grep "new DateTimeOffset(" || true)
+if [ -n "$DTO_HITS" ]; then
+    echo "$DTO_HITS"
+    fail "new DateTimeOffset(...) outside $TEMPORAL_RULE — use TemporalNormalization.ToOffset"
+fi
+pass "time-zone resolution confined to TemporalNormalization"
+
+# 4. ArrowBridge project, when extracted, must not reference DtPipe projects.
 if [ -d "$PROJECT_ROOT/src/DtPipe.ArrowBridge" ]; then
     if grep -q "DtPipe" "$PROJECT_ROOT/src/DtPipe.ArrowBridge/"*.csproj 2>/dev/null; then
         fail "ArrowBridge must not reference DtPipe projects"

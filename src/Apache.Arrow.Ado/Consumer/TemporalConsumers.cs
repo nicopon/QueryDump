@@ -33,7 +33,8 @@ public sealed class TimestampConsumer : BaseAdoConsumer<TimestampArray.Builder, 
         if (obj is DateTimeOffset dto)
             Builder.Append(dto);
         else if (obj is DateTime dt)
-            Builder.Append(new DateTimeOffset(dt));
+            // Not new DateTimeOffset(dt): it resolves a zone-less value against the local zone.
+            Builder.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(dt));
         else
             Builder.AppendNull();
     }

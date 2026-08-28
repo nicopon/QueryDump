@@ -28,30 +28,16 @@ public static class ArrowTypeMap
     // ── UUID byte-order helpers ──────────────────────────────────────────────
 
     /// <summary>
-    /// Converts a .NET Guid (little-endian first 3 components) to RFC 4122 big-endian bytes
-    /// suitable for canonical Arrow UUID storage.
+    /// Converts a .NET Guid to the RFC 4122 big-endian bytes of canonical Arrow UUID storage.
+    /// Arrow-facing spelling of <see cref="Rfc4122Guid.ToBigEndianBytes"/>.
     /// </summary>
-    public static byte[] ToArrowUuidBytes(Guid guid)
-    {
-        var bytes = guid.ToByteArray();
-        System.Array.Reverse(bytes, 0, 4); // component A: little → big
-        System.Array.Reverse(bytes, 4, 2); // component B: little → big
-        System.Array.Reverse(bytes, 6, 2); // component C: little → big
-        // components D-E (bytes 8-15) are already big-endian in .NET
-        return bytes;
-    }
+    public static byte[] ToArrowUuidBytes(Guid guid) => Rfc4122Guid.ToBigEndianBytes(guid);
 
     /// <summary>
     /// Converts RFC 4122 big-endian UUID bytes (from an Arrow binary column) back to a .NET Guid.
+    /// Arrow-facing spelling of <see cref="Rfc4122Guid.FromBigEndianBytes"/>.
     /// </summary>
-    public static Guid FromArrowUuidBytes(ReadOnlySpan<byte> b)
-    {
-        var copy = b.ToArray();
-        System.Array.Reverse(copy, 0, 4);
-        System.Array.Reverse(copy, 4, 2);
-        System.Array.Reverse(copy, 6, 2);
-        return new Guid(copy);
-    }
+    public static Guid FromArrowUuidBytes(ReadOnlySpan<byte> b) => Rfc4122Guid.FromBigEndianBytes(b);
 
     // ── Type mappings ────────────────────────────────────────────────────────
 
@@ -224,10 +210,11 @@ public static class ArrowTypeMap
         };
 
         // 3. Post-processing Coercion
-        // If field metadata indicates a timezone-less Timestamp, coerce DateTimeOffset to DateTime.
+        // A timezone-less Timestamp column holds a wall clock, so it yields a zone-less DateTime.
+        // TemporalNormalization holds this conversion next to its inverse; change them together.
         if (field != null && val is DateTimeOffset dto && field.DataType is TimestampType ts && string.IsNullOrEmpty(ts.Timezone))
         {
-            return dto.DateTime;
+            return TemporalNormalization.ToWallClock(dto);
         }
 
         return val;

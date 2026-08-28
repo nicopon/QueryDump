@@ -233,12 +233,16 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
             NpgsqlTypes.NpgsqlDbType.Timestamp => BuildTyped(
                 new TimestampArray.Builder((TimestampType)arrowType),
-                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(e.Read<DateTime>()); },
+                // Npgsql's binary export returns Kind=Unspecified; a raw Append would resolve it
+                // against the local zone.
+                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(e.Read<DateTime>())); },
                 b => b.Build()),
 
             NpgsqlTypes.NpgsqlDbType.TimestampTz => BuildTyped(
                 new TimestampArray.Builder((TimestampType)arrowType),
-                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(e.Read<DateTime>()); },
+                // timestamptz too: the binary export returns the UTC wall clock with no Kind, so
+                // it needs the same normalization as a zone-less column.
+                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(Apache.Arrow.Serialization.Mapping.TemporalNormalization.ToOffset(e.Read<DateTime>())); },
                 b => b.Build()),
 
             NpgsqlTypes.NpgsqlDbType.Interval => BuildTyped(
