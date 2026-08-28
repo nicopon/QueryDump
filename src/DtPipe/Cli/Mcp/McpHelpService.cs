@@ -58,6 +58,9 @@ public class McpHelpService : IMcpHelpService
         sw.WriteLine("  - Connection strings follow the format '<provider-prefix>:<path-or-connection-string>'.");
         sw.WriteLine("  - File providers read/write file paths or '-' for STDIN/STDOUT.");
         sw.WriteLine("  - Database providers use ADO.NET connection strings (semicolon-separated Key=Value; pairs).");
+        sw.WriteLine("  - An adapter's example shows the minimum keys required, not the full set. ADO.NET fixes the");
+        sw.WriteLine("    Key=Value form but not the vocabulary: the complete option list belongs to that provider's");
+        sw.WriteLine("    .NET driver, named in its adapter help.");
         sw.WriteLine("  - Call 'get-adapter-help <adapter-name>' to inspect the exact connection string syntax and options for any adapter.");
         sw.WriteLine();
         sw.WriteLine("DAG TOPOLOGIES & ROUTING IN YAML:");
@@ -123,16 +126,24 @@ public class McpHelpService : IMcpHelpService
         sw.WriteLine(new string('=', normalized.Length + 9));
         sw.WriteLine();
 
-        var optionType = readers.FirstOrDefault()?.OptionsType ?? writers.FirstOrDefault()?.OptionsType;
-        if (optionType != null)
+        // Reader and writer each carry their own [Description] and [ComponentHelp]. Both are
+        // emitted: taking only the first left every writer's usage notes unreachable, which for a
+        // database adapter is where the upsert key requirement and bulk-load prerequisites live.
+        var roleTypes = readers.Select(r => (Role: "Reader", r.OptionsType))
+            .Concat(writers.Select(w => (Role: "Writer", w.OptionsType)))
+            .GroupBy(x => x.OptionsType)
+            .Select(g => (Roles: string.Join(" / ", g.Select(x => x.Role).Distinct()), OptionsType: g.Key))
+            .ToList();
+
+        var described = false;
+        foreach (var (roles, type) in roleTypes)
         {
-            var descAttr = optionType.GetCustomAttribute<DescriptionAttribute>();
-            if (descAttr != null)
-            {
-                sw.WriteLine(descAttr.Description);
-                sw.WriteLine();
-            }
+            var descAttr = type.GetCustomAttribute<DescriptionAttribute>();
+            if (descAttr == null) continue;
+            sw.WriteLine(roleTypes.Count > 1 ? $"{roles}: {descAttr.Description}" : descAttr.Description);
+            described = true;
         }
+        if (described) sw.WriteLine();
 
         sw.WriteLine("YAML Provider Options Configuration:");
         sw.WriteLine($"  Place these under 'provider-options' -> '{normalized}' (or specific role suffix '{normalized}-reader' / '{normalized}-writer'):");
@@ -157,9 +168,9 @@ public class McpHelpService : IMcpHelpService
             sw.WriteLine();
         }
 
-        if (optionType != null)
+        foreach (var (roles, type) in roleTypes)
         {
-            FormatComponentHelp(sw, optionType);
+            FormatComponentHelp(sw, type, roleTypes.Count > 1 ? roles : null);
         }
 
         return sw.ToString();
@@ -270,21 +281,24 @@ public class McpHelpService : IMcpHelpService
         }
     }
 
-    private static void FormatComponentHelp(TextWriter writer, Type optionsType)
+    /// <param name="role">Section label when one adapter exposes more than one role, else null.</param>
+    private static void FormatComponentHelp(TextWriter writer, Type optionsType, string? role = null)
     {
         var helpAttr = optionsType.GetCustomAttribute<ComponentHelpAttribute>();
         if (helpAttr == null) return;
 
+        var suffix = role is null ? string.Empty : $" ({role})";
+
         if (!string.IsNullOrWhiteSpace(helpAttr.UsageNotes))
         {
-            writer.WriteLine("YAML Usage & Notes:");
+            writer.WriteLine($"YAML Usage & Notes{suffix}:");
             writer.WriteLine($"  {helpAttr.UsageNotes}");
             writer.WriteLine();
         }
 
         if (helpAttr.Examples != null && helpAttr.Examples.Length > 0)
         {
-            writer.WriteLine("YAML Example Configuration:");
+            writer.WriteLine($"YAML Example Configuration{suffix}:");
             foreach (var ex in helpAttr.Examples)
             {
                 writer.WriteLine(ex);

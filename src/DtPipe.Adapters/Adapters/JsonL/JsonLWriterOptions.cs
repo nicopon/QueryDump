@@ -8,7 +8,7 @@ namespace DtPipe.Adapters.JsonL;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.jsonl' (or the 'jsonl:' prefix; '-' for stdout). In YAML, use 'provider-options' -> 'jsonl-writer' to change the encoding; leave indentation off (the default), since pretty-printed JSON breaks the one-record-per-line contract.",
 	examples: new[] {
-		"main:\n  input: \"data.csv\"\n  output: \"events.jsonl\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  output: \"events.jsonl\""
 	})]
 public class JsonLWriterOptions : IOptionSet
 {

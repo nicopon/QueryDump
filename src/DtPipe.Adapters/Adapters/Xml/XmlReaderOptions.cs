@@ -9,7 +9,7 @@ namespace DtPipe.Adapters.Xml;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.xml' (or the 'xml:' prefix; '-' for stdin). '--path' selects the records to extract: an absolute slash-path (e.g. '/Catalog/Product') matches from the root, while a leading '//' (e.g. '//Product') recursively matches by element name at any depth; attributes are exposed as fields prefixed with '--xml-attribute-prefix' (default '_').",
 	examples: new[] {
-		"main:\n  input: \"catalog.xml\"\n  provider-options:\n    xml:\n      path: \"//Product\"\n      auto-column-types: true\n  output: \"products.parquet\""
+		"main:\n  input: \"catalog.xml\"\n  provider-options:\n    xml:\n      path: \"//Product\"\n      auto-column-types: true\n  output: \"<adapter-prefix>:<target>\""
 	})]
 public class XmlReaderOptions : NavigableSourceOptions, IOptionSet, IHasSchemaOverride
 {

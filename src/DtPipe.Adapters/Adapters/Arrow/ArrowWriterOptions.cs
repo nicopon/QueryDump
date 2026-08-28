@@ -8,7 +8,7 @@ namespace DtPipe.Adapters.Arrow;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.arrow' or '.arrowfile' (or the 'arrow:' prefix; '-' for stdout), which selects the seekable IPC file writer; any other extension, including stdout, uses the sequential IPC stream writer instead.",
 	examples: new[] {
-		"main:\n  input: \"data.parquet\"\n  output: \"data.arrow\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  output: \"data.arrow\""
 	})]
 public class ArrowWriterOptions : IOptionSet
 {

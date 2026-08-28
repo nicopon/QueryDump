@@ -7,9 +7,9 @@ namespace DtPipe.Adapters.SqlServer;
 
 [Description("Writes data to a SQL Server database.")]
 [ComponentHelp(
-	usageNotes: "Connection string format: 'mssql:Server=host;Database=db;User Id=user;Password=pass;TrustServerCertificate=True'. In YAML, use 'provider-options' -> 'mssql' (or 'mssql-writer' when the same job also reads from SQL Server) to set table, strategy, and insert mode.",
+	usageNotes: "Connection string (minimum keys, not exhaustive): 'mssql:Server=host;Database=db;User Id=user;Password=pass;TrustServerCertificate=True'. Driver: Microsoft.Data.SqlClient — its option set defines the full key vocabulary. In YAML, use 'provider-options' -> 'mssql' (or 'mssql-writer' when the same job also reads from SQL Server) to set table, strategy, and insert mode.",
 	examples: new[] {
-		"main:\n  input: \"orders.csv\"\n  output: \"mssql:Server=.;Database=mydb;User Id=sa;Password=pass;TrustServerCertificate=True\"\n  provider-options:\n    mssql-writer:\n      table: \"dbo.Orders\"\n      strategy: \"Upsert\"\n      key: \"OrderId\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  output: \"mssql:Server=.;Database=mydb;User Id=sa;Password=pass;TrustServerCertificate=True\"\n  provider-options:\n    mssql-writer:\n      table: \"dbo.Orders\"\n      strategy: \"Upsert\"\n      key: \"OrderId\""
 	})]
 public class SqlServerWriterOptions : DbWriterOptions, IProviderOptions, ITableAwareOptions
 {

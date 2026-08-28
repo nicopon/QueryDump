@@ -7,9 +7,9 @@ namespace DtPipe.Adapters.Sqlite;
 
 [Description("Reads data from an SQLite database.")]
 [ComponentHelp(
-	usageNotes: "Connection string format: 'sqlite:Data Source=path/to/db.db'. In YAML, use 'provider-options' -> 'sqlite' to specify reader configurations like query or table.",
+	usageNotes: "Connection string (minimum keys, not exhaustive): 'sqlite:Data Source=path/to/db.db'. Driver: Microsoft.Data.Sqlite — its option set defines the full key vocabulary. In YAML, use 'provider-options' -> 'sqlite' to specify reader configurations like query or table.",
 	examples: new[] {
-		"main:\n  input: \"sqlite:Data Source=business.db\"\n  provider-options:\n    sqlite:\n      query: \"SELECT * FROM company_clients\"\n  output: \"csv:output.csv\""
+		"main:\n  input: \"sqlite:Data Source=business.db\"\n  provider-options:\n    sqlite:\n      query: \"SELECT * FROM company_clients\"\n  output: \"<adapter-prefix>:<target>\""
 	})]
 public class SqliteReaderOptions : QueryableReaderOptions, IProviderOptions
 {

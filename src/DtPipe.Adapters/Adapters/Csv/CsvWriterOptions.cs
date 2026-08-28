@@ -8,7 +8,7 @@ namespace DtPipe.Adapters.Csv;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.csv' (or the 'csv:' prefix; '-'/bare 'csv' for stdout). In YAML, use 'provider-options' -> 'csv-writer' (suffixed, since the reader shares the same 'csv' prefix) to set the separator, quote character, null representation, or date/timestamp formats.",
 	examples: new[] {
-		"main:\n  input: \"data.parquet\"\n  provider-options:\n    csv-writer:\n      separator: \";\"\n      quote: \"'\"\n      null-value: \"NULL\"\n  output: \"data.csv\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  provider-options:\n    csv-writer:\n      separator: \";\"\n      quote: \"'\"\n      null-value: \"NULL\"\n  output: \"data.csv\""
 	})]
 public record CsvWriterOptions : IWriterOptions
 {

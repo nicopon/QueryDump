@@ -7,9 +7,9 @@ namespace DtPipe.Adapters.PostgreSQL;
 
 [Description("Writes data to a PostgreSQL database.")]
 [ComponentHelp(
-	usageNotes: "Connection string format: 'pg:Host=host;Port=port;Database=db;Username=user;Password=pass'. In YAML, use 'provider-options' -> 'pg' (or 'pg-writer' when the same job also reads from PostgreSQL) to set table, strategy, and insert mode.",
+	usageNotes: "Connection string (minimum keys, not exhaustive): 'pg:Host=host;Port=port;Database=db;Username=user;Password=pass'. Driver: Npgsql — its option set defines the full key vocabulary. In YAML, use 'provider-options' -> 'pg' (or 'pg-writer' when the same job also reads from PostgreSQL) to set table, strategy, and insert mode.",
 	examples: new[] {
-		"main:\n  input: \"orders.parquet\"\n  output: \"pg:Host=localhost;Database=prod;Username=postgres\"\n  provider-options:\n    pg-writer:\n      table: \"public.orders\"\n      strategy: \"Upsert\"\n      key: \"order_id\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  output: \"pg:Host=localhost;Database=prod;Username=postgres\"\n  provider-options:\n    pg-writer:\n      table: \"public.orders\"\n      strategy: \"Upsert\"\n      key: \"order_id\""
 	})]
 public class PostgreSqlWriterOptions : DbWriterOptions, IWriterOptions, ITableAwareOptions
 {

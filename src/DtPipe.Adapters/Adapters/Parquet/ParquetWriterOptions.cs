@@ -8,7 +8,7 @@ namespace DtPipe.Adapters.Parquet;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.parquet' (or the 'parquet:' prefix), or '-' for stdout when redirected. If the path is a directory or has no extension, the writer appends 'export.parquet' or a '.parquet' suffix automatically.",
 	examples: new[] {
-		"main:\n  input: \"data.csv\"\n  output: \"data.parquet\""
+		"main:\n  input: \"<adapter-prefix>:<source>\"\n  output: \"data.parquet\""
 	})]
 public record ParquetWriterOptions : IWriterOptions
 {

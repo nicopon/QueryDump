@@ -9,7 +9,7 @@ namespace DtPipe.Adapters.JsonL;
 [ComponentHelp(
 	usageNotes: "Connection string is a file path ending in '.jsonl' (or the 'jsonl:' prefix; '-' for stdin). By default each line is one JSON record; set '--path' (a dot-path, e.g. 'items.data') to instead stream records from a nested array inside a single JSON document, with nested objects preserved as struct columns.",
 	examples: new[] {
-		"main:\n  input: \"events.jsonl\"\n  provider-options:\n    jsonl:\n      path: \"items.data\"\n  output: \"events.parquet\""
+		"main:\n  input: \"events.jsonl\"\n  provider-options:\n    jsonl:\n      path: \"items.data\"\n  output: \"<adapter-prefix>:<target>\""
 	})]
 public class JsonLReaderOptions : NavigableSourceOptions, IOptionSet, IHasSchemaOverride
 {
