@@ -39,16 +39,26 @@ public sealed class SchemaValidationService
         var dialect = (writer as IHasSqlDialect)?.Dialect;
         var report = SchemaCompatibilityAnalyzer.Analyze(exportableSchema, targetSchema, dialect);
 
+        var missingCount = report.Columns.Count(c => c.Status == CompatibilityStatus.MissingInTarget);
+        var willMigrate = missingCount > 0 && settings?.AutoMigrate == true && writer is ISchemaMigrator;
+
         foreach (var warning in report.Warnings) _observer.LogWarning(warning);
-        foreach (var error in report.Errors) _observer.LogError(new Exception(error));
+
+        // A missing column is an error only until auto-migration adds it, and its message claims
+        // the data will be skipped — both wrong on a run that is about to migrate and succeed.
+        // The "Auto-migrating schema" line below states what actually happens.
+        foreach (var error in report.Errors)
+        {
+            if (willMigrate && report.MissingColumnErrors.Contains(error)) continue;
+            _observer.LogError(new Exception(error));
+        }
 
         if (report.IsCompatible)
         {
             _observer.LogMessage("Target schema compatible.");
         }
 
-        var missingCount = report.Columns.Count(c => c.Status == CompatibilityStatus.MissingInTarget);
-        if (missingCount > 0 && settings?.AutoMigrate == true && writer is ISchemaMigrator migrator)
+        if (willMigrate && writer is ISchemaMigrator migrator)
         {
             _observer.LogMessage($"[yellow]Auto-migrating schema: Adding {missingCount} missing columns...[/]");
             await migrator.MigrateSchemaAsync(report, ct);

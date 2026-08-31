@@ -23,6 +23,7 @@ public static class SchemaCompatibilityAnalyzer
 		var columns = new List<ColumnCompatibility>();
 		var warnings = new List<string>();
 		var errors = new List<string>();
+		var missingColumnErrors = new List<string>();
 
 		// If target doesn't exist, all columns are new (will be created)
 		if (targetSchema is null || !targetSchema.Exists)
@@ -96,8 +97,8 @@ public static class SchemaCompatibilityAnalyzer
 					"Column does not exist in target - data for this column will be skipped"));
 
 				var msg = $"Column '{srcCol.Name}': Missing in target schema (Checked as '{(dialect != null ? (srcCol.IsCaseSensitive || dialect.NeedsQuoting(srcCol.Name) ? srcCol.Name : dialect.Normalize(srcCol.Name)) : srcCol.Name)}') - data for this column will be skipped";
-				warnings.Add(msg);
 				errors.Add(msg); // Treat missing columns as errors for StrictSchema enforcement
+				missingColumnErrors.Add(msg);
 			}
 		}
 
@@ -133,7 +134,10 @@ public static class SchemaCompatibilityAnalyzer
 			warnings.Insert(0, $"Target table already contains {targetSchema.RowCount:N0} rows{sizeInfo}");
 		}
 
-		return new SchemaCompatibilityReport(targetSchema, columns, warnings, errors);
+		return new SchemaCompatibilityReport(targetSchema, columns, warnings, errors)
+		{
+			MissingColumnErrors = missingColumnErrors
+		};
 	}
 
 	private static (CompatibilityStatus, string?) CheckColumnCompatibility(PipeColumnInfo source, TargetColumnInfo target)
@@ -245,6 +249,13 @@ public sealed record SchemaCompatibilityReport(
 	IReadOnlyList<string> Errors
 )
 {
+	/// <summary>
+	/// The subset of <see cref="Errors"/> raised only because a source column is absent from the
+	/// target. They gate StrictSchema like any other error, but auto-migration resolves them —
+	/// a caller that is about to migrate must not report them as failures.
+	/// </summary>
+	public IReadOnlyList<string> MissingColumnErrors { get; init; } = [];
+
 	/// <summary>
 	/// Returns true if there are no errors (warnings are acceptable).
 	/// </summary>
