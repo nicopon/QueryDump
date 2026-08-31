@@ -6,6 +6,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DTPIPE="${DTPIPE:-$ROOT_DIR/src/DtPipe/bin/Debug/net10.0/DtPipe}"
 if [ ! -f "$DTPIPE" ]; then
@@ -90,7 +95,7 @@ echo "  -> duck+mysql: rejected for read as expected"
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 4: DuckDB S3 / MinIO (httpfs) ---"
 if nc -z 127.0.0.1 9000 2>/dev/null || nc -w 2 127.0.0.1 9000 2>/dev/null; then
-    S3_OPTS=(--s3-endpoint "http://127.0.0.1:9000" --s3-access-key minioadmin --s3-secret-key minioadmin)
+    S3_OPTS=(--s3-endpoint "$MINIO_ENDPOINT" --s3-access-key "$MINIO_ACCESS_KEY" --s3-secret-key "$MINIO_SECRET_KEY")
     S3_TARGET="s3://dtpipe-test-bucket/users.parquet"
 
     # Primary route: the s3:// provider streams through DuckDB's httpfs in-process.

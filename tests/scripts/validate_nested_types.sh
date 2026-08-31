@@ -8,13 +8,17 @@ set -e
 # whitespace, a type name, or an empty field is a failure, not a limitation.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 DTPIPE="$ROOT_DIR/dist/release/dtpipe"
 export DTPIPE_NO_TUI=1
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
-PG="pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password"
 FAILED=0
 
 mkdir -p "$ARTIFACTS_DIR"

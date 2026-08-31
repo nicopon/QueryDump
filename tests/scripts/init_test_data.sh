@@ -6,6 +6,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 INFRA_START="$PROJECT_ROOT/tests/infra/start_infra.sh"

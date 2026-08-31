@@ -8,6 +8,11 @@ set -e
 # Requires: Docker with dtpipe-integ-postgres, dtpipe-integ-mssql-tools, dtpipe-integ-oracle.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 INFRA_DIR="$PROJECT_ROOT/tests/infra"
@@ -49,9 +54,8 @@ fi
 echo "Starting shared infrastructure..."
 "$INFRA_DIR/start_infra.sh"
 
-PG_CONN="pg:Host=localhost;Port=5440;Username=postgres;Password=password;Database=integration"
 MSSQL_CONN="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;TrustServerCertificate=True"
-ORA_CONN="ora:Data Source=localhost:1522/FREEPDB1;User Id=testuser;Password=password"
+ORA_CONN="$ORA"
 
 cleanup() {
     rm -f "$ARTIFACTS_DIR"/drv_*.csv "$ARTIFACTS_DIR"/drv_*.parquet "$ARTIFACTS_DIR"/*.checksum
@@ -68,7 +72,7 @@ CREATE TABLE drv_users (id SERIAL PRIMARY KEY, name VARCHAR(50), email VARCHAR(5
 INSERT INTO drv_users (name, email) VALUES ('Alice', 'alice@example.com'), ('Bob', 'bob@example.com');
 EOF
 
-"$DTPIPE" -i "$PG_CONN" \
+"$DTPIPE" -i "$PG" \
   --query "SELECT id, name, email FROM drv_users ORDER BY id" \
   -o "$ARTIFACTS_DIR/drv_pg.csv" --no-stats
 
@@ -97,9 +101,9 @@ Id,Name,Value
 3,Charlie,300
 EOF
 
-"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v1.csv" -o "$PG_CONN" --table "drv_upsert" --strategy Recreate --key "Id" --no-stats
-"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v2.csv" -o "$PG_CONN" --table "drv_upsert" --strategy Upsert   --key "Id" --no-stats
-"$DTPIPE" -i "$PG_CONN" --query "SELECT id, name, value FROM drv_upsert ORDER BY id" -o "$ARTIFACTS_DIR/drv_upsert_out.csv" --no-stats
+"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v1.csv" -o "$PG" --table "drv_upsert" --strategy Recreate --key "Id" --no-stats
+"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v2.csv" -o "$PG" --table "drv_upsert" --strategy Upsert   --key "Id" --no-stats
+"$DTPIPE" -i "$PG" --query "SELECT id, name, value FROM drv_upsert ORDER BY id" -o "$ARTIFACTS_DIR/drv_upsert_out.csv" --no-stats
 
 cat > "$ARTIFACTS_DIR/expected_upsert.csv" <<'EOF'
 id,name,value
@@ -112,9 +116,9 @@ clean_csv "$ARTIFACTS_DIR/drv_upsert_out.csv"
 diff -u "$ARTIFACTS_DIR/expected_upsert.csv" "$ARTIFACTS_DIR/drv_upsert_out.csv" \
   && pass "Postgres Upsert: correct rows" || fail "Postgres Upsert: unexpected output"
 
-"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v1.csv" -o "$PG_CONN" --table "drv_ignore" --strategy Recreate --key "Id" --no-stats
-"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v2.csv" -o "$PG_CONN" --table "drv_ignore" --strategy Ignore   --key "Id" --no-stats
-"$DTPIPE" -i "$PG_CONN" --query "SELECT id, name, value FROM drv_ignore ORDER BY id" -o "$ARTIFACTS_DIR/drv_ignore_out.csv" --no-stats
+"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v1.csv" -o "$PG" --table "drv_ignore" --strategy Recreate --key "Id" --no-stats
+"$DTPIPE" -i "$ARTIFACTS_DIR/drv_v2.csv" -o "$PG" --table "drv_ignore" --strategy Ignore   --key "Id" --no-stats
+"$DTPIPE" -i "$PG" --query "SELECT id, name, value FROM drv_ignore ORDER BY id" -o "$ARTIFACTS_DIR/drv_ignore_out.csv" --no-stats
 
 cat > "$ARTIFACTS_DIR/expected_ignore.csv" <<'EOF'
 id,name,value
@@ -206,8 +210,8 @@ EOF
   --fake-seed 42 \
   -o "$ARTIFACTS_DIR/drv_ref.csv" --no-stats
 
-"$DTPIPE" -i "$ARTIFACTS_DIR/drv_ref.csv" --column-types "seq_id:int,val_id:int,val_price:double,val_date:string" -o "$PG_CONN" --table "chain_table" --strategy Recreate --no-stats
-"$DTPIPE" -i "$PG_CONN" --query "SELECT seq_id, val_id, val_price, val_date FROM chain_table ORDER BY seq_id" \
+"$DTPIPE" -i "$ARTIFACTS_DIR/drv_ref.csv" --column-types "seq_id:int,val_id:int,val_price:double,val_date:string" -o "$PG" --table "chain_table" --strategy Recreate --no-stats
+"$DTPIPE" -i "$PG" --query "SELECT seq_id, val_id, val_price, val_date FROM chain_table ORDER BY seq_id" \
   -o "$MSSQL_CONN" --table "ChainData" --strategy Recreate --no-stats
 "$DTPIPE" -i "$MSSQL_CONN" --query "SELECT seq_id, val_id, val_price, val_date FROM ChainData ORDER BY seq_id" \
   -o "$ORA_CONN" --table "CHAIN_DATA" --strategy Recreate --no-stats

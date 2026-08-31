@@ -19,6 +19,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DTPIPE="${DTPIPE:-$ROOT_DIR/src/DtPipe/bin/Debug/net10.0/DtPipe}"
 if [ ! -f "$DTPIPE" ]; then
@@ -36,8 +41,7 @@ NC='\033[0m'
 pass() { echo -e "  ${GREEN}OK: $1${NC}"; }
 fail() { echo -e "  ${RED}FAIL: $1${NC}"; exit 1; }
 
-PG_CONN="pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password"
-MY_CONN="mysql:Server=127.0.0.1;Port=3306;Database=integration;User ID=testuser;Password=password"
+MY_CONN="$MYSQL"
 PG_EXEC=(docker exec dtpipe-integ-postgres psql -U postgres -d integration)
 
 # Two zones on opposite sides of UTC, so a drift in either direction shows up. Tokyo is chosen
@@ -84,7 +88,7 @@ $(diff "$TMP_DIR/${prefix}_a.csv" "$TMP_DIR/${prefix}_b.csv" | head -8)"
 # 1. PostgreSQL binary COPY reader.
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 1: pg: reader (binary COPY path) ---"
-run_both_zones "pg" "pg" -i "$PG_CONN" \
+run_both_zones "pg" "pg" -i "$PG" \
     --query "SELECT id, d, ts, tstz FROM temporal_zone_probe ORDER BY id"
 
 grep -q "$EXPECTED_TS_1" "$TMP_DIR/pg_a.csv" || fail "[pg] expected wall clock '$EXPECTED_TS_1' absent:
@@ -99,7 +103,7 @@ pass "identical under both zones, wall clocks preserved (timestamp, timestamptz,
 #    pure columnar path, through a separate append implementation.
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 2: row-mode bridge (--compute forces row mode) ---"
-run_both_zones "rowmode" "rowmode" -i "$PG_CONN" \
+run_both_zones "rowmode" "rowmode" -i "$PG" \
     --query "SELECT id, d, ts, tstz FROM temporal_zone_probe ORDER BY id" \
     --compute "Tag:'x'"
 
@@ -113,9 +117,9 @@ pass "identical under both zones through the row-mode bridge"
 echo -e "\n--- Test 3: pg: -> pg: round trip ---"
 for tz in "$TZ_A" "$TZ_B"; do
     "${PG_EXEC[@]}" -q -c "DROP TABLE IF EXISTS temporal_zone_back;" >/dev/null 2>&1
-    TZ="$tz" "$DTPIPE" -i "$PG_CONN" \
+    TZ="$tz" "$DTPIPE" -i "$PG" \
         --query "SELECT id, d, ts, tstz FROM temporal_zone_probe ORDER BY id" \
-        -o "$PG_CONN" --table temporal_zone_back --strategy Recreate --key id --no-stats >/dev/null 2>&1 \
+        -o "$PG" --table temporal_zone_back --strategy Recreate --key id --no-stats >/dev/null 2>&1 \
         || fail "[roundtrip] write under TZ=$tz failed"
 
     drift=$("${PG_EXEC[@]}" -t -A -c "

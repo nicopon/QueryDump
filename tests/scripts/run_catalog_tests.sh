@@ -2,6 +2,11 @@
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 DTPIPE="$SCRIPT_DIR/../../dist/release/dtpipe"
 LOG_FILE="$ARTIFACTS_DIR/run_catalog_tests.log"
@@ -92,11 +97,6 @@ run_test() {
         fi
     fi
 }
-
-# Connection string shortcuts (DRY)
-PG="pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password"
-MSSQL="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;Encrypt=False"
-ORA="ora:Data Source=localhost:1522/FREEPDB1;User Id=testuser;Password=password"
 
 # 0. Setup
 mkdir -p artifacts/split

@@ -13,6 +13,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DTPIPE="${DTPIPE:-$ROOT_DIR/src/DtPipe/bin/Debug/net10.0/DtPipe}"
 if [ ! -f "$DTPIPE" ]; then
@@ -30,8 +35,7 @@ NC='\033[0m'
 pass() { echo -e "  ${GREEN}OK: $1${NC}"; }
 fail() { echo -e "  ${RED}FAIL: $1${NC}"; exit 1; }
 
-PG_CONN="pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password"
-MY_CONN="mysql:Server=127.0.0.1;Port=3306;Database=integration;User ID=testuser;Password=password"
+MY_CONN="$MYSQL"
 MY_EXEC=(docker exec dtpipe-integ-mysql mysql -u testuser -ppassword integration)
 PG_EXEC=(docker exec dtpipe-integ-postgres psql -U postgres -d integration)
 ROWS=50
@@ -71,7 +75,7 @@ pg_scalar() { "${PG_EXEC[@]}" -t -A -c "$1" 2>/dev/null | tr -d ' \r'; }
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 1: pg: -> mysql: (Recreate, DDL generation) ---"
 "${MY_EXEC[@]}" -e "DROP TABLE IF EXISTS mysql_e2e_tgt;" >/dev/null 2>&1
-"$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+"$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
     -o "$MY_CONN" --table mysql_e2e_tgt --strategy Recreate --key id --no-stats >/dev/null 2>&1 \
     || fail "pg -> mysql Recreate failed"
 
@@ -95,7 +99,7 @@ pass "$ROWS rows written, PRIMARY KEY(id) and uid CHAR(36) generated"
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 2: pg: -> mysql: --strategy Upsert --key id ---"
 for pass_no in 1 2; do
-    "$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+    "$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
         -o "$MY_CONN" --table mysql_e2e_tgt --strategy Upsert --key id --no-stats >/dev/null 2>&1 \
         || fail "upsert pass $pass_no failed"
 done
@@ -109,7 +113,7 @@ pass "$ROWS rows after double upsert with explicit --key (no duplicates)"
 #    regresses, ON DUPLICATE KEY UPDATE has no keys and duplicates appear here first.
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 3: pg: -> mysql: --strategy Upsert (--key omitted) ---"
-"$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+"$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
     -o "$MY_CONN" --table mysql_e2e_tgt --strategy Upsert --no-stats >/dev/null 2>&1 \
     || fail "upsert without --key failed"
 CNT=$(mysql_scalar "SELECT COUNT(*) FROM mysql_e2e_tgt")
@@ -122,7 +126,7 @@ pass "$ROWS rows after upsert with auto-detected key (no duplicates)"
 # ------------------------------------------------------------------------------
 echo -e "\n--- Test 4: upsert updates conflicting rows, leaves the rest ---"
 "${PG_EXEC[@]}" -q -c "UPDATE mysql_e2e_src SET name = 'UPDATED_'||id WHERE id <= 5;" >/dev/null 2>&1
-"$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+"$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
     -o "$MY_CONN" --table mysql_e2e_tgt --strategy Upsert --no-stats >/dev/null 2>&1 \
     || fail "upsert after source change failed"
 
@@ -148,7 +152,7 @@ fi
 
 for mode in Bulk Standard; do
     "${MY_EXEC[@]}" -e "DROP TABLE IF EXISTS mysql_e2e_mode;" >/dev/null 2>&1
-    "$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+    "$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
         -o "$MY_CONN" --table mysql_e2e_mode --strategy Recreate --key id \
         --insert-mode "$mode" --no-stats >/dev/null 2>&1 \
         || fail "--insert-mode $mode failed"
@@ -171,7 +175,7 @@ echo -e "\n--- Test 6: upsert without a unique index falls back, no duplicates -
                     CREATE TABLE mysql_e2e_nokey (id INT, name LONGTEXT, amount DECIMAL(38,9),
                                                   created DATETIME(6), uid CHAR(36));" >/dev/null 2>&1
 for pass_no in 1 2; do
-    "$DTPIPE" -i "$PG_CONN" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
+    "$DTPIPE" -i "$PG" --query "SELECT * FROM mysql_e2e_src ORDER BY id" \
         -o "$MY_CONN" --table mysql_e2e_nokey --strategy Upsert --key id --no-stats >/dev/null 2>&1 \
         || fail "keyless-table upsert pass $pass_no failed"
 done
@@ -186,7 +190,7 @@ pass "$ROWS rows on an index-less target (DELETE+INSERT fallback fired)"
 echo -e "\n--- Test 7: mysql: -> pg: (reader) ---"
 "${PG_EXEC[@]}" -q -c "DROP TABLE IF EXISTS mysql_e2e_back;" >/dev/null 2>&1
 "$DTPIPE" -i "$MY_CONN" --query "SELECT * FROM mysql_e2e_tgt ORDER BY id" \
-    -o "$PG_CONN" --table mysql_e2e_back --strategy Recreate --key id --no-stats >/dev/null 2>&1 \
+    -o "$PG" --table mysql_e2e_back --strategy Recreate --key id --no-stats >/dev/null 2>&1 \
     || fail "mysql -> pg failed"
 
 CNT=$(pg_scalar "SELECT COUNT(*) FROM mysql_e2e_back")

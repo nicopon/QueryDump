@@ -7,6 +7,11 @@ set -e
 # resolved, no duplicates).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts/upsert_dialect"
 mkdir -p "$ARTIFACTS_DIR"
@@ -89,12 +94,12 @@ if nc -z localhost 5440 2>/dev/null; then
     # PG upsert requires a matching unique constraint — seed it via psql in the container.
     docker exec dtpipe-integ-postgres psql -U postgres -d integration -c \
         "DROP TABLE IF EXISTS up_tbl; CREATE TABLE up_tbl (Id INTEGER PRIMARY KEY, Val TEXT);" > /dev/null 2>&1
-    "$DTPIPE" -i "csv:$A/up.csv" -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+    "$DTPIPE" -i "csv:$A/up.csv" -o "$PG" \
         --table up_tbl --strategy Upsert --key Id --no-stats > /dev/null 2>&1 || fail "[postgres] upsert pass 1 failed"
-    "$DTPIPE" -i "csv:$A/up.csv" -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+    "$DTPIPE" -i "csv:$A/up.csv" -o "$PG" \
         --table up_tbl --strategy Upsert --key Id --no-stats > /dev/null 2>&1 || fail "[postgres] upsert pass 2 failed"
     out="$A/postgres_count.csv"
-    "$DTPIPE" -i "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+    "$DTPIPE" -i "$PG" \
         --query "SELECT COUNT(*) AS cnt FROM up_tbl" -o "$out" --no-stats > /dev/null 2>&1 || fail "[postgres] verification read failed"
     cnt=$(tail -n +2 "$out" | head -1 | tr -d ' \r')
     [ "$cnt" = "$ROWS" ] || fail "[postgres] expected $ROWS rows after double upsert, got $cnt"
@@ -106,7 +111,7 @@ fi
 # MySQL fires ON DUPLICATE KEY UPDATE off the table's own unique indexes — there is no named
 # conflict target — so the PRIMARY KEY must exist before the upsert, same contract as PG.
 if nc -z 127.0.0.1 3306 2>/dev/null; then
-    MY_CS="mysql:Server=127.0.0.1;Port=3306;Database=integration;User ID=testuser;Password=password"
+    MY_CS="$MYSQL"
     docker exec dtpipe-integ-mysql mysql -u testuser -ppassword integration -e \
         "DROP TABLE IF EXISTS up_tbl; CREATE TABLE up_tbl (Id INT PRIMARY KEY, Val LONGTEXT);" > /dev/null 2>&1
     "$DTPIPE" -i "csv:$A/up.csv" -o "$MY_CS" --table up_tbl --strategy Upsert --key Id --no-stats > /dev/null 2>&1 \

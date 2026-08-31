@@ -6,6 +6,11 @@ set -e
 # SQLite tests run without Docker. Postgres tests require Docker.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 mkdir -p "$ARTIFACTS_DIR"
@@ -114,7 +119,7 @@ EOF
       --fake "name:name.fullName" \
       --fake "email:internet.email" \
       --drop "GenerateIndex" \
-      -o "pg:Host=localhost;Port=5440;Username=postgres;Password=password;Database=integration" \
+      -o "$PG" \
       --table "target_strict" \
       --strict-schema 2>/dev/null
     EXIT=$?
@@ -140,7 +145,7 @@ EOF
       --fake "name:name.fullName" \
       --fake "email:internet.email" \
       --drop "GenerateIndex" \
-      -o "pg:Host=localhost;Port=5440;Username=postgres;Password=password;Database=integration" \
+      -o "$PG" \
       --table "target_migrate" \
       --auto-migrate
 

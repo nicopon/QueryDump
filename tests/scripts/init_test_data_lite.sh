@@ -6,6 +6,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 INFRA_START="$PROJECT_ROOT/tests/infra/start_infra.sh"
@@ -110,7 +115,7 @@ $DTPIPE -i "generate:1000" \
   --fake "last_login:date.past" \
   --drop "GenerateIndex" \
   --pre-exec "DROP TABLE IF EXISTS users_test CASCADE" \
-  -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+  -o "$PG" \
   --table "users_test" --strategy Recreate || exit 1
 
 # 6. SQL Server (always runs: --pre-exec drops any stale table so Recreate always uses source schema)
@@ -121,7 +126,7 @@ $DTPIPE -i "generate:1000" \
   --fake "credit_card:finance.creditCardNumber" \
   --drop "GenerateIndex" \
   --pre-exec "IF OBJECT_ID('users_test', 'U') IS NOT NULL DROP TABLE users_test" \
-  -o "mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;Encrypt=False" \
+  -o "$MSSQL" \
   --table "users_test" --strategy Recreate || exit 1
 
 # 7. Oracle (always runs)
@@ -131,7 +136,7 @@ $DTPIPE -i "generate:1000" \
   --fake "FULL_NAME:name.fullName" \
   --fake "JOB_TITLE:name.jobTitle" \
   --drop "GenerateIndex" \
-  -o "ora:Data Source=localhost:1522/FREEPDB1;User Id=testuser;Password=password" \
+  -o "$ORA" \
   --table "USERS_TEST_DATA" \
   --strategy Recreate \
   --pre-exec "BEGIN EXECUTE IMMEDIATE 'DROP TABLE USERS_TEST_DATA'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;" || exit 1
@@ -148,7 +153,7 @@ $DTPIPE -i "generate:1" \
   --fake "price:random.number" \
   --drop "GenerateIndex" \
   --pre-exec "DROP TABLE IF EXISTS wrong_schema CASCADE" \
-  -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+  -o "$PG" \
   --table "wrong_schema" --strategy Recreate || exit 1
 
 # Restricted directory for T77 (chmod 000 = no read/write/execute)

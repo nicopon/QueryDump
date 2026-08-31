@@ -5,6 +5,11 @@ set -e
 # Requires: Docker with dtpipe-integ-postgres, dtpipe-integ-mssql-tools, dtpipe-integ-oracle.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Test infrastructure endpoints. Sourcing this is what declares that this script
+# needs tests/infra running (see lib/test_connections.sh).
+# shellcheck source=lib/test_connections.sh
+source "$SCRIPT_DIR/lib/test_connections.sh"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INFRA_DIR="$PROJECT_ROOT/tests/infra"
 INPUT_DIR="$SCRIPT_DIR/artifacts"
@@ -63,9 +68,8 @@ cleanup
 echo "[1/9] Starting Infrastructure (Postgres, MSSQL, Oracle)..."
 "$INFRA_DIR/start_infra.sh"
 
-PG_CONN="pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password"
-MSSQL_CONN="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;TrustServerCertificate=True"
-ORA_CONN="ora:Data Source=localhost:1522/FREEPDB1;User Id=system;Password=password;Pooling=false"
+MSSQL_CONN="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;TrustServerCertificate=True;Connect Timeout=${TEST_CONNECT_TIMEOUT}"
+ORA_CONN="ora:Data Source=localhost:1522/FREEPDB1;User Id=system;Password=password;Pooling=false;Connection Timeout=${TEST_CONNECT_TIMEOUT}"
 
 # ----------------------------------------
 # 2. Generate VICIOUS source (CSV edge cases)
@@ -113,9 +117,9 @@ COUNT=$(tail -n 1 "$INPUT_DIR/result_vol_sqlite.csv" | tr -d '\r' | sed 's/\.0*$
 
 # Postgres (1M)
 echo "      Postgres 1M..."
-"$DTPIPE" -i "parquet:$INPUT_DIR/high_volume.parquet" -o "$PG_CONN" \
+"$DTPIPE" -i "parquet:$INPUT_DIR/high_volume.parquet" -o "$PG" \
   --table "voldata" --strategy Recreate --no-stats > /dev/null
-"$DTPIPE" -i "$PG_CONN" --query "SELECT COUNT(*) FROM voldata" \
+"$DTPIPE" -i "$PG" --query "SELECT COUNT(*) FROM voldata" \
   -o csv --no-stats > "$INPUT_DIR/result_vol_pg.csv"
 COUNT=$(tail -n 1 "$INPUT_DIR/result_vol_pg.csv" | tr -d '\r' | sed 's/\.0*$//')
 [ "$COUNT" = "1000000" ] && echo "✅ Postgres 1M Load Verified." \
@@ -123,7 +127,7 @@ COUNT=$(tail -n 1 "$INPUT_DIR/result_vol_pg.csv" | tr -d '\r' | sed 's/\.0*$//')
 
 # MSSQL (1M)
 echo "      MSSQL 1M..."
-MSSQL_CONN_EXT="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;TrustServerCertificate=True;Encrypt=False;MultipleActiveResultSets=True"
+MSSQL_CONN_EXT="mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;TrustServerCertificate=True;Encrypt=False;MultipleActiveResultSets=True;Connect Timeout=${TEST_CONNECT_TIMEOUT}"
 "$DTPIPE" -i "parquet:$INPUT_DIR/high_volume.parquet" -o "$MSSQL_CONN_EXT" \
   --table "VolData" --strategy Recreate --no-stats > /dev/null
 "$DTPIPE" -i "$MSSQL_CONN" --query "SELECT COUNT(*) FROM VolData" \
@@ -205,7 +209,7 @@ fi
 # ----------------------------------------
 echo "[6/9] Pipeline 3: SQLite → Postgres (Upsert)..."
 "$DTPIPE" -i "sqlite:$INPUT_DIR/vicious.db" --query "SELECT * FROM users" \
-  -o "$PG_CONN" --table "vicious_users" --strategy Recreate --key "Id" --no-stats > /dev/null
+  -o "$PG" --table "vicious_users" --strategy Recreate --key "Id" --no-stats > /dev/null
 
 cat > "$INPUT_DIR/vicious_inc.csv" <<'EOF'
 Id,Name,Email,Details,Amount,IsActive,JoinDate
@@ -213,10 +217,10 @@ Id,Name,Email,Details,Amount,IsActive,JoinDate
 8,New User,new@example.com,New,0,true,2024-01-01
 EOF
 
-"$DTPIPE" -i "$INPUT_DIR/vicious_inc.csv" -o "$PG_CONN" \
+"$DTPIPE" -i "$INPUT_DIR/vicious_inc.csv" -o "$PG" \
   --table "vicious_users" --strategy Upsert --key "Id" --no-stats > /dev/null
 # Export and verify the entire table
-"$DTPIPE" -i "$PG_CONN" --query "SELECT id, name, email, details, amount, isactive FROM vicious_users ORDER BY id" \
+"$DTPIPE" -i "$PG" --query "SELECT id, name, email, details, amount, isactive FROM vicious_users ORDER BY id" \
   -o "$INPUT_DIR/pg_users.csv" --no-stats > /dev/null
 tr -d '\r' < "$INPUT_DIR/pg_users.csv" | tr '[:upper:]' '[:lower:]' > "$INPUT_DIR/pg_users.clean"
 
@@ -236,7 +240,7 @@ rm -f "$INPUT_DIR"/pg_users.csv "$INPUT_DIR"/pg_users.clean "$INPUT_DIR"/result_
 echo "[7/9] Testing Query from File..."
 echo "SELECT * FROM vicious_users WHERE CAST(NULLIF(amount, '') AS NUMERIC) > 100 ORDER BY id" \
   > "$INPUT_DIR/query.sql"
-"$DTPIPE" -i "$PG_CONN" --query "@$INPUT_DIR/query.sql" \
+"$DTPIPE" -i "$PG" --query "@$INPUT_DIR/query.sql" \
   -o "$INPUT_DIR/result_final.csv" --no-stats > /dev/null
 LINE_COUNT=$(wc -l < "$INPUT_DIR/result_final.csv" | tr -d ' ')
 [ "$LINE_COUNT" = "5" ] || { echo "❌ FAILED: Query File Mismatch (Expected 5, Got $LINE_COUNT)"; exit 1; }
@@ -353,12 +357,12 @@ verify_composite "$INPUT_DIR/comp_sqlite.csv" "SQLite"
 
 echo "      Postgres..."
 "$DTPIPE" -i "$INPUT_DIR/composite_source.csv" --column-types "Target:int32" \
-  -o "$PG_CONN" \
+  -o "$PG" \
   --table "comp_users" --strategy Recreate --key "Region,Branch" --no-stats > /dev/null
 "$DTPIPE" -i "$INPUT_DIR/composite_inc.csv" --column-types "Target:int32" \
-  -o "$PG_CONN" \
+  -o "$PG" \
   --table "comp_users" --strategy Upsert   --key "Region,Branch" --no-stats > /dev/null
-"$DTPIPE" -i "$PG_CONN" \
+"$DTPIPE" -i "$PG" \
   --query "SELECT region, branch, CAST(target AS INT) AS target FROM comp_users ORDER BY region, branch" \
   -o "$INPUT_DIR/comp_pg.csv" --no-stats > /dev/null
 verify_composite "$INPUT_DIR/comp_pg.csv" "Postgres"
@@ -402,7 +406,7 @@ EOF
 # 11.1 Full Load initial (cursor interpolation with default value)
 "$DTPIPE" -i "csv:$INPUT_DIR/inc_source_initial.csv" \
   --column-types "Id:int32,EventDate:datetime,Status:string" \
-  -o "$PG_CONN" --table "smoke_events" --strategy Recreate --key "Id" \
+  -o "$PG" --table "smoke_events" --strategy Recreate --key "Id" \
   --cursor "EventDate" --state "$INPUT_DIR/smoke_cursor.sync" --no-stats > /dev/null
 
 # Verify that the cursor was created and contains 2026-06-02T10:00:00
@@ -423,11 +427,11 @@ EOF
 # Using DuckDB direct mode to filter CSV via the state file
 "$DTPIPE" -i "duck:" \
   --query "SELECT CAST(Id AS INT) AS Id, EventDate, Status FROM read_csv_auto('$INPUT_DIR/inc_source_delta.csv', types={'EventDate': 'TIMESTAMP'}) WHERE EventDate > '\${{cursor://$INPUT_DIR/smoke_cursor.sync}}'" \
-  -o "$PG_CONN" --table "smoke_events" --strategy Upsert --key "Id" \
+  -o "$PG" --table "smoke_events" --strategy Upsert --key "Id" \
   --cursor "EventDate" --state "$INPUT_DIR/smoke_cursor.sync" --no-stats > /dev/null
 
 # 11.3 Export and verify target
-"$DTPIPE" -i "$PG_CONN" --query "SELECT Id, Status FROM smoke_events ORDER BY Id" \
+"$DTPIPE" -i "$PG" --query "SELECT Id, Status FROM smoke_events ORDER BY Id" \
   -o "$INPUT_DIR/smoke_events_final.csv" --no-stats > /dev/null
 
 tr -d '\r' < "$INPUT_DIR/smoke_events_final.csv" > "$INPUT_DIR/smoke_events_final.clean"
