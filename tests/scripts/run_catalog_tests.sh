@@ -22,6 +22,10 @@ echo "--- Initializing test data ---"
 "$SCRIPT_DIR/init_test_data.sh" || { echo "init_test_data.sh failed — aborting catalog."; exit 1; }
 echo ""
 
+# Tests that failed. run_test's return value is ignored by all 135 call sites, so without
+# this the script ends on an echo and reports success while printing FAILED in red.
+FAILED_TESTS=()
+
 # Helper to run a test.
 # Tests listed in the EXPECTED_ERROR regex should return a non-zero exit code.
 # Any test NOT in the regex is expected to succeed (exit 0).
@@ -42,6 +46,7 @@ run_test() {
     if [[ "$id" =~ ^T(76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|129|130|131|132|133|134|135|140|141|142|143|144|145|146)$ ]]; then
         if [ $status -eq 0 ]; then
             echo -e "\e[31mFAILED (Expected error but got success)\e[0m"
+            FAILED_TESTS+=("$id")
             return 1
         else
             echo -e "\e[32mPASSED (Expected error encountered)\e[0m"
@@ -68,10 +73,12 @@ run_test() {
                             echo -e "     \e[32mYAML OK\e[0m"
                         else
                             echo -e "     \e[31mYAML EXECUTION FAILED\e[0m"
+                            FAILED_TESTS+=("$id (YAML execution)")
                             return 1
                         fi
                     else
                         echo -e "     \e[31mYAML EXPORT FAILED\e[0m"
+                        FAILED_TESTS+=("$id (YAML export)")
                         return 1
                     fi
                 fi
@@ -80,6 +87,7 @@ run_test() {
             return 0
         else
             echo -e "\e[31mFAILED (Exit code $status)\e[0m"
+            FAILED_TESTS+=("$id")
             return 1
         fi
     fi
@@ -468,4 +476,9 @@ echo ""
 echo "===================================================="
 echo "   Tests Completed at $(date)"
 echo "   Check $LOG_FILE for details."
+if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
+    echo "   FAILED: ${#FAILED_TESTS[@]} test(s) — ${FAILED_TESTS[*]}"
+    echo "===================================================="
+    exit 1
+fi
 echo "===================================================="

@@ -28,6 +28,10 @@ for arg in "$@"; do
     esac
 done
 
+# Scenarios that failed. A benchmark whose pipeline no longer runs measures nothing, so the
+# script must exit non-zero — without this the whole suite reports PASS on a dead scenario.
+FAILED_SCENARIOS=()
+
 timeit() {
     local label="$1"
     shift
@@ -42,6 +46,7 @@ timeit() {
         echo "  [$label] Done in ${duration}ms"
     else
         echo "  [$label] FAILED (exit code $ec) in ${duration}ms" >&2
+        FAILED_SCENARIOS+=("$label")
     fi
     return $ec
 }
@@ -106,8 +111,6 @@ timeit "duckdb→parquet" "$DTPIPE" \
   --query "SELECT * FROM bench_data" \
   -o "$ARTIFACTS_DIR/bench_from_duckdb.parquet" --no-stats
 
-ROWS=$(python3 -c "import struct,sys; f=open('$ARTIFACTS_DIR/bench_from_duckdb.parquet','rb'); f.seek(-8,2); print(struct.unpack('<q',f.read(4))[0])" 2>/dev/null || echo "?")
-echo "  Parquet rows: $ROWS"
 
 # ----------------------------------------
 # 5. SQL JOIN benchmarks (DuckDB)
@@ -131,7 +134,7 @@ if [ $RUN_SQL -eq 1 ]; then
       -i "parquet:$MAIN_PARQUET" --alias main \
       -i "csv:$REF_CSV"          --alias ref \
       -i "csv:$REF2_CSV"         --alias ref2 \
-      --from main --ref ref --ref ref2 \
+      --from main --ref ref,ref2 \
       --sql "$QUERY_JOIN" \
       -o null --no-stats
 fi
@@ -147,5 +150,11 @@ rm -f "$ARTIFACTS_DIR/bench_linear.csv" \
 
 echo ""
 echo "======================================"
+if [ ${#FAILED_SCENARIOS[@]} -gt 0 ]; then
+    echo "  Benchmark FAILED: ${#FAILED_SCENARIOS[@]} scenario(s)."
+    for s in "${FAILED_SCENARIOS[@]}"; do echo "    - $s"; done
+    echo "======================================"
+    exit 1
+fi
 echo "  Benchmark complete."
 echo "======================================"
