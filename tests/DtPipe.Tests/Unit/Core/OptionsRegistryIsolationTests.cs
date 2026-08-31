@@ -79,6 +79,7 @@ public class OptionsRegistryIsolationTests
         var bStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var aWritten = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        bool bFound = true;
         string? bRead = null;
 
         async Task BranchA()
@@ -97,12 +98,16 @@ public class OptionsRegistryIsolationTests
             await Task.Yield();
             registry.BeginScope();
             await aWritten.Task; // wait until A has written
-            bRead = registry.Get<CsvReaderOptions>().ColumnTypes; // should see "" (default), not "only-A"
+            // TryGet (not Get): asserting the miss is a stronger check than "sees the default",
+            // and it keeps the WarnMissing noise out of the build log.
+            bFound = registry.TryGet<CsvReaderOptions>(out var bOpts);
+            bRead = bOpts.ColumnTypes;
         }
 
         await Task.WhenAll(BranchA(), BranchB());
 
-        Assert.Equal("", bRead); // B's scope was forked before A wrote — A's write is invisible to B
+        Assert.False(bFound);    // B's scope was forked before A wrote — A's registration is invisible to B
+        Assert.Equal("", bRead); // and the fallback default carries no leaked value
     }
 
     // ─────────────────────────────────────────────────────────────────────────
