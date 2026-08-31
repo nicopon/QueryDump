@@ -28,6 +28,56 @@ jobs:
       - name: Run Tests (Unit only)
         run: dotnet test --no-restore --verbosity normal --filter "FullyQualifiedName!~Integration"
 
+  validators:
+    name: Validators (no infrastructure)
+    needs: test
+    runs-on: ubuntu-latest
+    # The shell validators enforce rules the unit suites cannot: the Core boundary, the DAG
+    # channel endpoints, exit code 130 on interrupt. They used to run only if someone
+    # remembered to, and eleven of them had silently stopped running at all.
+    #
+    # Which ones can run here is derived, never listed: a script that needs a database sources
+    # tests/scripts/lib/test_connections.sh, so sourcing it is the declaration of that need.
+    # A new validator is picked up by adding the file, and excluded by the same line that gives
+    # it a connection string. Databases stay local — free runners cannot host Oracle or SQL
+    # Server, and validate_xml.sh writes 2.7 GB.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.300'
+
+      - name: Build the binary under test
+        run: |
+          dotnet publish src/DtPipe/DtPipe.csproj -c Release \
+            -r linux-x64 --self-contained true \
+            -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
+            -o dist/release
+          mv dist/release/DtPipe dist/release/dtpipe
+          chmod +x dist/release/dtpipe
+
+      - name: Run validators
+        run: |
+          failed=()
+          for f in tests/scripts/validate_*.sh; do
+            name="$(basename "$f" .sh)"
+            # vitals runs the whole battery itself; xml writes 2.7 GB.
+            case "$name" in validate_vitals|validate_xml) continue ;; esac
+            grep -q 'lib/test_connections.sh' "$f" && continue
+
+            echo "::group::$name"
+            if bash "$f"; then echo "PASS $name"; else echo "FAIL $name"; failed+=("$name"); fi
+            echo "::endgroup::"
+          done
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "Failed: ${failed[*]}"
+            exit 1
+          fi
+
   micro-perf:
     name: Micro Performance Gate
     needs: test
