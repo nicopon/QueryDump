@@ -14,6 +14,7 @@ public sealed class AdoToArrowConfigBuilder
         new(new TimestampType(TimeUnit.Microsecond, "UTC"));
 
     private int _targetBatchSize = AdoToArrowConfig.DefaultTargetBatchSize;
+    private long _maxBatchBytes = 0;
     private bool _includeMetadata = false;
     private Func<DbColumn, Apache.Arrow.Serialization.Mapping.ArrowTypeResult>? _typeResolver;
 
@@ -36,6 +37,16 @@ public sealed class AdoToArrowConfigBuilder
         if (targetBatchSize <= 0)
             throw new ArgumentOutOfRangeException(nameof(targetBatchSize), "Target batch size must be greater than 0.");
         _targetBatchSize = targetBatchSize;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets a soft byte cap per RecordBatch. A batch is flushed as soon as either the target row
+    /// count or this many bytes accumulate. <c>0</c> (the default) disables the byte bound.
+    /// </summary>
+    public AdoToArrowConfigBuilder SetMaxBatchBytes(long maxBatchBytes)
+    {
+        _maxBatchBytes = maxBatchBytes < 0 ? 0 : maxBatchBytes;
         return this;
     }
 
@@ -108,6 +119,6 @@ public sealed class AdoToArrowConfigBuilder
                     return baseResolver(col);
                 };
 
-        return new AdoToArrowConfig(_targetBatchSize, _includeMetadata, composedResolver, overrides);
+        return new AdoToArrowConfig(_targetBatchSize, _maxBatchBytes, _includeMetadata, composedResolver, overrides);
     }
 }

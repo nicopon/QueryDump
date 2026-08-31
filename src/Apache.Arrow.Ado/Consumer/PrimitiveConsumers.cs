@@ -17,17 +17,24 @@ public abstract class BaseAdoConsumer<TBuilder, TArrowArray, TArrowType> : IAdoC
     protected readonly TArrowType ArrowTypeInstance;
     protected TBuilder Builder;
 
+    private readonly int _fixedBytesPerRow;
+    private long _estimatedByteSize;
+
     protected BaseAdoConsumer(int columnIndex, TArrowType arrowType, TBuilder builder)
     {
         ColumnIndex = columnIndex;
         ArrowTypeInstance = arrowType;
         Builder = builder;
+        _fixedBytesPerRow = ArrowByteSize.FixedWidth(arrowType);
     }
 
     public IArrowType ArrowType => ArrowTypeInstance;
 
+    public long EstimatedByteSize => _estimatedByteSize;
+
     public void Consume(DbDataReader reader)
     {
+        _estimatedByteSize += _fixedBytesPerRow;
         if (reader.IsDBNull(ColumnIndex))
         {
             Builder.AppendNull();
@@ -40,6 +47,9 @@ public abstract class BaseAdoConsumer<TBuilder, TArrowArray, TArrowType> : IAdoC
 
     protected abstract void ConsumeValue(DbDataReader reader);
 
+    /// <summary>Adds the payload size of a variable-width value to the running estimate.</summary>
+    protected void AddVariableByteSize(long bytes) => _estimatedByteSize += bytes;
+
     public IArrowArray BuildArray()
     {
         return Builder.Build(default);
@@ -48,6 +58,7 @@ public abstract class BaseAdoConsumer<TBuilder, TArrowArray, TArrowType> : IAdoC
     public void Reset()
     {
         Builder.Clear();
+        _estimatedByteSize = 0;
     }
 
     public virtual void Dispose()
@@ -125,7 +136,12 @@ public sealed class BooleanConsumer : BaseAdoConsumer<BooleanArray.Builder, Bool
 public sealed class StringConsumer : BaseAdoConsumer<StringArray.Builder, StringArray, StringType>
 {
     public StringConsumer(int columnIndex) : base(columnIndex, StringType.Default, new StringArray.Builder()) { }
-    protected override void ConsumeValue(DbDataReader reader) => Builder.Append(reader.GetString(ColumnIndex));
+    protected override void ConsumeValue(DbDataReader reader)
+    {
+        var s = reader.GetString(ColumnIndex);
+        Builder.Append(s);
+        AddVariableByteSize(System.Text.Encoding.UTF8.GetByteCount(s));
+    }
 }
 
 public sealed class BinaryConsumer : BaseAdoConsumer<BinaryArray.Builder, BinaryArray, BinaryType>
@@ -135,7 +151,10 @@ public sealed class BinaryConsumer : BaseAdoConsumer<BinaryArray.Builder, Binary
     {
         var obj = reader.GetValue(ColumnIndex);
         if (obj is byte[] bytes)
+        {
             Builder.Append((ReadOnlySpan<byte>)bytes);
+            AddVariableByteSize(bytes.Length);
+        }
         else
             Builder.AppendNull();
     }

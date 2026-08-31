@@ -48,6 +48,18 @@ internal sealed class CompositeAdoConsumer : IDisposable
         }
     }
 
+    /// <summary>Approximate size, in bytes, of the rows buffered so far across all columns.</summary>
+    public long EstimatedByteSize
+    {
+        get
+        {
+            long total = 0;
+            for (int i = 0; i < _consumers.Length; i++)
+                total += _consumers[i].EstimatedByteSize;
+            return total;
+        }
+    }
+
     public RecordBatch BuildBatch(int rowCount)
     {
         var arrays = new IArrowArray[_consumers.Length];

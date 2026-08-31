@@ -103,6 +103,7 @@ public static class PipelineToJobConverter
         // (F11 single source), preserving the historical >0/non-empty guard semantics.
         int? limitOverride = GetInt(flags, "--limit");
         int? batchOverride = GetInt(flags, "--batch-size", "-b");
+        long? maxBatchBytesOverride = GetLong(flags, "--max-batch-bytes");
         string? logOverride = GetString(flags, "--log");
         string? metricsOverride = GetString(flags, "--metrics-path");
         string? prefixOverride = GetString(flags, "--prefix", "-p");
@@ -117,6 +118,7 @@ public static class PipelineToJobConverter
             if (parsed.Globals.DryRunCount > 0) job = job with { DryRunCount = parsed.Globals.DryRunCount };
             if (limitOverride is > 0)           job = job with { Limit = limitOverride.Value };
             if (batchOverride is > 0)           job = job with { BatchSize = batchOverride.Value };
+            if (maxBatchBytesOverride is > 0)   job = job with { MaxBatchBytes = maxBatchBytesOverride.Value };
             if (!string.IsNullOrEmpty(logOverride))     job = job with { LogPath = logOverride };
             if (!string.IsNullOrEmpty(metricsOverride)) job = job with { MetricsPath = metricsOverride };
             if (!string.IsNullOrEmpty(prefixOverride))  job = job with { Prefix = prefixOverride };
@@ -141,7 +143,7 @@ public static class PipelineToJobConverter
                 .FirstOrDefault(f => f.IsApplicable(kv.Value))
                 ?.ComponentName,
             Engine = new BranchEngineSettings(
-                Limit: kv.Value.Limit, BatchSize: kv.Value.BatchSize,
+                Limit: kv.Value.Limit, BatchSize: kv.Value.BatchSize, MaxBatchBytes: kv.Value.MaxBatchBytes,
                 SamplingRate: kv.Value.SamplingRate, SamplingSeed: kv.Value.SamplingSeed,
                 DryRunCount: kv.Value.DryRunCount, NoStats: kv.Value.NoStats,
                 MetricsPath: kv.Value.MetricsPath, LogPath: kv.Value.LogPath,
@@ -175,6 +177,9 @@ public static class PipelineToJobConverter
         int batchSize = GetInt(branchFlags, "--batch-size", "-b")
                      ?? GetInt(globals.AllFlags, "--batch-size", "-b")
                      ?? PipelineOptions.DefaultBatchSize;
+        long maxBatchBytes = GetLong(branchFlags, "--max-batch-bytes")
+                          ?? GetLong(globals.AllFlags, "--max-batch-bytes")
+                          ?? 0;
         int limit = GetInt(branchFlags, "--limit")
                  ?? GetInt(globals.AllFlags, "--limit")
                  ?? 0;
@@ -196,6 +201,7 @@ public static class PipelineToJobConverter
         return new BranchEngineSettings(
             Limit: limit,
             BatchSize: batchSize,
+            MaxBatchBytes: maxBatchBytes,
             SamplingRate: samplingRate,
             SamplingSeed: samplingSeed,
             DryRunCount: globals.DryRunCount,
@@ -366,5 +372,17 @@ public static class PipelineToJobConverter
     {
         var s = GetString(flags, keys);
         return s != null && double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
+    }
+
+    private static long? GetLong(IReadOnlyDictionary<string, List<string>> flags, params string[] keys)
+    {
+        var s = GetString(flags, keys);
+        return s != null && long.TryParse(s, out var v) ? v : null;
+    }
+
+    private static long? GetLong(IReadOnlyDictionary<string, object?> flags, params string[] keys)
+    {
+        var s = GetString(flags, keys);
+        return s != null && long.TryParse(s, out var v) ? v : null;
     }
 }

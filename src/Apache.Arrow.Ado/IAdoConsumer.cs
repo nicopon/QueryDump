@@ -33,4 +33,11 @@ public interface IAdoConsumer : IDisposable
     /// Resets the internal builder for a new batch.
     /// </summary>
     void Reset();
+
+    /// <summary>
+    /// Approximate size, in bytes, of the values appended since the last <see cref="Reset"/>.
+    /// Best-effort: variable-width columns count their payload, fixed-width columns their type
+    /// width. Used to bound a batch by memory as well as by row count.
+    /// </summary>
+    long EstimatedByteSize { get; }
 }

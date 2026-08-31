@@ -143,6 +143,57 @@ public class PipelineExecutorTests
     }
 
     [Fact]
+    public async Task BridgeRowsToColumnarAsync_FlushesOnByteCap_BeforeRowCount()
+    {
+        var columns = new List<PipeColumnInfo> { new("payload", typeof(string), true) };
+
+        // 10 rows, each ~1 KB. Row cap is 100 000; byte cap is 3 KB → expect a flush every 3 rows.
+        async IAsyncEnumerable<IReadOnlyList<object?>> Rows()
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                yield return new object?[] { new string('x', 1000) };
+                await Task.Yield();
+            }
+        }
+
+        var batches = new List<int>();
+        await foreach (var b in _executor.BridgeRowsToColumnarAsync(
+            Rows(), factory: null!, columns, batchSize: 100_000, maxBatchBytes: 3_000, default))
+        {
+            batches.Add(b.Length);
+            b.Dispose();
+        }
+
+        Assert.Equal(new[] { 3, 3, 3, 1 }, batches);
+    }
+
+    [Fact]
+    public async Task BridgeRowsToColumnarAsync_NoByteCap_FlushesOnRowCountOnly()
+    {
+        var columns = new List<PipeColumnInfo> { new("payload", typeof(string), true) };
+
+        async IAsyncEnumerable<IReadOnlyList<object?>> Rows()
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                yield return new object?[] { new string('x', 1000) };
+                await Task.Yield();
+            }
+        }
+
+        var batches = new List<int>();
+        await foreach (var b in _executor.BridgeRowsToColumnarAsync(
+            Rows(), factory: null!, columns, batchSize: 4, maxBatchBytes: 0, default))
+        {
+            batches.Add(b.Length);
+            b.Dispose();
+        }
+
+        Assert.Equal(new[] { 4, 4, 2 }, batches);
+    }
+
+    [Fact]
     public async Task DirectColumnarTransferAsync_RespectsLimitAndSlices()
     {
         var schema = new Schema.Builder().Field(f => f.Name("Value").DataType(Int32Type.Default)).Build();

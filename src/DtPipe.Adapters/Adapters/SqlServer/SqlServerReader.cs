@@ -76,6 +76,7 @@ public sealed class SqlServerReader : AdoColumnarReader, IRequiresOptions<SqlSer
             .SetTypeResolver(col => ArrowTypeMapper.GetLogicalType(
                 Nullable.GetUnderlyingType(col.DataType ?? typeof(string)) ?? col.DataType ?? typeof(string)))
             .SetTargetBatchSize(BatchSize)
+            .SetMaxBatchBytes(MaxBatchBytes)
             .Build();
 
         _consumerFactory = (arrowType, colIdx) =>

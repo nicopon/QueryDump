@@ -26,6 +26,7 @@ public abstract partial class AdoColumnarReader : IColumnarStreamReader, IBatchS
     protected AdoToArrowConfig? Config;
 
     public int BatchSize { get; set; } = PipelineOptions.DefaultBatchSize;
+    public long MaxBatchBytes { get; set; }
 
     public IReadOnlyList<PipeColumnInfo>? Columns { get; protected set; }
     public Schema? Schema { get; protected set; }

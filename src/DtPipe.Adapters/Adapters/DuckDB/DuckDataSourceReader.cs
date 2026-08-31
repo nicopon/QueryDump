@@ -29,6 +29,11 @@ public sealed partial class DuckDataSourceReader : IColumnarStreamReader, IRequi
 	public Schema? Schema => Columns != null ? DtPipe.Core.Infrastructure.Arrow.ArrowSchemaFactory.Create(Columns) : null;
 	public int BatchSize { get; set; } = PipelineOptions.DefaultBatchSize;
 
+	// Accepted for interface parity but not enforced here: DuckDB streams its own fixed-size
+	// Arrow chunks, so a batch never holds more than BatchSize rows' worth of already-bounded
+	// vectors. The byte cap matters on the wire-decode readers (ADO, Postgres COPY).
+	public long MaxBatchBytes { get; set; }
+
 	// DDL/DML keywords to reject
 	// Block destructive commands.
 	private static readonly string[] DdlKeywords =

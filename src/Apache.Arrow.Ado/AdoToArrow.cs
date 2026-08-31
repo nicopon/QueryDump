@@ -31,6 +31,7 @@ public static class AdoToArrow
         config ??= new AdoToArrowConfigBuilder().Build();
 
         var schema = AdoToArrowUtils.CreateSchema(reader, config);
+        long maxBatchBytes = config.MaxBatchBytes;
         int rowsInBuffer = 0;
         CompositeAdoConsumer? compositeConsumer = null;
 
@@ -42,7 +43,8 @@ public static class AdoToArrow
             compositeConsumer.ConsumeRow(reader);
             rowsInBuffer++;
 
-            if (rowsInBuffer >= config.TargetBatchSize)
+            if (rowsInBuffer >= config.TargetBatchSize
+                || (maxBatchBytes > 0 && compositeConsumer.EstimatedByteSize >= maxBatchBytes))
             {
                 yield return compositeConsumer.BuildBatch(rowsInBuffer);
                 compositeConsumer = null; // Fresh consumer for next batch to avoid buffer reuse
@@ -69,7 +71,8 @@ public static class AdoToArrow
         config ??= new AdoToArrowConfigBuilder().Build();
 
         var schema = AdoToArrowUtils.CreateSchema(reader, config);
-        
+        long maxBatchBytes = config.MaxBatchBytes;
+
         int rowsInBuffer = 0;
         CompositeAdoConsumer? compositeConsumer = null;
 
@@ -81,7 +84,8 @@ public static class AdoToArrow
             compositeConsumer.ConsumeRow(reader);
             rowsInBuffer++;
 
-            if (rowsInBuffer >= config.TargetBatchSize)
+            if (rowsInBuffer >= config.TargetBatchSize
+                || (maxBatchBytes > 0 && compositeConsumer.EstimatedByteSize >= maxBatchBytes))
             {
                 yield return compositeConsumer.BuildBatch(rowsInBuffer);
                 compositeConsumer = null; // Fresh consumer

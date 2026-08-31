@@ -19,6 +19,9 @@ public sealed record PipelineOptions : IOptionSet
 	[ComponentOption("--batch-size", Aliases = new[] { "-b" }, Description = "Batch size for processing")]
 	public int BatchSize { get; init; } = DefaultBatchSize;
 
+	[ComponentOption("--max-batch-bytes", Description = "Soft byte cap per read batch; flush when either --batch-size rows or this many bytes accumulate (0 = no byte cap)")]
+	public long MaxBatchBytes { get; init; } = 0;
+
 	[ComponentOption("--limit", Description = "Max total rows to process (0 = unlimited)")]
 	public int Limit { get; init; } = 0;
 

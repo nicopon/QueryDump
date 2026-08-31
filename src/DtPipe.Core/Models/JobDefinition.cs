@@ -14,6 +14,7 @@ public record JobDefinition
 	public string? Input { get; init; }
 	public string? Output { get; init; }
 	public int BatchSize { get; init; } = PipelineOptions.DefaultBatchSize;
+	public long MaxBatchBytes { get; init; } = 0;
 	public int Limit { get; init; } = 0;
 	public bool NoStats { get; init; } = false;
 	public int DryRunCount { get; init; } = 0;

@@ -56,6 +56,12 @@ public sealed class ObjectStorageStreamReader : IColumnarStreamReader, IBatchSiz
         set => _inner.BatchSize = value;
     }
 
+    public long MaxBatchBytes
+    {
+        get => _inner.MaxBatchBytes;
+        set => _inner.MaxBatchBytes = value;
+    }
+
     public async Task OpenAsync(CancellationToken ct = default)
     {
         try

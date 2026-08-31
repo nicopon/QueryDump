@@ -19,6 +19,13 @@ public sealed class AdoToArrowConfig
     public int TargetBatchSize { get; }
 
     /// <summary>
+    /// Gets a soft upper bound, in bytes, on a buffered batch. A batch is flushed as soon as
+    /// either <see cref="TargetBatchSize"/> rows or this many bytes accumulate. <c>0</c> disables
+    /// the byte bound. Best-effort estimate — the row that crosses the bound is kept.
+    /// </summary>
+    public long MaxBatchBytes { get; }
+
+    /// <summary>
     /// Gets whether to include DB column metadata in the Arrow schema.
     /// </summary>
     public bool IncludeMetadata { get; }
@@ -40,11 +47,13 @@ public sealed class AdoToArrowConfig
 
     internal AdoToArrowConfig(
         int targetBatchSize,
+        long maxBatchBytes,
         bool includeMetadata,
         Func<DbColumn, Apache.Arrow.Serialization.Mapping.ArrowTypeResult> typeResolver,
         IReadOnlyDictionary<string, Apache.Arrow.Serialization.Mapping.ArrowTypeResult> dataTypeNameOverrides)
     {
         TargetBatchSize = targetBatchSize;
+        MaxBatchBytes = maxBatchBytes;
         IncludeMetadata = includeMetadata;
         TypeResolver = typeResolver;
         DataTypeNameOverrides = dataTypeNameOverrides;

@@ -22,6 +22,7 @@ namespace DtPipe.Adapters.PostgreSQL;
 public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSizeConfigurable
 {
     public int BatchSize { get; set; } = DtPipe.Core.Models.PipelineOptions.DefaultBatchSize;
+    public long MaxBatchBytes { get; set; }
 
     private readonly string _connectionString;
     private readonly string _query;
@@ -118,27 +119,46 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
         await using var exporter = await _connection.BeginBinaryExportAsync(copySql, ct);
 
         int targetBatchSize = BatchSize;
+        long maxBatchBytes = MaxBatchBytes;
+
+        // Fixed part of a row's size, from the Arrow schema; variable-width columns add their
+        // payload per value through the AddBytes callback below (see the dual bound in the inner loop).
+        int fixedBytesPerRow = 0;
+        for (int i = 0; i < Columns.Count; i++)
+            fixedBytesPerRow += Apache.Arrow.Ado.ArrowByteSize.FixedWidth(Schema.FieldsList[i].DataType);
 
         while (true)
         {
+            long batchBytes = 0;
+            void AddBytes(long n) => batchBytes += n;
+
             var readers = new (Action<NpgsqlBinaryExporter> Read, Func<IArrowArray> Build)[Columns.Count];
             for (int i = 0; i < Columns.Count; i++)
             {
                 var npgsqlType = PostgreSqlTypeConverter.Instance.MapToNpgsqlDbType(Columns[i].ClrType);
-                readers[i] = BuildBinaryColumnReader(npgsqlType, Schema.FieldsList[i].DataType);
+                readers[i] = BuildBinaryColumnReader(npgsqlType, Schema.FieldsList[i].DataType, AddBytes);
             }
 
             int rowsInBuffer = 0;
+            bool streamEnded = false;
             while (rowsInBuffer < targetBatchSize)
             {
                 if (await exporter.StartRowAsync(ct) == -1)
+                {
+                    streamEnded = true;
                     break;
+                }
 
                 for (int i = 0; i < Columns.Count; i++)
                 {
                     readers[i].Read(exporter);
                 }
                 rowsInBuffer++;
+                batchBytes += fixedBytesPerRow;
+
+                // Dual bound: flush on row count or on the soft byte cap, whichever hits first.
+                if (maxBatchBytes > 0 && batchBytes >= maxBatchBytes)
+                    break;
             }
 
             if (rowsInBuffer == 0)
@@ -152,7 +172,7 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
             yield return new RecordBatch(Schema, arrays, rowsInBuffer);
 
-            if (rowsInBuffer < targetBatchSize)
+            if (streamEnded)
                 break;
         }
     }
@@ -192,7 +212,7 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
     #region Binary Column Readers
 
-    private static (Action<NpgsqlBinaryExporter> Read, Func<IArrowArray> Build) BuildBinaryColumnReader(NpgsqlTypes.NpgsqlDbType npgsqlType, IArrowType arrowType)
+    private static (Action<NpgsqlBinaryExporter> Read, Func<IArrowArray> Build) BuildBinaryColumnReader(NpgsqlTypes.NpgsqlDbType npgsqlType, IArrowType arrowType, Action<long> addBytes)
     {
         // The array built here must match the field the schema declares. The fallback case below
         // builds a StringArray from Read<object>().ToString(), so without this an array column
@@ -240,12 +260,12 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
             NpgsqlTypes.NpgsqlDbType.Text or NpgsqlTypes.NpgsqlDbType.Varchar
                 or NpgsqlTypes.NpgsqlDbType.Char or NpgsqlTypes.NpgsqlDbType.Name => BuildTyped(
                 new StringArray.Builder(),
-                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(e.Read<string>(npgsqlType)); },
+                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else { var s = e.Read<string>(npgsqlType); b.Append(s); addBytes(System.Text.Encoding.UTF8.GetByteCount(s)); } },
                 b => b.Build()),
 
             NpgsqlTypes.NpgsqlDbType.Bytea => BuildTyped(
                 new BinaryArray.Builder(),
-                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append((System.Collections.Generic.IEnumerable<byte>)e.Read<byte[]>()); },
+                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else { var v = e.Read<byte[]>(); b.Append((System.Collections.Generic.IEnumerable<byte>)v); addBytes(v.Length); } },
                 b => b.Build()),
 
             NpgsqlTypes.NpgsqlDbType.Uuid => BuildTyped(
@@ -278,7 +298,7 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
             _ => BuildTyped(
                 new StringArray.Builder(),
-                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(e.Read<object>(npgsqlType)?.ToString()); },
+                (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else { var s = e.Read<object>(npgsqlType)?.ToString(); b.Append(s); addBytes(s?.Length ?? 0); } },
                 b => b.Build())
         };
     }

@@ -11,6 +11,7 @@ namespace DtPipe.Core.Models;
 public sealed record BranchEngineSettings(
     int Limit,
     int BatchSize,
+    long MaxBatchBytes,
     double SamplingRate,
     int? SamplingSeed,
     int DryRunCount,
@@ -22,7 +23,7 @@ public sealed record BranchEngineSettings(
     string? State)
 {
     public static BranchEngineSettings Default { get; }
-        = new(Limit: 0, BatchSize: PipelineOptions.DefaultBatchSize, SamplingRate: 1.0, SamplingSeed: null,
+        = new(Limit: 0, BatchSize: PipelineOptions.DefaultBatchSize, MaxBatchBytes: 0, SamplingRate: 1.0, SamplingSeed: null,
               DryRunCount: 0, NoStats: false, MetricsPath: null, LogPath: null, Prefix: null,
               Cursor: null, State: null);
 
@@ -31,6 +32,7 @@ public sealed record BranchEngineSettings(
     {
         Limit = Limit,
         BatchSize = BatchSize,
+        MaxBatchBytes = MaxBatchBytes,
         SamplingRate = SamplingRate,
         SamplingSeed = SamplingSeed,
         DryRunCount = DryRunCount,

@@ -158,7 +158,7 @@ public sealed class PipelineExecutor
                     if (!isCurrentColumnar)
                     {
                         var bridgeFac = _bridgeFactories.FirstOrDefault() ?? throw new InvalidOperationException("No RowToColumnarBridgeFactory");
-                        currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, segment.InputSchema, options.BatchSize, ct, segment.InputSchemaArrow);
+                        currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, segment.InputSchema, options.BatchSize, options.MaxBatchBytes, ct, segment.InputSchemaArrow);
                         isCurrentColumnar = true;
                     }
                     currentColumnarSource = ApplyColumnarSegmentAsync(currentColumnarSource, segment.Transformers, progress, ct);
@@ -187,7 +187,7 @@ public sealed class PipelineExecutor
                     var readerSchema = (reader as IColumnarStreamReader)?.Schema;
                     bool schemaUnchanged = readerSchema != null && readerSchema.FieldsList.Count == columns.Count;
                     var richSchema = schemaUnchanged ? readerSchema : null;
-                    currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, columns, options.BatchSize, ct, richSchema);
+                    currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, columns, options.BatchSize, options.MaxBatchBytes, ct, richSchema);
                 }
                 await ConsumeColumnarStreamAsync(currentColumnarSource, columnarWriter, options.Limit, progress, ct);
             }
@@ -230,11 +230,12 @@ public sealed class PipelineExecutor
         }
     }
 
-    private async IAsyncEnumerable<RecordBatch> BridgeRowsToColumnarAsync(
+    internal async IAsyncEnumerable<RecordBatch> BridgeRowsToColumnarAsync(
         IAsyncEnumerable<IReadOnlyList<object?>> rows,
         IRowToColumnarBridgeFactory factory,
         IReadOnlyList<PipeColumnInfo> columns,
         int batchSize,
+        long maxBatchBytes,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct,
         Schema? richSchema = null)
     {
@@ -243,19 +244,42 @@ public sealed class PipelineExecutor
             : ArrowSchemaFactory.Create(columns);
 
         var buffer = new List<IReadOnlyList<object?>>(batchSize);
+        long bufferBytes = 0;
         await foreach (var row in rows.WithCancellation(ct))
         {
             buffer.Add(row);
-            if (buffer.Count >= batchSize)
+            if (maxBatchBytes > 0) bufferBytes += EstimateRowBytes(row);
+            if (buffer.Count >= batchSize || (maxBatchBytes > 0 && bufferBytes >= maxBatchBytes))
             {
                 yield return ArrowRowConverter.ToRecordBatch(schema, buffer, buffer.Count);
                 buffer.Clear();
+                bufferBytes = 0;
             }
         }
         if (buffer.Count > 0)
         {
             yield return ArrowRowConverter.ToRecordBatch(schema, buffer, buffer.Count);
         }
+    }
+
+    /// <summary>
+    /// Rough byte estimate for one row buffered before the row→columnar bridge. Variable-width
+    /// values count their payload; everything else a flat 8. Only used when a byte cap is set.
+    /// </summary>
+    private static long EstimateRowBytes(IReadOnlyList<object?> row)
+    {
+        long total = 0;
+        for (int i = 0; i < row.Count; i++)
+        {
+            total += row[i] switch
+            {
+                null => 0,
+                string s => s.Length,
+                byte[] b => b.Length,
+                _ => 8,
+            };
+        }
+        return total;
     }
 
     private async IAsyncEnumerable<IReadOnlyList<object?>> BridgeColumnarToRowsAsync(

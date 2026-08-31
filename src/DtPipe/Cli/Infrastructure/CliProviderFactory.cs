@@ -132,6 +132,7 @@ public class CliStreamReaderFactory : CliProviderFactory<IStreamReader>, IStream
 		{
 			var pipelineOptions = registry.Get<PipelineOptions>();
 			batchConfigurable.BatchSize = pipelineOptions.BatchSize;
+			batchConfigurable.MaxBatchBytes = pipelineOptions.MaxBatchBytes;
 		}
 		return reader;
 	}

@@ -189,6 +189,7 @@ public class LinearPipelineService
             SamplingRate = job.SamplingRate,
             SamplingSeed = job.SamplingSeed,
             BatchSize    = job.BatchSize,
+            MaxBatchBytes = job.MaxBatchBytes,
             DryRunCount  = job.DryRunCount,
             NoStats      = job.NoStats,
             DryRunInteractiveBranch = dryRunInteractiveBranch,

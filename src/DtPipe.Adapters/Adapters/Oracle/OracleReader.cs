@@ -44,6 +44,7 @@ public sealed class OracleReader : AdoColumnarReader, IRequiresOptions<OracleRea
             .SetTypeResolver(col => ArrowTypeMapper.GetLogicalType(
                 Nullable.GetUnderlyingType(col.DataType ?? typeof(string)) ?? col.DataType ?? typeof(string)))
             .SetTargetBatchSize(BatchSize)
+            .SetMaxBatchBytes(MaxBatchBytes)
             .Build();
     }
 

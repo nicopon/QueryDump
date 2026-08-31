@@ -18,6 +18,7 @@ internal sealed class GuidAsBytesConsumer : IAdoConsumer
 {
     private readonly int _columnIndex;
     private readonly Apache.Arrow.Serialization.Reflection.FixedSizeBinaryArrayBuilder _builder = new(16);
+    private long _rowCount;
 
     public GuidAsBytesConsumer(int columnIndex)
     {
@@ -26,8 +27,11 @@ internal sealed class GuidAsBytesConsumer : IAdoConsumer
 
     public IArrowType ArrowType => new FixedSizeBinaryType(16);
 
+    public long EstimatedByteSize => _rowCount * 16;
+
     public void Consume(DbDataReader reader)
     {
+        _rowCount++;
         if (reader.IsDBNull(_columnIndex))
         {
             _builder.AppendNull();
@@ -45,7 +49,11 @@ internal sealed class GuidAsBytesConsumer : IAdoConsumer
 
     public IArrowArray BuildArray() => _builder.Build();
 
-    public void Reset() => _builder.Clear();
+    public void Reset()
+    {
+        _builder.Clear();
+        _rowCount = 0;
+    }
 
     public void Dispose() { }
 }

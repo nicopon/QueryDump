@@ -378,6 +378,7 @@ DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached throug
 | `--sampling-rate` | `0.1` | Row inclusion probability (0.0–1.0) |
 | `--sampling-seed` | `12345` | Fixed seed for deterministic, reproducible sampling |
 | `--batch-size` | `10000` | Rows per columnar batch (default: 50,000) |
+| `--max-batch-bytes` | `268435456` | Soft byte cap per read batch: a batch flushes when either `--batch-size` rows **or** this many bytes accumulate, whichever comes first. `0` (default) disables the byte cap. Bounds memory when rows carry large text/blob columns. Estimate is approximate — the row that crosses the bound is kept. Applies to the wire-decode readers (PostgreSQL `COPY`, and the ADO readers: MySQL, Oracle, SQL Server, SQLite) and the row→columnar bridge. |
 | `--no-stats` | | Suppress progress bars and transfer statistics |
 | `--metrics-path` | `metrics.json` | Write structured execution results to a JSON file |
 | `--log` | `pipeline.log` | Write log output to a file |
