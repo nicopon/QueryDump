@@ -33,7 +33,7 @@ show_help() {
     echo ""
     echo "Modes:"
     echo "  --smoke          Golden smoke test (vicious edge cases, all DB drivers, Docker required)"
-    echo "  --test           Transformers, schema, options, docs, DAG, cursor (no Docker)"
+    echo "  --test           Every validate_*.sh except drivers (most need Docker)"
     echo "  --test-docker    All --test scripts + drivers (Docker required)"
     echo "  --catalog        135-command catalog suite (requires init_test_data.sh + Docker)"
     echo "  --bench          Performance benchmarks (linear pipeline, DuckDB)"
@@ -44,17 +44,7 @@ show_help() {
     echo "  --xml            Streaming XML validation (2GB massive volume)"
     echo ""
     echo "Individual scripts can be run directly:"
-    echo "  $SCRIPT_DIR/validate_transformers.sh"
-    echo "  $SCRIPT_DIR/validate_schema.sh"
-    echo "  $SCRIPT_DIR/validate_drivers.sh"
-    echo "  $SCRIPT_DIR/validate_docs.sh"
-    echo "  $SCRIPT_DIR/validate_options.sh"
-    echo "  $SCRIPT_DIR/validate_dag.sh"
-    echo "  $SCRIPT_DIR/validate_sql.sh"
-    echo "  $SCRIPT_DIR/validate_hooks.sh"
-    echo "  $SCRIPT_DIR/validate_cursor.sh"
-    echo "  $SCRIPT_DIR/validate_keyring.sh"
-    echo "  $SCRIPT_DIR/validate_xml.sh"
+    for f in "$SCRIPT_DIR"/validate_*.sh; do echo "  $f"; done
     echo "  $SCRIPT_DIR/smoke.sh"
     echo "  $SCRIPT_DIR/bench.sh [--sql] [--direct]"
     echo "  $SCRIPT_DIR/run_catalog_tests.sh  (after init_test_data.sh)"
@@ -120,34 +110,33 @@ if [ $MODE_SMOKE -eq 1 ]; then
     run_script "Golden smoke test" "$SCRIPT_DIR/smoke.sh"
 fi
 
-if [ $MODE_SQL_FEATURES -eq 1 ] || [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then
-    run_script "SQL features"  "$SCRIPT_DIR/validate_sql.sh"
-fi
+# Validators are discovered by glob, never listed by hand. A hard-coded list is how eleven of
+# them stopped being run at all: the file existed, the docs cited it, nothing invoked it.
+# Adding tests/scripts/validate_<x>.sh is all it takes to be covered here.
+SELECTED=()
+select_script() {
+    local s
+    for s in "${SELECTED[@]}"; do [ "$s" = "$1" ] && return; done
+    SELECTED+=("$1")
+}
+
+[ $MODE_SQL_FEATURES -eq 1 ] && select_script "validate_sql"
+[ $MODE_DAG -eq 1 ]          && select_script "validate_dag"
+[ $MODE_XML -eq 1 ]          && select_script "validate_xml"
 
 if [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then
-    run_script "Transformers"   "$SCRIPT_DIR/validate_transformers.sh"
-    run_script "Schema"         "$SCRIPT_DIR/validate_schema.sh"
-    run_script "Options"        "$SCRIPT_DIR/validate_options.sh"
-    run_script "Binder parity"  "$SCRIPT_DIR/validate_binder_parity.sh"
-    run_script "Docs"           "$SCRIPT_DIR/validate_docs.sh"
-    run_script "Hooks"          "$SCRIPT_DIR/validate_hooks.sh"
-    run_script "Incremental (Cursor)" "$SCRIPT_DIR/validate_cursor.sh"
-    run_script "Keyring"        "$SCRIPT_DIR/validate_keyring.sh"
-    run_script "XML Massive"    "$SCRIPT_DIR/validate_xml.sh"
-    run_script "DuckDB Hub"     "$SCRIPT_DIR/validate_duck_hub.sh"
+    for f in "$SCRIPT_DIR"/validate_*.sh; do
+        base="$(basename "$f" .sh)"
+        # vitals runs this same set itself — selecting it here would nest the whole battery.
+        [ "$base" = "validate_vitals" ] && continue
+        [ "$base" = "validate_drivers" ] && [ $MODE_TEST_DOCKER -eq 0 ] && continue
+        select_script "$base"
+    done
 fi
 
-if [ $MODE_DAG -eq 1 ] || [ $MODE_TEST -eq 1 ] || [ $MODE_TEST_DOCKER -eq 1 ]; then
-    run_script "DAG topologies" "$SCRIPT_DIR/validate_dag.sh"
-fi
-
-if [ $MODE_XML -eq 1 ]; then
-    run_script "XML Massive"    "$SCRIPT_DIR/validate_xml.sh"
-fi
-
-if [ $MODE_TEST_DOCKER -eq 1 ]; then
-    run_script "Drivers"        "$SCRIPT_DIR/validate_drivers.sh"
-fi
+for base in "${SELECTED[@]}"; do
+    run_script "${base#validate_}" "$SCRIPT_DIR/$base.sh"
+done
 
 if [ $MODE_CATALOG -eq 1 ]; then
     echo ""
