@@ -16,7 +16,7 @@ public class SerializationTests
     public class SimplePoco
     {
         public int Id { get; set; }
-        public string Name { get; set; }
+        public string? Name { get; set; }
         public double Value { get; set; }
         public bool IsActive { get; set; }
     }
@@ -95,8 +95,8 @@ public class SerializationTests
 
     public class NestedPoco
     {
-        public string Title { get; set; }
-        public SimplePoco Inner { get; set; }
+        public string? Title { get; set; }
+        public SimplePoco? Inner { get; set; }
     }
 
     [Fact]
@@ -125,8 +125,8 @@ public class SerializationTests
         result.Should().HaveCount(2);
         result[0].Title.Should().Be("Outer 1");
         result[0].Inner.Should().NotBeNull();
-        result[0].Inner.Id.Should().Be(1);
-        result[0].Inner.Name.Should().Be("Inner 1");
+        result[0].Inner!.Id.Should().Be(1);
+        result[0].Inner!.Name.Should().Be("Inner 1");
 
         result[1].Title.Should().Be("Outer 2");
         result[1].Inner.Should().BeNull();
@@ -134,9 +134,9 @@ public class SerializationTests
 
     public class ListPoco
     {
-        public string Name { get; set; }
-        public List<int> Scores { get; set; }
-        public string[] Tags { get; set; }
+        public string? Name { get; set; }
+        public List<int>? Scores { get; set; }
+        public string[]? Tags { get; set; }
     }
 
     [Fact]
@@ -342,8 +342,13 @@ public class SerializationTests
         valCol.IsNull(1).Should().BeTrue();
     }
 
+    /// <summary>
+    /// The schema is inferred from the first object, and a later object may carry keys it does not
+    /// have. Serialization skips those keys rather than failing: sparse and heterogeneous sources
+    /// (XML, JSONL) are the normal input, so one odd row must not abort the batch.
+    /// </summary>
     [Fact]
-    public async Task Serialize_Dynamic_ExtraKeys_ShouldThrow()
+    public async Task Serialize_Dynamic_ExtraKeys_AreSkipped()
     {
         // Arrange
         dynamic obj1 = new System.Dynamic.ExpandoObject();
@@ -355,10 +360,15 @@ public class SerializationTests
 
         var data = new List<object> { obj1, obj2 };
 
-        // Act & Assert
-        var act = async () => await ArrowSerializer.SerializeAsync(data);
-        await act.Should().ThrowAsync<System.InvalidOperationException>()
-            .WithMessage("*unknown key 'Extra'*");
+        // Act
+        var batch = await ArrowSerializer.SerializeAsync(data);
+
+        // Assert — the extra key is absent from the schema, and the rows it appeared on survive.
+        batch.Schema.FieldsList.Should().ContainSingle().Which.Name.Should().Be("Id");
+        batch.Length.Should().Be(2);
+        var ids = (Int32Array)batch.Column(0);
+        ids.GetValue(0).Should().Be(1);
+        ids.GetValue(1).Should().Be(2);
     }
 }
 

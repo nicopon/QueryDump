@@ -220,8 +220,15 @@ public static class ArrowSerializer
         public virtual void CollectCapacity(object? value, CapacityInfo info) { }
 
         public static TypeAccessor Create(Type type)
+            => Create(type, ArrowReflectionEngine.GetLogicalType(type).ArrowType);
+
+        /// <summary>
+        /// Builds an accessor for a CLR type against an already-resolved Arrow type. Callers that
+        /// hold both must pass both: resolving from the Arrow type alone loses the CLR identity and
+        /// silently yields the dictionary-shaped dynamic accessors.
+        /// </summary>
+        public static TypeAccessor Create(Type type, IArrowType arrowType)
         {
-            var arrowType = ArrowReflectionEngine.GetLogicalType(type).ArrowType;
             if (arrowType is MapType mt) return new MapTypeAccessor(type, mt);
             if (arrowType is StructType st) return new StructTypeAccessor(type, st);
             if (arrowType is ListType lt) return new ListTypeAccessor(type, lt);
@@ -576,7 +583,25 @@ public static class ArrowSerializer
         {
             _type = type;
             _listType = listType;
-            _elementAccessor = TypeAccessor.CreateFromArrowType(listType.ValueDataType);
+
+            // The element accessor must keep the CLR element type when the collection is typed.
+            // Resolving it from the Arrow type alone hands a struct element to the dictionary-shaped
+            // DynamicStructTypeAccessor, which appends nothing for a POCO: the StructArray then
+            // reports the right length over empty children, and reading it throws out of range.
+            var elementType = GetElementType(type);
+            _elementAccessor = elementType is not null && elementType != typeof(object)
+                ? TypeAccessor.Create(elementType, listType.ValueDataType)
+                : TypeAccessor.CreateFromArrowType(listType.ValueDataType);
+        }
+
+        /// <summary>Element type of a typed collection; null in dynamic mode, where there is none.</summary>
+        private static Type? GetElementType(Type collectionType)
+        {
+            if (collectionType.IsArray) return collectionType.GetElementType();
+            var enumerable = collectionType.IsGenericType && collectionType.GetGenericTypeDefinition() == typeof(IEnumerable<>)
+                ? collectionType
+                : collectionType.GetInterfaces().FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            return enumerable?.GetGenericArguments()[0];
         }
 
         public override void CollectCapacity(object? value, CapacityInfo info)

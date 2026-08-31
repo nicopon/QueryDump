@@ -31,6 +31,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DtPipe.Transformers", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DtPipe.Adapters.Shared", "src\DtPipe.Adapters.Shared\DtPipe.Adapters.Shared.csproj", "{C7595B17-6312-45EB-ABBA-104E8467E91C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Apache.Arrow.Serialization.Tests", "tests\Apache.Arrow.Serialization.Tests\Apache.Arrow.Serialization.Tests.csproj", "{662DC6AA-4895-498D-9FA5-C6535C7A9748}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -173,6 +175,18 @@ Global
 		{C7595B17-6312-45EB-ABBA-104E8467E91C}.Release|x64.Build.0 = Release|Any CPU
 		{C7595B17-6312-45EB-ABBA-104E8467E91C}.Release|x86.ActiveCfg = Release|Any CPU
 		{C7595B17-6312-45EB-ABBA-104E8467E91C}.Release|x86.Build.0 = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|x64.Build.0 = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Debug|x86.Build.0 = Debug|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|Any CPU.Build.0 = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|x64.ActiveCfg = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|x64.Build.0 = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|x86.ActiveCfg = Release|Any CPU
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -189,5 +203,6 @@ Global
 		{98B34AC6-001A-4FF7-9A47-1B88E5287AA3} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{56F967A8-F627-4440-93F0-2831001309D3} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{C7595B17-6312-45EB-ABBA-104E8467E91C} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{662DC6AA-4895-498D-9FA5-C6535C7A9748} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
