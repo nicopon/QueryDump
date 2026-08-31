@@ -22,16 +22,19 @@ for arg in "$@"; do
         --clean) CLEAN=1 ;;
         --help|-h)
             echo "Usage: $(basename "$0") [--clean]"
-            echo "  --clean   Delete existing input data and regenerate it from scratch."
-            echo "            Without it, existing input files are kept as they are."
+            echo "  --clean   Also regenerate the two volume fixtures (29 MB and 2.7 GB)."
+            echo "            Everything else is regenerated on every run regardless."
             exit 0
             ;;
         *) echo "Unknown option: $arg (see --help)"; exit 1 ;;
     esac
 done
 
-# Input files kept from a previous run. Counted so the warning below can name the situation
-# instead of leaving the reader to notice nine "Skipping" lines.
+# The two volume fixtures kept from a previous run. Everything whose CONTENT the catalog
+# exercises is regenerated every time — those files are under 600 KB in total, so skipping
+# them bought nothing and risked testing data older than the generator that made it. Only
+# test_data_big.parquet (29 MB) and test_data_massive.xml (2.7 GB) are kept, and for those
+# it is the volume that matters, not the values.
 KEPT=0
 
 GREEN='\033[0;32m'
@@ -56,40 +59,30 @@ if [ $CLEAN -eq 1 ]; then
     mkdir -p "$ARTIFACTS_DIR"
 fi
 
-echo -e "${YELLOW}Step 3: Initializing file-based sources (skipping existing files)...${NC}"
+echo -e "${YELLOW}Step 3: Initializing file-based sources...${NC}"
 
 # 1. CSV
-if [ ! -f "$ARTIFACTS_DIR/test_data.csv" ]; then
-    echo "Generating test_data.csv..."
-    $DTPIPE -i "generate:1000" \
-      --fake "Id:random.guid" \
-      --fake "FirstName:name.firstName" \
-      --fake "LastName:name.lastName" \
-      --fake "Email:internet.email" \
-      --fake "Company:company.companyname" \
-      --fake "BirthDate:date.past" \
-      --fake "Score:random.number" \
-      --drop "GenerateIndex" \
-      -o "$ARTIFACTS_DIR/test_data.csv" || exit 1
-else
-    echo "  Skipping test_data.csv (already exists)"
-    KEPT=$((KEPT + 1))
-fi
+echo "Generating test_data.csv..."
+$DTPIPE -i "generate:1000" \
+  --fake "Id:random.guid" \
+  --fake "FirstName:name.firstName" \
+  --fake "LastName:name.lastName" \
+  --fake "Email:internet.email" \
+  --fake "Company:company.companyname" \
+  --fake "BirthDate:date.past" \
+  --fake "Score:random.number" \
+  --drop "GenerateIndex" \
+  -o "$ARTIFACTS_DIR/test_data.csv" || exit 1
 
 # 2. Parquet
-if [ ! -f "$ARTIFACTS_DIR/test_data.parquet" ]; then
-    echo "Generating test_data.parquet..."
-    $DTPIPE -i "generate:1000" \
-      --fake "Id:random.guid" \
-      --fake "Name:name.fullName" \
-      --fake "Category:commerce.department" \
-      --fake "Price:commerce.price" \
-      --drop "GenerateIndex" \
-      -o "$ARTIFACTS_DIR/test_data.parquet" --no-schema-validation --strategy Recreate || exit 1
-else
-    echo "  Skipping test_data.parquet (already exists)"
-    KEPT=$((KEPT + 1))
-fi
+echo "Generating test_data.parquet..."
+$DTPIPE -i "generate:1000" \
+  --fake "Id:random.guid" \
+  --fake "Name:name.fullName" \
+  --fake "Category:commerce.department" \
+  --fake "Price:commerce.price" \
+  --drop "GenerateIndex" \
+  -o "$ARTIFACTS_DIR/test_data.parquet" --no-schema-validation --strategy Recreate || exit 1
 
 # 2b. Parquet (BIG - 1M rows)
 if [ ! -f "$ARTIFACTS_DIR/test_data_big.parquet" ]; then
@@ -106,35 +99,25 @@ else
 fi
 
 # 3. Arrow
-if [ ! -f "$ARTIFACTS_DIR/test_data.arrow" ]; then
-    echo "Generating test_data.arrow..."
-    $DTPIPE -i "generate:1000" \
-      --fake "Id:random.guid" \
-      --fake "Timestamp:date.recent" \
-      --fake "Level:lorem.word" \
-      --fake "Message:lorem.sentence" \
-      --drop "GenerateIndex" \
-      -o "$ARTIFACTS_DIR/test_data.arrow" --no-schema-validation --strategy Recreate || exit 1
-else
-    echo "  Skipping test_data.arrow (already exists)"
-    KEPT=$((KEPT + 1))
-fi
+echo "Generating test_data.arrow..."
+$DTPIPE -i "generate:1000" \
+  --fake "Id:random.guid" \
+  --fake "Timestamp:date.recent" \
+  --fake "Level:lorem.word" \
+  --fake "Message:lorem.sentence" \
+  --drop "GenerateIndex" \
+  -o "$ARTIFACTS_DIR/test_data.arrow" --no-schema-validation --strategy Recreate || exit 1
 
 echo -e "${YELLOW}Step 4: Initializing database sources...${NC}"
 
 # 4. DuckDB
-if [ ! -f "$ARTIFACTS_DIR/test_data.duckdb" ]; then
-    echo "Generating test_data.duckdb..."
-    $DTPIPE -i "generate:1000" \
-      --fake "Id:random.guid" \
-      --fake "City:address.city" \
-      --fake "Country:address.country" \
-      --drop "GenerateIndex" \
-      -o "$ARTIFACTS_DIR/test_data.duckdb" --table "geography" --no-schema-validation --strategy Recreate || exit 1
-else
-    echo "  Skipping test_data.duckdb (already exists)"
-    KEPT=$((KEPT + 1))
-fi
+echo "Generating test_data.duckdb..."
+$DTPIPE -i "generate:1000" \
+  --fake "Id:random.guid" \
+  --fake "City:address.city" \
+  --fake "Country:address.country" \
+  --drop "GenerateIndex" \
+  -o "$ARTIFACTS_DIR/test_data.duckdb" --table "geography" --no-schema-validation --strategy Recreate || exit 1
 
 # 5. PostgreSQL (always runs: --pre-exec drops any stale table so Recreate always uses source schema)
 echo "Initializing PostgreSQL users_test..."
@@ -143,7 +126,7 @@ $DTPIPE -i "generate:1000" \
   --fake "username:internet.userName" \
   --fake "last_login:date.past" \
   --drop "GenerateIndex" \
-  -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+  -o "$PG" \
   --pre-exec "DROP TABLE IF EXISTS users_test CASCADE" \
   --table "users_test" --no-schema-validation --strategy Recreate || exit 1
 
@@ -154,7 +137,7 @@ $DTPIPE -i "generate:1000" \
   --fake "display_name:name.fullName" \
   --fake "credit_card:finance.creditCardNumber" \
   --drop "GenerateIndex" \
-  -o "mssql:Server=localhost,1434;Database=master;User Id=sa;Password=Password123!;Encrypt=False" \
+  -o "$MSSQL" \
   --pre-exec "IF OBJECT_ID('users_test', 'U') IS NOT NULL DROP TABLE users_test" \
   --table "users_test" --no-schema-validation --strategy Recreate || exit 1
 
@@ -165,7 +148,7 @@ $DTPIPE -i "generate:1000" \
   --fake "FULL_NAME:name.fullName" \
   --fake "JOB_TITLE:name.jobTitle" \
   --drop "GenerateIndex" \
-  -o "ora:Data Source=localhost:1522/FREEPDB1;User Id=testuser;Password=password" \
+  -o "$ORA" \
   --table "USERS_TEST_DATA" \
   --no-schema-validation \
   --strategy Recreate \
@@ -182,7 +165,7 @@ $DTPIPE -i "generate:1" \
   --fake "category:random.number" \
   --fake "price:random.number" \
   --drop "GenerateIndex" \
-  -o "pg:Host=localhost;Port=5440;Database=integration;Username=postgres;Password=password" \
+  -o "$PG" \
   --pre-exec "DROP TABLE IF EXISTS wrong_schema CASCADE" \
   --table "wrong_schema" --no-schema-validation --strategy Recreate || exit 1
 
@@ -192,33 +175,22 @@ if [ ! -d "$ARTIFACTS_DIR/restricted" ]; then
     chmod 000 "$ARTIFACTS_DIR/restricted"
     echo "Created restricted/ directory (chmod 000) for T77 access-denied tests."
 else
-    echo "  Skipping restricted/ (already exists)"
-    KEPT=$((KEPT + 1))
+    echo "  Skipping restricted/ (already exists, has no content to go stale)"
 fi
 
 # 9. JS script file for T50 (--compute "@file" test)
-if [ ! -f "$ARTIFACTS_DIR/my_script.js" ]; then
-    echo "Generating my_script.js..."
-    cat <<'EOF' > "$ARTIFACTS_DIR/my_script.js"
+echo "Generating my_script.js..."
+cat <<'EOF' > "$ARTIFACTS_DIR/my_script.js"
 row.FirstName + ' ' + row.LastName
 EOF
-else
-    echo "  Skipping my_script.js (already exists)"
-    KEPT=$((KEPT + 1))
-fi
 
 # 8. Complex JSONL (Nested Structures)
-if [ ! -f "$ARTIFACTS_DIR/complex_data.jsonl" ]; then
-    echo "Generating complex_data.jsonl..."
-    cat <<EOF > "$ARTIFACTS_DIR/complex_data.jsonl"
+echo "Generating complex_data.jsonl..."
+cat <<EOF > "$ARTIFACTS_DIR/complex_data.jsonl"
 {"id": 1, "user": {"name": "Alice", "points": 100}, "items": [{"id": "A1", "price": 10.5}, {"id": "A2", "price": 5.0}]}
 {"id": 2, "user": {"name": "Bob", "points": 200}, "items": [{"id": "B1", "price": 20.0}]}
 {"id": 3, "user": {"name": "Charlie", "points": 300}, "items": []}
 EOF
-else
-    echo "  Skipping complex_data.jsonl (already exists)"
-    KEPT=$((KEPT + 1))
-fi
 
 # 9. Massive XML (for XML streaming validation)
 if [ ! -f "$ARTIFACTS_DIR/test_data_massive.xml" ]; then
@@ -231,10 +203,9 @@ fi
 
 if [ $KEPT -gt 0 ]; then
     echo ""
-    echo -e "${YELLOW}WARNING: $KEPT existing input file(s) were KEPT, not regenerated.${NC}"
-    echo -e "${YELLOW}         Tests will run against input data from a previous run, which may${NC}"
-    echo -e "${YELLOW}         predate a change to the generators.${NC}"
-    echo -e "${YELLOW}         Reset all input data with: $(basename "$0") --clean${NC}"
+    echo -e "${YELLOW}NOTE: $KEPT volume fixture(s) were kept, not regenerated.${NC}"
+    echo -e "${YELLOW}      Only their size matters to the tests that read them, so age is${NC}"
+    echo -e "${YELLOW}      harmless. Regenerate anyway with: $(basename "$0") --clean${NC}"
 fi
 
 echo -e "${GREEN}All sources initialized successfully!${NC}"
