@@ -51,12 +51,16 @@ public class NullDataTransformer : BaseColumnarTransformer, IRequiresOptions<DtP
 		var arrays = new IArrowArray[batch.Schema.FieldsList.Count];
 		for (int i = 0; i < arrays.Length; i++)
 		{
-			arrays[i] = batch.Column(i);
+			// Aliased columns reused in the output batch — retain so the segment runner can
+			// dispose the input without freeing buffers this output still points at. The
+			// target indices are overwritten with fresh null arrays just below.
+			arrays[i] = ArrowOwnership.RetainArray(batch.Column(i));
 		}
 
 		foreach (var idx in _targetIndices)
 		{
 			var field = batch.Schema.FieldsList[idx];
+			arrays[idx].Dispose();
 			arrays[idx] = CreateNullArray(field.DataType, batch.Length);
 		}
 

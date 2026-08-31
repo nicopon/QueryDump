@@ -6,35 +6,27 @@ using DtPipe.Core.Infrastructure.Arrow;
 namespace DtPipe.Core.Abstractions;
 
 /// <summary>
-/// Base class for columnar transformers that handles safe RecordBatch ownership transfer.
-/// This ensures that input batches are properly disposed of when transformed or filtered.
+/// Base class for columnar transformers. See <c>CLAUDE.md</c> › "RecordBatch ownership
+/// (columnar path)" for the disposal contract the segment runner and these implementations share.
 /// </summary>
 public abstract class BaseColumnarTransformer : IColumnarTransformer
 {
     public virtual bool CanProcessColumnar { get; protected set; }
     protected Schema? InputSchema { get; private set; }
 
-    /// <summary>
-    /// Implementation of IColumnarTransformer.TransformBatchAsync that enforces Consume-and-Own semantics.
-    /// </summary>
-    public async ValueTask<RecordBatch?> TransformBatchAsync(RecordBatch batch, CancellationToken ct = default)
-    {
-        // Execute the actual transformation
-        var result = await TransformBatchSafeAsync(batch, ct);
-
-        // NOTE: We no longer Dispose(batch) here because many transformers 
-        // (Project, Mask, Overwrite) share ArrayData/Buffers with the input batch.
-        // Disposing the input batch would invalidate the result batch's data.
-        // Ownership management is moved to PipelineExecutor for linear segments
-        // and DagOrchestrator for fan-outs.
-
-        return result;
-    }
+    public ValueTask<RecordBatch?> TransformBatchAsync(RecordBatch batch, CancellationToken ct = default)
+        => TransformBatchSafeAsync(batch, ct);
 
     /// <summary>
-    /// Core transformation logic. 
-    /// Implementers should return a new RecordBatch, the same incoming batch, or null.
-    /// They do NOT need to dispose of the incoming batch here.
+    /// Core transformation logic. Return one of:
+    /// <list type="bullet">
+    /// <item>the same <paramref name="batch"/> reference — pure pass-through; the caller keeps
+    /// owning it and disposes it once;</item>
+    /// <item>a new <see cref="RecordBatch"/> — the caller disposes <paramref name="batch"/> after
+    /// this returns, so any input column reused in the result MUST be wrapped in
+    /// <see cref="ArrowOwnership.RetainArray"/>;</item>
+    /// <item><c>null</c> — the batch is dropped; the caller disposes <paramref name="batch"/>.</item>
+    /// </list>
     /// </summary>
     protected abstract ValueTask<RecordBatch?> TransformBatchSafeAsync(RecordBatch batch, CancellationToken ct = default);
 

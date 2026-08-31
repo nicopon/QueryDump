@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Apache.Arrow;
 using DtPipe.Core.Abstractions;
+using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Core.Models;
 using DtPipe.Core.Abstractions.Dag;
 using Microsoft.Extensions.Logging;
@@ -388,13 +389,18 @@ public class DagOrchestrator : IDagOrchestrator
             .ToList();
         _logger.LogInformation("Starting broadcast multiplexer for '{SourceAlias}' → [{Subs}]",
             sourceAlias, string.Join(", ", subAliases));
-        return BroadcastAsync(source, targets, transform: b => b.Clone(), sourceAlias, _logger, ct);
+        return BroadcastAsync(source, targets, sourceAlias, _logger, ct);
     }
 
-    private static Task BroadcastAsync<T>(
-        ChannelReader<T> source,
-        IReadOnlyList<ChannelWriter<T>> targets,
-        Func<T, T>? transform,
+    /// <summary>
+    /// Reads each upstream batch once and hands every consumer its own independently-disposable
+    /// view via <see cref="ArrowOwnership.RetainAll"/> (a reference-count bump, not a deep copy),
+    /// then disposes the broadcaster's own reference. Each consumer disposes the batch it receives
+    /// (CLAUDE.md › "RecordBatch ownership").
+    /// </summary>
+    private static Task BroadcastAsync(
+        ChannelReader<RecordBatch> source,
+        IReadOnlyList<ChannelWriter<RecordBatch>> targets,
         string sourceAlias,
         ILogger logger,
         CancellationToken ct)
@@ -404,15 +410,9 @@ public class DagOrchestrator : IDagOrchestrator
             {
                 await foreach (var item in source.ReadAllAsync(ct))
                 {
-                    // Each target needs its own independent copy when a transform is supplied.
-                    // A single transformed copy shared across all targets would be disposed
-                    // by the first consumer that uses `using (batch)`, corrupting the data
-                    // for subsequent consumers (e.g. row-bridge disposes Arrow RecordBatches).
                     foreach (var t in targets)
-                    {
-                        var toWrite = transform != null ? transform(item) : item;
-                        await t.WriteAsync(toWrite, ct);
-                    }
+                        await t.WriteAsync(ArrowOwnership.RetainAll(item), ct);
+                    item.Dispose();
                 }
             }
             finally

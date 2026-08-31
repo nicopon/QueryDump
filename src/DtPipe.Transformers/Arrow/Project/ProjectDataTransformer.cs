@@ -1,4 +1,5 @@
 using DtPipe.Core.Abstractions;
+using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Core.Models;
 using DtPipe.Core.Options;
 using Apache.Arrow;
@@ -177,7 +178,9 @@ public class ProjectDataTransformer : BaseColumnarTransformer, IRequiresOptions<
 				newField = new Field(_outputNames[i], oldField.DataType, oldField.IsNullable, oldField.Metadata);
 			}
 			fields.Add(newField);
-			arrays.Add(batch.Column(srcIndex));
+			// Aliased column reused in the output batch — retain so the segment runner can
+			// dispose the input without freeing buffers this output still points at.
+			arrays.Add(ArrowOwnership.RetainArray(batch.Column(srcIndex)));
 		}
 
 		var newSchema = new Schema(fields, batch.Schema.Metadata);

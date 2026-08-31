@@ -41,6 +41,8 @@ public sealed class ArrowMemoryChannelStreamReader : IStreamReader, IColumnarStr
 
     public async IAsyncEnumerable<RecordBatch> ReadRecordBatchesAsync([EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Batches flow downstream unchanged — the segment runner or writer that consumes this
+        // stream owns and disposes each one (CLAUDE.md › "RecordBatch ownership").
         await foreach (var batch in _reader.ReadAllAsync(ct))
         {
             yield return batch;
@@ -49,11 +51,16 @@ public sealed class ArrowMemoryChannelStreamReader : IStreamReader, IColumnarStr
 
     public async IAsyncEnumerable<ReadOnlyMemory<object?[]>> ReadBatchesAsync(int batchSize, [EnumeratorCancellation] CancellationToken ct = default)
     {
+        // Row-mode consumer: FlattenBatch fully materialises each row into object?[], so the
+        // batch can be disposed here once its rows have been yielded.
         await foreach (var batch in _reader.ReadAllAsync(ct))
         {
-            foreach (var memory in ArrowRowConverter.FlattenBatch(batch, batchSize))
+            using (batch)
             {
-                yield return memory;
+                foreach (var memory in ArrowRowConverter.FlattenBatch(batch, batchSize))
+                {
+                    yield return memory;
+                }
             }
         }
     }

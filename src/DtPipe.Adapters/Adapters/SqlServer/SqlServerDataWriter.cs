@@ -247,12 +247,14 @@ public class SqlServerDataWriter : BaseSqlDataWriter, IColumnarDataWriter
 	/// </summary>
 	public async ValueTask WriteRecordBatchAsync(RecordBatch batch, CancellationToken ct = default)
 	{
-		if (batch.Length == 0) return;
-
-		await EnsureBulkCopyInitializedAsync(ct);
-
-		using (var reader = new RecordBatchDataReader(batch))
+		// The writer owns the batch (IColumnarDataWriter contract) and disposes it here.
+		using (batch)
 		{
+			if (batch.Length == 0) return;
+
+			await EnsureBulkCopyInitializedAsync(ct);
+
+			using var reader = new RecordBatchDataReader(batch);
 			if (_options.Strategy is SqlServerWriteStrategy.Upsert or SqlServerWriteStrategy.Ignore)
 				await ExecuteMergeFromReaderAsync(reader, ct);
 			else

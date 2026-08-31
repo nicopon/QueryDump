@@ -101,7 +101,9 @@ public class MaskDataTransformer : BaseColumnarTransformer, IRequiresOptions<DtP
 			}
 			else
 			{
-				arrays[i] = batch.Column(i);
+				// Aliased column reused in the output batch — retain so the segment runner can
+				// dispose the input without freeing buffers this output still points at.
+				arrays[i] = ArrowOwnership.RetainArray(batch.Column(i));
 				outputFields.Add(field);
 			}
 		}

@@ -271,12 +271,13 @@ public sealed partial class FakeDataTransformer : BaseColumnarTransformer, IRequ
 			outputFields.Add(_outputSchema.GetFieldByIndex(i));
 		var batchSchema = new Schema(outputFields, null);
 
-		// Pre-fill output arrays: non-fake real columns copied directly.
+		// Pre-fill output arrays: non-fake real columns aliased into the output. Retain so the
+		// segment runner can dispose the input without freeing buffers this output points at.
 		var resultArrays = new Apache.Arrow.IArrowArray[totalColumns];
 		for (int i = 0; i < _realColumnCount; i++)
 		{
 			if (!hasFakeForCol[i])
-				resultArrays[i] = batch.Column(i);
+				resultArrays[i] = ArrowOwnership.RetainArray(batch.Column(i));
 		}
 
 		// Builders for fake columns and virtual columns only.

@@ -159,7 +159,9 @@ public sealed partial class FormatDataTransformer : BaseColumnarTransformer, IRe
 			{
 				if (colIdx < _realColumnCount)
 				{
-					resultArrays[colIdx] = batch.Column(colIdx);
+					// Aliased column reused in the output batch — retain so the segment runner
+					// can dispose the input without freeing buffers this output still points at.
+					resultArrays[colIdx] = ArrowOwnership.RetainArray(batch.Column(colIdx));
 				}
 				continue;
 			}

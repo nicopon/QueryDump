@@ -255,6 +255,37 @@ already; keeping them in one class is the fix's whole point, and they must be ch
 Guarded by `validate_core_boundary.sh` (no `new DateTimeOffset(` outside the rule) and
 `validate_temporal.sh` (the real binary under two `TZ` values must produce identical output).
 
+### RecordBatch ownership (columnar path)
+
+Arrow buffers are off-heap (`NativeMemoryAllocator`) and reference-counted. A `RecordBatch` that
+nobody disposes is not a leak the GC reports — it is native RSS the GC cannot see, reclaimed only
+when the finalizer eventually runs. So the columnar path has one rule:
+
+**Every `RecordBatch` has exactly one owner. The owner calls `Dispose()` exactly once, then never
+touches it. Ownership moves downstream when the batch is yielded, returned, or written.**
+
+- A **reader** / **row→columnar bridge** produces batches and hands each one to its consumer.
+- `PipelineExecutor.ApplyColumnarSegmentAsync` owns every batch it pulls from its source. It
+  disposes that input after the transformer chain has run — **unless the transformer returned the
+  same reference** (`ReferenceEquals`), which means pure pass-through and the one object is still
+  the live batch. It does **not** dispose what it yields; the next segment or the writer owns that.
+- An `IColumnarTransformer` that returns a **new** `RecordBatch` reusing any input column buffer
+  **must** wrap that column in `ArrowOwnership.RetainArray(...)`. Without the retain, the segment
+  runner's dispose of the input frees buffers the output still points at (use-after-free). The
+  six transformers that alias columns — Project, Mask, Overwrite, Null, Format, Fake — all do this.
+- The **writer** takes ownership via `WriteRecordBatchAsync` (its interface doc says so) and
+  disposes.
+- `BridgeColumnarToRowsAsync` is a terminal consumer: `using (batch)`.
+- **Fan-out** (`DagOrchestrator` broadcast): the broadcaster owns the upstream batch, gives each of
+  N consumers an independent batch via `ArrowOwnership.RetainAll` (refcount bump, not a deep
+  `Clone`), then disposes its own reference. Each consumer disposes the batch it received.
+
+> **Enforced by** `ArrowOwnershipTests` (CI) — `TrackingMemoryPool` asserts allocations return to
+> zero after a linear chain and after a fan-out where one branch bridges to rows. **Not covered:**
+> a new transformer that aliases a column without retaining it — no check distinguishes an aliased
+> array from a rebuilt one. Discipline, plus the `RetainArray` call reads as the obvious idiom next
+> to the five that already have it.
+
 ## Apache.Arrow.Serialization
 
 Standalone library with no DtPipe deps (only `Apache.Arrow`):

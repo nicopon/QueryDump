@@ -41,14 +41,20 @@ public sealed class PipelineExecutor
         await foreach (var batch in source.WithCancellation(ct))
         {
             var batchToWriter = batch;
+            bool sliced = false;
             if (limit > 0 && rowCount + batch.Length > limit)
             {
                 int remaining = (int)(limit - rowCount);
-                batchToWriter = batch.Slice(0, remaining);
+                // SliceShared (not Slice): the slice reference-counts the buffers so it outlives
+                // the original batch, which we dispose right after handing the slice to the writer.
+                batchToWriter = batch.SliceShared(0, remaining);
+                sliced = true;
             }
 
             if (reportReads) progress.ReportRead(batchToWriter.Length);
+            // The writer takes ownership of batchToWriter and disposes it.
             await writer.WriteRecordBatchAsync(batchToWriter, ct);
+            if (sliced) batch.Dispose();
             progress.ReportWrite(batchToWriter.Length);
             rowCount += batchToWriter.Length;
 
@@ -276,24 +282,24 @@ public sealed class PipelineExecutor
         IExportProgress progress,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // Ownership (see CLAUDE.md › "RecordBatch ownership"): this method owns every batch it
+        // pulls from `source`. It disposes each input once the transformer chain has consumed it —
+        // a transformer that returns a new batch reusing input columns has retained them, so the
+        // dispose is safe. A transformer returning the same reference is pure pass-through; that
+        // one object stays live and is disposed downstream, not here.
         await foreach (var batch in source.WithCancellation(ct))
         {
-            var currentBatch = batch;
+            RecordBatch? currentBatch = batch;
 
             foreach (var t in transformers)
             {
                 var transCol = (IColumnarTransformer)t;
-                var res = await transCol.TransformBatchAsync(currentBatch, ct);
-                if (res != null)
-                {
-                    progress.ReportTransform(t.GetType().Name.Replace("DataTransformer", ""), res.Length);
-                    currentBatch = res;
-                }
-                else
-                {
-                    currentBatch = null;
-                    break;
-                }
+                var res = await transCol.TransformBatchAsync(currentBatch!, ct);
+                if (!ReferenceEquals(res, currentBatch))
+                    currentBatch!.Dispose();
+                currentBatch = res;
+                if (currentBatch == null) break;
+                progress.ReportTransform(t.GetType().Name.Replace("DataTransformer", ""), currentBatch.Length);
             }
             if (currentBatch != null)
             {
@@ -301,7 +307,8 @@ public sealed class PipelineExecutor
             }
         }
 
-        // Process final flush from stateful transformers
+        // Process final flush from stateful transformers. A flushed batch is owned here; run it
+        // through the downstream transformers with the same dispose-the-input rule.
         for (int i = 0; i < transformers.Count; i++)
         {
             var t = (IColumnarTransformer)transformers[i];
@@ -310,13 +317,15 @@ public sealed class PipelineExecutor
                 if (flushedBatch == null) continue;
                 RecordBatch? current = flushedBatch;
 
-                // Pass flushed batch through subsequent transformers
-                for (int j = i + 1; j < transformers.Count; j++)
+                for (int j = i + 1; j < transformers.Count && current != null; j++)
                 {
-                    if (current == null) break;
                     var nextT = (IColumnarTransformer)transformers[j];
-                    current = await nextT.TransformBatchAsync(current, ct);
-                    progress.ReportTransform(nextT.GetType().Name, current?.Length ?? 0);
+                    var res = await nextT.TransformBatchAsync(current, ct);
+                    if (!ReferenceEquals(res, current))
+                        current.Dispose();
+                    current = res;
+                    if (current != null)
+                        progress.ReportTransform(nextT.GetType().Name, current.Length);
                 }
 
                 if (current != null) yield return current;
@@ -496,10 +505,17 @@ public sealed class PipelineExecutor
         await foreach (var batch in source.WithCancellation(ct))
         {
             var sampled = SampleBatch(batch, rate, sampler);
-            if (sampled.Length > 0)
+            if (ReferenceEquals(sampled, batch))
             {
                 yield return sampled;
+                continue;
             }
+            // SampleBatch built a new batch (or an empty one): the input is ours to dispose.
+            batch.Dispose();
+            if (sampled.Length > 0)
+                yield return sampled;
+            else
+                sampled.Dispose();
         }
     }
 
