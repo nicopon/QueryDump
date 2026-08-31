@@ -114,6 +114,8 @@ public sealed class CsvDataWriter : IRowDataWriter, IRequiresOptions<CsvWriterOp
 
 	public ValueTask InitializeAsync(IReadOnlyList<PipeColumnInfo> columns, CancellationToken ct = default)
 	{
+		foreach (var col in columns) EnsureRenderable(col);
+
 		if (_outputPath == "-")
 		{
 			_outputStream = Console.OpenStandardOutput();
@@ -195,6 +197,28 @@ public sealed class CsvDataWriter : IRowDataWriter, IRequiresOptions<CsvWriterOp
 		_rowsInBuffer = 0;
 	}
 
+	/// <summary>
+	/// Rejects, at init, a column whose type FormatValue could only render through
+	/// <see cref="object.ToString"/> — which yields the type name, not the data. Without this a
+	/// DuckDB LIST column produced a file full of "System.Collections.Generic.List`1[...]" and
+	/// exit 0. Checked once per column: the per-cell path must stay free of type inspection.
+	/// </summary>
+	private static void EnsureRenderable(PipeColumnInfo column)
+	{
+		var type = Nullable.GetUnderlyingType(column.ClrType) ?? column.ClrType;
+
+		// A dynamic column carries no type to judge; its values are shaped at write time.
+		if (type == typeof(object)) return;
+		// Rendered by a dedicated case in FormatValue.
+		if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type)) return;
+		// Anything that overrides ToString() renders itself meaningfully (Guid, enums, numbers…).
+		if (type.GetMethod("ToString", Type.EmptyTypes)?.DeclaringType != typeof(object)) return;
+
+		throw new NotSupportedException(
+			$"Column '{column.Name}' has type {type.Name}, which the CSV writer cannot render as text. " +
+			"Project it to a supported type in your query, for example by casting it to JSON or text.");
+	}
+
 	private string? FormatValue(object? value, PipeColumnInfo column)
 	{
 		if (value is null)
@@ -227,6 +251,14 @@ public sealed class CsvDataWriter : IRowDataWriter, IRequiresOptions<CsvWriterOp
 
 			// Complex structures (e.g. from Arrow StructType) as JSON
 			System.Collections.IDictionary dict => JsonSerializer.Serialize(dict),
+
+			// string is IEnumerable, so it must be matched before the collection case below —
+			// otherwise every text cell would be written as a JSON array of characters.
+			string s => s,
+
+			// Collections (e.g. from Arrow ListType) as JSON. Serialized against the runtime
+			// type: against IEnumerable, System.Text.Json emits an empty object.
+			System.Collections.IEnumerable seq => JsonSerializer.Serialize(seq, seq.GetType()),
 
 			// Everything else as string
 			_ => Convert.ToString(value, CultureInfo.InvariantCulture)

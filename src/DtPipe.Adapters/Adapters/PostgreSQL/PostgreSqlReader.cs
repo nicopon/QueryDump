@@ -78,7 +78,7 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
             // Build PipeColumnInfo from DB schema (CLR types) — authoritative for DtPipe pipeline
             Columns = dbColumns.Select(c => new PipeColumnInfo(
                 c.ColumnName,
-                c.DataType ?? typeof(object),
+                ResolveClrType(c),
                 c.AllowDBNull ?? true,
                 IsCaseSensitive: c.ColumnName != c.ColumnName.ToLowerInvariant()
             )).ToList();
@@ -86,6 +86,26 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
         // Build Arrow schema from PipeColumnInfo via ArrowTypeMapper — guarantees consistency
         Schema = ArrowSchemaFactory.Create(Columns);
+    }
+
+    /// <summary>
+    /// CLR type for a column. Npgsql reports every array column as the abstract
+    /// <see cref="System.Array"/>, which carries no element type, so the schema factory has nothing
+    /// to map. The element is recovered from the provider type name ("integer[]" → int[]) using the
+    /// same table the writer maps with. Resolving it here rather than in the shared mapper keeps
+    /// Postgres' spelling in the Postgres adapter.
+    /// </summary>
+    private static Type ResolveClrType(System.Data.Common.DbColumn column)
+    {
+        var declared = column.DataType ?? typeof(object);
+        if (declared != typeof(System.Array)) return declared;
+
+        var name = column.DataTypeName;
+        if (string.IsNullOrEmpty(name) || !name.EndsWith("[]", StringComparison.Ordinal))
+            return typeof(string[]);
+
+        var element = PostgreSqlTypeConverter.Instance.MapFromProviderType(name[..^2]);
+        return element.MakeArrayType();
     }
 
     public async IAsyncEnumerable<RecordBatch> ReadRecordBatchesAsync(
@@ -174,6 +194,12 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
 
     private static (Action<NpgsqlBinaryExporter> Read, Func<IArrowArray> Build) BuildBinaryColumnReader(NpgsqlTypes.NpgsqlDbType npgsqlType, IArrowType arrowType)
     {
+        // The array built here must match the field the schema declares. The fallback case below
+        // builds a StringArray from Read<object>().ToString(), so without this an array column
+        // declared as a list silently produced a column of whitespace and exit 0.
+        if (arrowType is ListType listType)
+            return BuildBinaryListReader(listType);
+
         return npgsqlType switch
         {
             NpgsqlTypes.NpgsqlDbType.Boolean => BuildTyped(
@@ -255,6 +281,45 @@ public sealed partial class PostgreSqlReader : IColumnarStreamReader, IBatchSize
                 (e, b) => { if (e.IsNull) { e.Skip(); b.AppendNull(); } else b.Append(e.Read<object>(npgsqlType)?.ToString()); },
                 b => b.Build())
         };
+    }
+
+    /// <summary>
+    /// Reads a Postgres array column from the binary COPY stream into an Arrow list. Npgsql
+    /// materializes the array itself (int[], string[]…), so the element type never has to be known
+    /// at compile time here; the shared list builder walks it. Element conversion stays with
+    /// <see cref="ArrowTypeMapper"/>, which owns the CLR↔Arrow map.
+    /// </summary>
+    private static (Action<NpgsqlBinaryExporter> Read, Func<IArrowArray> Build) BuildBinaryListReader(ListType listType)
+    {
+        var builder = ArrowTypeMapper.CreateBuilder(listType);
+
+        // Npgsql needs the concrete array type to decode the binary payload; Read<object>() yields
+        // nothing usable. Nullable element types throughout, because a Postgres array may hold
+        // NULLs and reading those into int[] throws. Chosen once per column, not per row.
+        Func<NpgsqlBinaryExporter, object?> readArray = listType.ValueDataType switch
+        {
+            BooleanType => e => e.Read<bool?[]>(),
+            Int16Type => e => e.Read<short?[]>(),
+            Int32Type => e => e.Read<int?[]>(),
+            Int64Type => e => e.Read<long?[]>(),
+            FloatType => e => e.Read<float?[]>(),
+            DoubleType => e => e.Read<double?[]>(),
+            Decimal128Type => e => e.Read<decimal?[]>(),
+            StringType => e => e.Read<string?[]>(),
+            TimestampType => e => e.Read<DateTime?[]>(),
+            Date32Type => e => e.Read<DateOnly?[]>(),
+            _ => throw new NotSupportedException(
+                $"Postgres array of {listType.ValueDataType.Name} is not supported. " +
+                "Cast the column in your query, for example with array_to_json(col)::text.")
+        };
+
+        return (
+            e =>
+            {
+                if (e.IsNull) { e.Skip(); ArrowTypeMapper.AppendNull(builder); }
+                else ArrowTypeMapper.AppendValue(builder, readArray(e));
+            },
+            () => ArrowTypeMapper.BuildArray(builder));
     }
 
     private static (Action<NpgsqlBinaryExporter>, Func<IArrowArray>) BuildTyped<TBuilder>(

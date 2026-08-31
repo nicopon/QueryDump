@@ -5,6 +5,7 @@ using DtPipe.Core.Options;
 using Parquet;
 using Parquet.Data;
 using Parquet.Schema;
+using ParquetField = Parquet.Schema.Field;
 using System.IO;
 
 namespace DtPipe.Adapters.Parquet;
@@ -21,7 +22,7 @@ public sealed class ParquetDataWriter(string outputPath) : IColumnarDataWriter, 
 	private ParquetSchema? _schema;
 	private ParquetWriter? _writer;
 	private IReadOnlyList<PipeColumnInfo>? _columns;
-	private DataField[]? _dataFields;
+	private ParquetField[]? _dataFields;
 
 	public bool RequiresTargetInspection => false;
 
@@ -133,22 +134,52 @@ public sealed class ParquetDataWriter(string outputPath) : IColumnarDataWriter, 
 			for (int i = 0; i < batch.ColumnCount; i++)
 			{
 				var arrowArray = batch.Column(i);
-				var dataField = _dataFields[i];
-				await ArrowToParquetConverter.WriteColumnAsync(rowGroup, arrowArray, dataField, ct);
+				await ArrowToParquetConverter.WriteColumnAsync(rowGroup, arrowArray, _dataFields[i], ct);
 			}
 		}
 	}
 
-	private static DataField[] BuildDataFields(IReadOnlyList<PipeColumnInfo> columns)
+	private static ParquetField[] BuildDataFields(IReadOnlyList<PipeColumnInfo> columns)
 	{
-		var fields = new DataField[columns.Count];
+		var fields = new ParquetField[columns.Count];
 
 		for (var i = 0; i < columns.Count; i++)
 		{
-			fields[i] = MapToDataField(columns[i]);
+			fields[i] = MapToField(columns[i]);
 		}
 
 		return fields;
+	}
+
+	/// <summary>
+	/// Parquet field for a column. A collection becomes a real Parquet LIST rather than text:
+	/// the format carries lists natively, and writing them as strings would misreport the schema
+	/// to every reader. "list"/"element" are the names the Parquet spec uses for the container and
+	/// its items — the same ones DuckDB emits.
+	/// </summary>
+	private static ParquetField MapToField(PipeColumnInfo col)
+	{
+		var baseType = Nullable.GetUnderlyingType(col.ClrType) ?? col.ClrType;
+
+		if (baseType != typeof(byte[]) && baseType != typeof(string) &&
+		    TryGetElementType(baseType, out var elementType))
+		{
+			var item = MapToDataField(new PipeColumnInfo("element", elementType, true));
+			return new ListField(col.Name, item, "list");
+		}
+
+		return MapToDataField(col);
+	}
+
+	private static bool TryGetElementType(Type type, out Type elementType)
+	{
+		elementType = typeof(object);
+		if (type.IsArray) { elementType = type.GetElementType()!; return true; }
+		var enumerable = type.GetInterfaces().FirstOrDefault(
+			i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+		if (enumerable is null) return false;
+		elementType = enumerable.GetGenericArguments()[0];
+		return true;
 	}
 
 	private static DataField MapToDataField(PipeColumnInfo col)

@@ -89,7 +89,57 @@ public static class ArrowTypeMapper
     public static object? GetValueForField(IArrowArray array, Field field, int index)
         => ArrowTypeMap.GetValue(array, index, field);
 
-    public static Apache.Arrow.Serialization.Mapping.ArrowTypeResult GetLogicalType(Type clrType) => Apache.Arrow.Serialization.Mapping.ArrowTypeMap.GetLogicalType(clrType);
+    /// <summary>
+    /// Maps a CLR type to its Arrow type. Collections become a <see cref="ListType"/>; everything
+    /// else stays <see cref="ArrowTypeMap"/>'s business, which still throws for a type dtpipe
+    /// cannot represent.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT delegated to <c>ArrowReflectionEngine.GetLogicalType</c>, which never
+    /// throws: it turns any unrecognised type into a StructType of its public properties. Routing
+    /// through it would replace a fail-closed schema error with a reflected shape — a Postgres
+    /// 'point' would silently become a struct of Npgsql's internals rather than being refused.
+    /// </remarks>
+    public static Apache.Arrow.Serialization.Mapping.ArrowTypeResult GetLogicalType(Type clrType)
+    {
+        if (TryGetCollectionElementType(clrType, out var elementType))
+        {
+            var item = ArrowTypeMap.GetField("item", GetLogicalType(elementType), isNullable: true);
+            return new Apache.Arrow.Serialization.Mapping.ArrowTypeResult(new ListType(item));
+        }
+
+        return ArrowTypeMap.GetLogicalType(clrType);
+    }
+
+    /// <summary>
+    /// True for CLR collections that represent an Arrow list. <see cref="byte"/>[] and
+    /// <see cref="string"/> are excluded on purpose: both are collections in CLR terms, and both
+    /// already have their own Arrow encoding (Binary and Utf8).
+    /// </summary>
+    private static bool TryGetCollectionElementType(Type type, out Type elementType)
+    {
+        elementType = typeof(object);
+        var bare = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (bare == typeof(byte[]) || bare == typeof(string)) return false;
+
+        if (bare.IsArray)
+        {
+            elementType = bare.GetElementType()!;
+            return true;
+        }
+
+        if (!bare.IsGenericType) return false;
+
+        var definition = bare.GetGenericTypeDefinition();
+        if (definition != typeof(List<>) && definition != typeof(IList<>) &&
+            definition != typeof(IReadOnlyList<>) && definition != typeof(ICollection<>) &&
+            definition != typeof(IEnumerable<>) && definition != typeof(HashSet<>))
+            return false;
+
+        elementType = bare.GetGenericArguments()[0];
+        return true;
+    }
 
     public static Apache.Arrow.Field GetField(string name, Type clrType, bool isNullable = true) => 
         Apache.Arrow.Serialization.Mapping.ArrowTypeMap.GetField(name, GetLogicalType(clrType), isNullable);
