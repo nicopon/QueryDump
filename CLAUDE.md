@@ -167,6 +167,15 @@ Canonical processor grammar (see `REFERENCE.md#dag-syntax` for per-flag semantic
 --from <alias[,alias...]> [--ref <alias[,alias...]>] (--sql "<query>" | --<processor>) [--alias <name>] [-o <dest>]
 ```
 
+**An alias list is always comma-separated, and repeating a flag never accumulates.** Repetition has
+exactly one meaning in this grammar — `-i`, `--from` and `--job` open a new branch — so a value flag
+that also grew on repeat would teach that `--from a --from b` adds a source when it starts a second
+branch. Every other value flag is scalar and rejects a second occurrence in the same stage.
+
+How many aliases `--from` accepts is the **processor's** business, not the grammar's: `--merge` takes
+several, `--sql` takes exactly one and materializes the rest through `--ref` (each factory validates
+its own arity). The `[,alias...]` above is therefore permitted by the syntax, not by every processor.
+
 - `--job <file>` / `-j <file>` loads a YAML pipeline job file; `PipelineToJobConverter` reads it and applies any additional CLI flags as overrides.
 - `--export-job <file>` serializes the current CLI pipeline to a YAML job file via `JobFileWriter` and exits without running the pipeline.
 

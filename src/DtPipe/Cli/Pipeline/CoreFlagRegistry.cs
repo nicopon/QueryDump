@@ -15,7 +15,11 @@ public static class CoreFlagRegistry
         registry.Register(new FlagDef("--output", new[] { "-o" }, FlagArity.Scalar, FlagScope.PerBranch, "Output target (prefixed ADO.NET, file, or '-')", FlagStage.All));
         registry.Register(new FlagDef("--from",   new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Source alias(es) for this branch", FlagStage.All));
         registry.Register(new FlagDef("--alias",  new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Alias for the current branch",     FlagStage.All));
-        registry.Register(new FlagDef("--ref",    new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Reference alias for JOINs",        FlagStage.All));
+        // Scalar, like every other value flag: an alias list is written with commas
+        // (--ref a,b). The grammar gives repetition exactly one meaning — opening a branch, as
+        // -i/--from/--job do — and a flag that also accumulated on repeat would teach that
+        // '--from a --from b' adds a source, when it starts a second branch instead.
+        registry.Register(new FlagDef("--ref",    new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Reference alias(es) for JOINs, comma-separated", FlagStage.All));
         registry.Register(new FlagDef("--job",    new[] { "-j" },  FlagArity.Scalar, FlagScope.Global,    "YAML job file path",               FlagStage.All));
 
         // Global meta flags

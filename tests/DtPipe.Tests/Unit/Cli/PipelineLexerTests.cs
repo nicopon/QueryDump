@@ -187,6 +187,66 @@ public class PipelineLexerTests
         Assert.Contains("SELECT * FROM m JOIN r", pipeline.Branches[2].RawArgs);
     }
 
+    private string[] SqlBranchWith(params string[] refArgs) => new[] {
+        "-i", "a.csv", "--alias", "m",
+        "-i", "b.csv", "--alias", "r",
+        "-i", "c.csv", "--alias", "r2",
+        "--from", "m"
+    }.Concat(refArgs).Concat(new[] {
+        "--sql", "SELECT * FROM m JOIN r JOIN r2", "-o", "out.csv"
+    }).ToArray();
+
+    [Fact]
+    public void Parse_CommaSeparatedRefs_AreOneAliasList()
+    {
+        var pipeline = _lexer.Parse(SqlBranchWith("--ref", "r,r2"));
+
+        Assert.Equal(new[] { "r", "r2" }, pipeline.Branches[^1].Ref);
+    }
+
+    /// <summary>
+    /// Repetition means "open a branch" everywhere in this grammar. A value flag that accumulated
+    /// instead would teach the same spelling for '--from', where it starts a second branch.
+    /// </summary>
+    [Fact]
+    public void Parse_RepeatedRef_ThrowsAndNamesTheCommaForm()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => _lexer.Parse(SqlBranchWith("--ref", "r", "--ref", "r2")));
+
+        Assert.Contains("--ref a,b", ex.Message);
+    }
+
+    [Fact]
+    public void Parse_RepeatedFromWithEmptyBranch_Throws()
+    {
+        var args = new[] {
+            "-i", "a.csv", "--alias", "a",
+            "-i", "b.csv", "--alias", "b",
+            "--from", "a", "--from", "b", "--merge", "-o", "out.csv"
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() => _lexer.Parse(args));
+        Assert.Contains("--from a,", ex.Message);
+    }
+
+    [Fact]
+    public void Parse_RepeatedFromWithPopulatedBranches_IsAccepted()
+    {
+        // Diamond and fan-out both repeat --from; each branch carries an alias or an output.
+        var args = new[] {
+            "-i", "s.csv", "--alias", "s",
+            "--from", "s", "--filter", "row.x > 1", "--alias", "hi",
+            "--from", "s", "--filter", "row.x <= 1", "--alias", "lo",
+            "--from", "hi", "-o", "a.csv",
+            "--from", "lo", "-o", "b.csv"
+        };
+
+        var pipeline = _lexer.Parse(args);
+
+        Assert.Equal(5, pipeline.Branches.Count);
+    }
+
     [Fact]
     public void Parse_Merge_ReturnsCorrectTopology()
     {

@@ -105,7 +105,7 @@ public class PipelineLexer
                         throw new InvalidOperationException(
                             $"Flag '{token}' appears more than once in the same branch stage ({currentStage.ToString().ToLowerInvariant()}). " +
                             "Each non-repeatable flag may appear once per stage: reader flags before transformers, " +
-                            "writer flags after -o.");
+                            "writer flags after -o." + AliasListHint(def.Name));
                 }
 
                 if (!currentBranchFlags.ContainsKey(def.Name)) currentBranchFlags[def.Name] = new List<string>();
@@ -164,7 +164,44 @@ public class PipelineLexer
         if (currentBranchArgs.Count > 0)
             branches.Add(BuildBranch(currentBranchFlags, currentBranchArgs));
 
+        foreach (var branch in branches) RejectOrphanBranch(branch);
+
         return new ParsedPipeline(MapGlobals(globalDict), branches);
+    }
+
+    /// <summary>
+    /// Extra sentence for flags whose value is an alias list. Repeating one is the mistake a
+    /// reader makes when they mean "and also this alias"; the generic message about stages does
+    /// not tell them the spelling that works.
+    /// </summary>
+    private static string AliasListHint(string flagName) => flagName switch
+    {
+        "--ref" => " To name several aliases, list them on a single flag: --ref a,b.",
+        _ => ""
+    };
+
+    /// <summary>
+    /// A second '--from' opens a new branch, so '--from a --from b' yields two branches rather than
+    /// one branch reading two sources — and the first is left with nothing to do. Writing it that
+    /// way is a mistake for 'a,b', and the failure it used to produce named a downstream component
+    /// instead of the flag. Consumers of a fan-out ('--from j -o dst') and the stages of a diamond
+    /// ('--from s --filter … --alias hi') all carry an alias, an output or a transformer, so only
+    /// the empty branch is rejected.
+    /// </summary>
+    private static void RejectOrphanBranch(BranchSpec branch)
+    {
+        if (branch.From.Count == 0) return;
+        if (!string.IsNullOrEmpty(branch.Output) || !string.IsNullOrEmpty(branch.Alias)) return;
+        if (branch.PipelineArgs.Length > 0 || branch.WriterArgs.Length > 0) return;
+
+        // Everything the branch carries is the --from itself and its value.
+        var carried = branch.ReaderArgs.Where(a => a is not ("--from" or "--ref")).ToArray();
+        if (carried.Length > branch.From.Count + branch.Ref.Count) return;
+
+        throw new InvalidOperationException(
+            $"The branch reading from '{string.Join(",", branch.From)}' has no output, no alias and no transformer, " +
+            "so it produces nothing. A second '--from' starts a new branch; to read several sources " +
+            $"in ONE branch, list them on a single flag: --from {string.Join(",", branch.From)},<other-alias>.");
     }
 
     /// <summary>

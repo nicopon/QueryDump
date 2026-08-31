@@ -361,7 +361,7 @@ dtpipe \
   -i events.parquet --alias ev \
   -i users.csv --alias users \
   -i products.csv --alias products \
-  --from ev --ref users --ref products \
+  --from ev --ref users,products \
   --sql "
     SELECT e.ts, u.name, p.title
     FROM ev e

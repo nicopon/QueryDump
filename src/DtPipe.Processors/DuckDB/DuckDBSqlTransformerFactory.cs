@@ -51,6 +51,15 @@ public class DuckDBSqlTransformerFactory : IStreamTransformerFactory
 
         var mainAlias = BranchArgParser.ExtractValue(branchArgs, "--from") ?? "";
 
+        // Only one source streams into a SQL branch; the others are materialized through --ref.
+        // Without this the comma reached the channel registry as part of the alias, and the run
+        // failed on "no channel named 'a,b'" — a name the user never wrote.
+        if (mainAlias.Contains(','))
+            throw new ArgumentException(
+                $"--sql takes a single streaming source, but --from names several ('{mainAlias}'). " +
+                $"Keep one on --from and pass the others to --ref: --from {mainAlias.Split(',')[0].Trim()} " +
+                $"--ref {string.Join(",", mainAlias.Split(',').Skip(1).Select(a => a.Trim()))}.");
+
         var refAliases = BranchArgParser.ExtractAllValues(branchArgs, "--ref")
             .SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .ToArray();
