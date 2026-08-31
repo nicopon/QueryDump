@@ -254,6 +254,29 @@ into one step; a different flag type starts a new step.
 | `--project` | `"Id,Name,Email"` | Keep only these columns (whitelist) |
 | `--drop` | `"InternalId"` | Remove a column (blacklist) |
 
+### Collection columns
+
+A PostgreSQL array (`int[]`, `text[]`) and a DuckDB `LIST` move like any other column. A NULL
+list, an empty list and a NULL element inside a list stay distinct end to end.
+
+| Target | Result |
+|:---|:---|
+| Parquet | a native Parquet `LIST` |
+| Arrow | an Arrow `ListType` column |
+| CSV, and any text target | the list rendered as JSON — `[10,20,30]` |
+
+Two combinations are refused rather than approximated, both with the rewrite to apply:
+
+- **A list of text into Parquet.** Writing it would need definition levels, which the Parquet
+  library exposes for value types only; without them a NULL list and an empty one cannot be told
+  apart. Project the column instead: `array_to_json(col)::text`.
+- **A NULL element inside a DuckDB `LIST`.** The DuckDB driver refuses to materialize it, whatever
+  the target. Postgres arrays have no such limit.
+
+A composite type with no representation — a PostgreSQL `point`, a DuckDB `STRUCT` — is refused at
+schema time rather than written as something else. Cast it in your query: `col::json`,
+`array_to_json(col)::text`.
+
 ---
 
 ## Target (Writer) Options
@@ -377,6 +400,15 @@ DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached throug
 
 > **`--ref` is intentionally materialized.** Secondary sources declared via `--ref` are read fully
 > into memory so the query engine can build a cost-based plan. Only the `--from` source streams.
+
+> **An alias list is comma-separated; repeating a flag never adds to it.** Repetition has one
+> meaning in this grammar — `-i`, `--from` and `--job` open a new branch — so `--from a --from b`
+> declares two branches, not one branch reading two sources. Write `--ref a,b`; `--ref a --ref b`
+> is refused.
+
+> **How many aliases `--from` accepts depends on the processor.** `--merge` takes several;
+> `--sql` streams exactly one and materializes the rest through `--ref`, so `--from a,b --sql`
+> is refused with the rewrite to apply.
 
 #### Implicit branch-split rules
 
