@@ -5,7 +5,7 @@ using DtPipe.Adapters.Sqlite;
 using DtPipe.Adapters.SqlServer;
 using DtPipe.Tests.Helpers;
 using DuckDB.NET.Data;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;

@@ -4,7 +4,7 @@ using System.Linq;
 using Apache.Arrow;
 using Apache.Arrow.Types;
 using DtPipe.Core.Infrastructure.Arrow;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests;

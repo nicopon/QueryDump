@@ -11,7 +11,7 @@ using DtPipe.Transformers.Row.Compute;
 using DtPipe.Services;
 using DtPipe.Transformers.Services;
 using Apache.Arrow.Types;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;

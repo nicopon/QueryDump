@@ -3,7 +3,7 @@ using Apache.Arrow.Serialization.Reflection;
 using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Core.Models;
 using DtPipe.Adapters.Arrow;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Adapters.Arrow;

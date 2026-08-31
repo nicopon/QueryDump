@@ -8,7 +8,7 @@ using DtPipe.Core.Pipelines;
 using DtPipe.Core.Pipelines.Dag;
 using DtPipe.Services;
 using Apache.Arrow;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;

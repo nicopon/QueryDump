@@ -1,7 +1,7 @@
 using DtPipe.Adapters.Sqlite;
 using DtPipe.Core.Models;
 using DtPipe.Core.Options;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;

@@ -12,7 +12,7 @@ using DtPipe.Transformers.Arrow.Format;
 using DtPipe.Transformers.Arrow.Null;
 using DtPipe.Services;
 using DtPipe.Transformers.Arrow.Overwrite;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;

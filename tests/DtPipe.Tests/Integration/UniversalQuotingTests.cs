@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Oracle.ManagedDataAccess.Client;
 using Xunit;
-using FluentAssertions;
+using AwesomeAssertions;
 using System.Security.Cryptography;
 using System.Text;
 

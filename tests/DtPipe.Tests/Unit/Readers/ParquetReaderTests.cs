@@ -1,7 +1,7 @@
 using DtPipe.Adapters.Parquet;
 using DtPipe.Cli.Infrastructure;
 using DtPipe.Core.Options;
-using FluentAssertions;
+using AwesomeAssertions;
 using Parquet;
 using Parquet.Data;
 using Parquet.Schema;

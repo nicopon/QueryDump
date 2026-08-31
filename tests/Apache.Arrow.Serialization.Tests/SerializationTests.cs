@@ -3,7 +3,7 @@ using Apache.Arrow.Arrays;
 using Apache.Arrow.Serialization;
 using Apache.Arrow.Serialization.Mapping;
 using Apache.Arrow.Serialization.Reflection;
-using FluentAssertions;
+using AwesomeAssertions;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;

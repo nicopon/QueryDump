@@ -1,6 +1,6 @@
 using DtPipe.Core.Models;
 using DtPipe.Transformers.Arrow.Fake;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests;

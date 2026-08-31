@@ -4,7 +4,7 @@ using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Core.Models;
 using DtPipe.Transformers.Arrow.Format;
 using DtPipe.Transformers.Arrow.Overwrite;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests;

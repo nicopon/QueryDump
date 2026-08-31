@@ -1,6 +1,6 @@
 using DtPipe.Adapters.JsonL;
 using DtPipe.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Adapters.JsonL;

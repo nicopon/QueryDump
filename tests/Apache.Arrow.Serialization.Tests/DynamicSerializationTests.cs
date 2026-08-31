@@ -2,7 +2,7 @@ using System;
 using Apache.Arrow;
 using Apache.Arrow.Serialization;
 using Apache.Arrow.Types;
-using FluentAssertions;
+using AwesomeAssertions;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;

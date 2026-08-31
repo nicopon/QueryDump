@@ -1,7 +1,7 @@
 using DtPipe.Adapters.DuckDB;
 using DtPipe.Tests.Helpers;
 using DuckDB.NET.Data;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 

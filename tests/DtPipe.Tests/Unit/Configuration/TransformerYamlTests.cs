@@ -4,7 +4,7 @@ using DtPipe.Transformers.Row.Compute;
 using DtPipe.Transformers.Row.Expand;
 using DtPipe.Transformers.Services;
 using DtPipe.Core.Options;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
 

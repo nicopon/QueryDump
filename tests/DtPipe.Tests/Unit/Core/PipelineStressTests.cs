@@ -14,7 +14,7 @@ using DtPipe.Transformers.Arrow.Overwrite;
 using DtPipe.Adapters.Infrastructure.Arrow;
 using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Services;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;

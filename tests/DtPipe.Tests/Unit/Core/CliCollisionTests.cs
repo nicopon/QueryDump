@@ -3,7 +3,7 @@ using DtPipe.Cli.Pipeline;
 using DtPipe.Core.Options;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Core;

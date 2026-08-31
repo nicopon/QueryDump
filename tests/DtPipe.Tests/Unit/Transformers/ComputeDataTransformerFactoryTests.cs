@@ -1,6 +1,6 @@
 using DtPipe.Transformers.Services;
 using DtPipe.Transformers.Row.Compute;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Transformers;

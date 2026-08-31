@@ -1,7 +1,7 @@
 using DtPipe.Adapters.Csv;
 using DtPipe.Adapters.Parquet;
 using DtPipe.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Writers;

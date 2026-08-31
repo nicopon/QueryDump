@@ -4,7 +4,7 @@ using DtPipe.Configuration;
 using DtPipe.Core.Models;
 using DtPipe.Core.Options;
 using DuckDB.NET.Data;
-using FluentAssertions;
+using AwesomeAssertions;
 using DtPipe.Core.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using DtPipe.Tests;

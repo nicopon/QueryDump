@@ -8,7 +8,7 @@ using DtPipe.Transformers.Arrow.Fake;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
-using FluentAssertions;
+using AwesomeAssertions;
 using System.IO;
 
 namespace DtPipe.Tests.Integration;

@@ -1,6 +1,6 @@
 using Apache.Arrow;
 using DtPipe.Adapters.Generate;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit;

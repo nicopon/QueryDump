@@ -3,7 +3,7 @@ using DtPipe.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Xunit;
-using FluentAssertions;
+using AwesomeAssertions;
 using Apache.Arrow;
 
 namespace DtPipe.Tests.Integration;

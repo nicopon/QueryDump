@@ -1,6 +1,6 @@
 using DtPipe.Adapters.Xml;
 using DtPipe.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using System.IO;
 using System;

@@ -2,7 +2,7 @@ using DtPipe.Configuration;
 using DtPipe.Cli.Infrastructure;
 using DtPipe.Cli.Pipeline;
 using DtPipe.Core.Abstractions;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Configuration;

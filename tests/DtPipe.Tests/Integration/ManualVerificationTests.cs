@@ -8,7 +8,7 @@ using DtPipe.Core.Options;
 using DtPipe.Core.Pipelines;
 using DtPipe.Services;
 using DtPipe.Transformers.Arrow.Fake;
-using FluentAssertions;
+using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;

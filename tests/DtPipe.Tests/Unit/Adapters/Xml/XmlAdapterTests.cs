@@ -1,7 +1,7 @@
 using System.Xml.Linq;
 using DtPipe.Adapters.Xml;
 using DtPipe.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Adapters.Xml;

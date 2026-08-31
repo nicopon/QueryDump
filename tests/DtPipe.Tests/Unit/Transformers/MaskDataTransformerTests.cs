@@ -1,7 +1,7 @@
 using Apache.Arrow.Types;
 using DtPipe.Core.Models;
 using DtPipe.Transformers.Arrow.Mask;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests;

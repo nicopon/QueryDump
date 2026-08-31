@@ -4,7 +4,7 @@ using DtPipe.Core.Abstractions;
 using DtPipe.Core.Attributes;
 using DtPipe.Core.Options;
 using DtPipe.Transformers.Services;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Core;
