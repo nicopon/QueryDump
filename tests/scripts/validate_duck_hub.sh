@@ -218,6 +218,15 @@ WRITE_TABLE="keyring_write_target"
 
 # Stub secret (fake keyring keeps the test hermetic; real keyring also works).
 export DTPIPE_UNSAFE_INSECURE_FAKE_KEYRING=1
+
+# The fake keyring is a plaintext file in the user's real profile, not under artifacts/.
+# Remove it on every exit path, including the failure branch below.
+case "$(uname -s)" in
+    Darwin)         FAKE_KEYRING_FILE="$HOME/Library/Application Support/dtpipe/fake_keyring.json" ;;
+    MINGW*|MSYS*)   FAKE_KEYRING_FILE="$APPDATA/dtpipe/fake_keyring.json" ;;
+    *)              FAKE_KEYRING_FILE="$HOME/.config/dtpipe/fake_keyring.json" ;;
+esac
+trap 'rm -f "$FAKE_KEYRING_FILE"' EXIT
 if ! "$DTPIPE" secret set "$SECRET_ALIAS" "CREATE TABLE IF NOT EXISTS ${INIT_TABLE} (Id INTEGER)" > /dev/null 2>&1; then
     echo "SKIP: could not store stub secret (keyring unavailable)."
 else

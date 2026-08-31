@@ -44,8 +44,16 @@ cleanup() {
         -S localhost -U sa -P 'Password123!' \
         -Q "IF OBJECT_ID('VolData') IS NOT NULL DROP TABLE VolData; IF OBJECT_ID('CompUsers') IS NOT NULL DROP TABLE CompUsers;" \
         2>/dev/null || true
-    printf 'DROP TABLE VOL_DATA PURGE;\nDROP TABLE COMP_USERS PURGE;\nEXIT\n' | \
-        docker exec -i dtpipe-integ-oracle sqlplus -s system/password@FREEPDB1 2>/dev/null || true
+    # Oracle has no DROP TABLE IF EXISTS, and sqlplus prints ORA- diagnostics on stdout, so
+    # redirecting stderr hides nothing: swallow ORA-00942 (table does not exist) in PL/SQL,
+    # the same guard init_test_data.sh uses.
+    printf "%s\n" \
+        "BEGIN EXECUTE IMMEDIATE 'DROP TABLE VOL_DATA PURGE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;" \
+        "/" \
+        "BEGIN EXECUTE IMMEDIATE 'DROP TABLE COMP_USERS PURGE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;" \
+        "/" \
+        "EXIT" | \
+        docker exec -i dtpipe-integ-oracle sqlplus -s system/password@FREEPDB1 >/dev/null 2>&1 || true
 }
 cleanup
 

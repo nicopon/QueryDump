@@ -11,6 +11,24 @@ ARTIFACTS_DIR="$SCRIPT_DIR/artifacts"
 INFRA_START="$PROJECT_ROOT/tests/infra/start_infra.sh"
 DTPIPE="$PROJECT_ROOT/dist/release/dtpipe"
 
+CLEAN=0
+for arg in "$@"; do
+    case "$arg" in
+        --clean) CLEAN=1 ;;
+        --help|-h)
+            echo "Usage: $(basename "$0") [--clean]"
+            echo "  --clean   Delete existing input data and regenerate it from scratch."
+            echo "            Without it, existing input files are kept as they are."
+            exit 0
+            ;;
+        *) echo "Unknown option: $arg (see --help)"; exit 1 ;;
+    esac
+done
+
+# Input files kept from a previous run. Counted so the warning below can name the situation
+# instead of leaving the reader to notice nine "Skipping" lines.
+KEPT=0
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -26,6 +44,12 @@ fi
 
 echo -e "${YELLOW}Step 2: Ensuring artifacts directory exists...${NC}"
 mkdir -p "$ARTIFACTS_DIR"
+
+if [ $CLEAN -eq 1 ]; then
+    echo -e "${YELLOW}--clean requested: removing existing input data...${NC}"
+    "$SCRIPT_DIR/clean_test_data.sh"
+    mkdir -p "$ARTIFACTS_DIR"
+fi
 
 echo -e "${YELLOW}Step 3: Initializing file-based sources (skipping existing files)...${NC}"
 
@@ -44,6 +68,7 @@ if [ ! -f "$ARTIFACTS_DIR/test_data.csv" ]; then
       -o "$ARTIFACTS_DIR/test_data.csv" || exit 1
 else
     echo "  Skipping test_data.csv (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 2. Parquet
@@ -58,6 +83,7 @@ if [ ! -f "$ARTIFACTS_DIR/test_data.parquet" ]; then
       -o "$ARTIFACTS_DIR/test_data.parquet" --no-schema-validation --strategy Recreate || exit 1
 else
     echo "  Skipping test_data.parquet (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 2b. Parquet (BIG - 1M rows)
@@ -71,6 +97,7 @@ if [ ! -f "$ARTIFACTS_DIR/test_data_big.parquet" ]; then
       -o "$ARTIFACTS_DIR/test_data_big.parquet" --no-schema-validation --strategy Recreate || exit 1
 else
     echo "  Skipping test_data_big.parquet (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 3. Arrow
@@ -85,6 +112,7 @@ if [ ! -f "$ARTIFACTS_DIR/test_data.arrow" ]; then
       -o "$ARTIFACTS_DIR/test_data.arrow" --no-schema-validation --strategy Recreate || exit 1
 else
     echo "  Skipping test_data.arrow (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 echo -e "${YELLOW}Step 4: Initializing database sources...${NC}"
@@ -100,6 +128,7 @@ if [ ! -f "$ARTIFACTS_DIR/test_data.duckdb" ]; then
       -o "$ARTIFACTS_DIR/test_data.duckdb" --table "geography" --no-schema-validation --strategy Recreate || exit 1
 else
     echo "  Skipping test_data.duckdb (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 5. PostgreSQL (always runs: --pre-exec drops any stale table so Recreate always uses source schema)
@@ -159,6 +188,7 @@ if [ ! -d "$ARTIFACTS_DIR/restricted" ]; then
     echo "Created restricted/ directory (chmod 000) for T77 access-denied tests."
 else
     echo "  Skipping restricted/ (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 9. JS script file for T50 (--compute "@file" test)
@@ -169,6 +199,7 @@ row.FirstName + ' ' + row.LastName
 EOF
 else
     echo "  Skipping my_script.js (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 8. Complex JSONL (Nested Structures)
@@ -181,6 +212,7 @@ if [ ! -f "$ARTIFACTS_DIR/complex_data.jsonl" ]; then
 EOF
 else
     echo "  Skipping complex_data.jsonl (already exists)"
+    KEPT=$((KEPT + 1))
 fi
 
 # 9. Massive XML (for XML streaming validation)
@@ -189,6 +221,15 @@ if [ ! -f "$ARTIFACTS_DIR/test_data_massive.xml" ]; then
     bash "$SCRIPT_DIR/generate_massive_xml.sh" "$ARTIFACTS_DIR/test_data_massive.xml" 2 || exit 1
 else
     echo "  Skipping test_data_massive.xml (already exists)"
+    KEPT=$((KEPT + 1))
+fi
+
+if [ $KEPT -gt 0 ]; then
+    echo ""
+    echo -e "${YELLOW}WARNING: $KEPT existing input file(s) were KEPT, not regenerated.${NC}"
+    echo -e "${YELLOW}         Tests will run against input data from a previous run, which may${NC}"
+    echo -e "${YELLOW}         predate a change to the generators.${NC}"
+    echo -e "${YELLOW}         Reset all input data with: $(basename "$0") --clean${NC}"
 fi
 
 echo -e "${GREEN}All sources initialized successfully!${NC}"
