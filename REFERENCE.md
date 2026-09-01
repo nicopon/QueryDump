@@ -757,8 +757,15 @@ dtpipe --from-checkpoint <key> --compute "total=price*qty" -o csv:out.csv
 ```
 
 The materialisation point sits at the **end** of the transformer chain, so a checkpoint holds
-what the writer would have received. `--checkpoint` needs a columnar stream at that point; a
-pipeline that is row-mode from end to end is told so rather than given a silently different run.
+what the writer would have received.
+
+A checkpoint is Arrow, so a pipeline with no columnar side — CSV to CSV, say — is bridged to
+Arrow at the writer boundary and back when you ask for one. That bridge exists **only** when
+`--checkpoint` is passed; an ordinary run is untouched. It is not a distortion introduced to make
+materialising possible: resuming from a checkpoint reads Arrow whatever happens, so the
+conversion is inherent to checkpointing rather than to where the tee sits. What it does mean is
+that a row-mode pipeline's values pass through the Arrow type map on the way in, which can
+normalise a type the row path would have carried loosely.
 
 **Checkpoints are addressed by content.** The key is a hash of what produces the rows — connection
 (credentials stripped), query, the transformers up to the point, and the sampling parameters — not

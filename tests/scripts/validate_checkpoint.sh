@@ -70,7 +70,38 @@ if ! diff <(sort resumed.csv) <(sort direct.csv) >/dev/null; then
 fi
 pass "resuming replays exactly what the source produced"
 
-# ── 5. Destroying the key makes it unreadable ─────────────────────────────────
+# ── 5. A row-mode pipeline can be materialised too ────────────────────────────
+# CSV to CSV has no Arrow anywhere. Refusing to materialise the commonest shape there is was
+# not defensible, so the engine bridges to Arrow at the writer boundary when asked to.
+"$DTPIPE" -i csv:source.csv --session rowmode --checkpoint c -o csv:row_out.csv --no-stats >/dev/null 2>&1 \
+    || fail "materialising a row-mode (CSV to CSV) pipeline failed"
+ROW_DATA="$(find "$WORK/.dtpipe/sessions/rowmode" -name 'data.dtck' | head -1)"
+[ -n "$ROW_DATA" ] || fail "no checkpoint written for the row-mode pipeline"
+
+ROW_KEY="$(basename "$(dirname "$ROW_DATA")")"
+"$DTPIPE" --session rowmode --from-checkpoint "$ROW_KEY" -o csv:row_resumed.csv --no-stats >/dev/null 2>&1 \
+    || fail "resuming a row-mode checkpoint failed"
+if ! diff <(sort row_out.csv) <(sort row_resumed.csv) >/dev/null; then
+    echo "--- written ---"; cat row_out.csv
+    echo "--- resumed ---"; cat row_resumed.csv
+    fail "the Arrow round-trip changed the rows of a row-mode pipeline"
+fi
+pass "a row-mode pipeline materialises, and the round-trip preserves its rows"
+
+# ── 6. A seeded sample materialises the sample, not the source ────────────────
+"$DTPIPE" -i csv:source.csv --sampling-rate 0.5 --sampling-seed 42 \
+    --session sampled --checkpoint c -o csv:sampled_out.csv --no-stats >/dev/null 2>&1 \
+    || fail "materialising a sampled run failed"
+SAMPLED_DATA="$(find "$WORK/.dtpipe/sessions/sampled" -name 'data.dtck' | head -1)"
+SAMPLED_KEY="$(basename "$(dirname "$SAMPLED_DATA")")"
+"$DTPIPE" --session sampled --from-checkpoint "$SAMPLED_KEY" -o csv:sampled_resumed.csv --no-stats >/dev/null 2>&1 \
+    || fail "resuming a sampled checkpoint failed"
+if ! diff <(sort sampled_out.csv) <(sort sampled_resumed.csv) >/dev/null; then
+    fail "a seeded sample did not replay as the same rows"
+fi
+pass "a seeded sample materialises and replays identically"
+
+# ── 7. Destroying the key makes it unreadable ─────────────────────────────────
 rm -rf "$DTPIPE_STATE_HOME/keys"
 if "$DTPIPE" --session e2e --from-checkpoint "$KEY" -o csv:after-purge.csv --no-stats >/dev/null 2>&1; then
     fail "the checkpoint was still readable after its key was destroyed"

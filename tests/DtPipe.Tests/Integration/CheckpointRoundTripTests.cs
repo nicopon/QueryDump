@@ -120,6 +120,102 @@ public class CheckpointRoundTripTests : IDisposable
 			"a truncated checkpoint that looked complete would be replayed as if it were the whole source");
 	}
 
+	/// <summary>
+	/// §5.2 of the cycle plan: deterministic sampling already existed but was "neither
+	/// materialisable nor addressable". Materialising it is the promise; that a seeded sample
+	/// comes back as the SAME rows is what makes the promise worth anything, and what lets an
+	/// agent iterate against a fixed sample instead of a moving one.
+	/// </summary>
+	[Fact]
+	public async Task A_Seeded_Sample_Materialises_And_Replays_The_Same_Rows()
+	{
+		var written = await RunAsync(checkpointKey: "k1", samplingRate: 0.5, samplingSeed: 42);
+
+		written.Should().NotBeEmpty("a rate of 0.5 over 8 rows must keep some");
+		written.Count.Should().BeLessThan(8, "and drop some — otherwise the test proves nothing about sampling");
+
+		var replayed = new List<int>();
+		await foreach (var batch in _store.ReadAsync("k1"))
+		{
+			using (batch)
+			{
+				var ids = (Int32Array)batch.Column(0);
+				for (var i = 0; i < batch.Length; i++) replayed.Add(ids.GetValue(i)!.Value);
+			}
+		}
+
+		replayed.Should().Equal(written);
+	}
+
+	[Fact]
+	public async Task The_Same_Seed_Selects_The_Same_Rows_Twice()
+	{
+		var first = await RunAsync(checkpointKey: null, samplingRate: 0.5, samplingSeed: 42);
+		var second = await RunAsync(checkpointKey: null, samplingRate: 0.5, samplingSeed: 42);
+
+		second.Should().Equal(first);
+	}
+
+	[Fact]
+	public async Task A_Different_Seed_Selects_Different_Rows()
+	{
+		var a = await RunAsync(checkpointKey: null, samplingRate: 0.5, samplingSeed: 42);
+		var b = await RunAsync(checkpointKey: null, samplingRate: 0.5, samplingSeed: 1234);
+
+		b.Should().NotEqual(a);
+	}
+
+	/// <summary>
+	/// The sampling parameters are part of what produces the rows, so they are part of the key.
+	/// Without this, two samples of the same query would overwrite each other and an agent would
+	/// silently read someone else's draw.
+	/// </summary>
+	[Fact]
+	public void The_Sampling_Seed_Is_Part_Of_The_Checkpoint_Identity()
+	{
+		string Key(int? seed) => DtPipe.Sessions.CheckpointKey.Compute(
+			"csv:in.csv", "SELECT *", null, 0.5, seed, 0, 1024, 0, 0);
+
+		Key(42).Should().NotBe(Key(1234));
+		Key(42).Should().Be(Key(42));
+	}
+
+	/// <summary>
+	/// A pipeline with no Arrow anywhere — row reader, row writer, no columnar transformer — is
+	/// the commonest shape there is (CSV to CSV), and refusing to materialise it was not
+	/// defensible. The engine appends an empty columnar segment so the chain reaches Arrow at
+	/// the writer boundary, tees there and bridges back.
+	/// </summary>
+	[Fact]
+	public async Task A_Row_Mode_Pipeline_Can_Still_Be_Materialised()
+	{
+		var written = await RunAsync(checkpointKey: "k1", rowWriter: true);
+
+		written.Should().Equal(Enumerable.Range(0, 8));
+
+		var replayed = new List<int>();
+		await foreach (var batch in _store.ReadAsync("k1"))
+		{
+			using (batch)
+			{
+				var ids = (Int32Array)batch.Column(0);
+				for (var i = 0; i < batch.Length; i++) replayed.Add(ids.GetValue(i)!.Value);
+			}
+		}
+
+		replayed.Should().Equal(written, "what was materialised is what the writer received");
+	}
+
+	[Fact]
+	public async Task The_Bridge_Is_Added_Only_When_Materialising()
+	{
+		var withCheckpoint = await RunAsync(checkpointKey: "k1", rowWriter: true);
+		var without = await RunAsync(checkpointKey: null, rowWriter: true);
+
+		without.Should().Equal(withCheckpoint,
+			"the round-trip must not change the rows, and without --checkpoint it does not happen at all");
+	}
+
 	[Fact]
 	public void Resuming_From_A_Missing_Checkpoint_Names_What_Is_Available()
 	{
@@ -138,10 +234,11 @@ public class CheckpointRoundTripTests : IDisposable
 	// ─────────────────────────────────────────────────────────────────────────
 
 	private async Task<List<int>> RunAsync(
-		string? checkpointKey, bool transform = false, TrackingMemoryPool? pool = null, int failAfter = -1)
+		string? checkpointKey, bool transform = false, TrackingMemoryPool? pool = null, int failAfter = -1,
+		double samplingRate = 1.0, int? samplingSeed = null, bool rowWriter = false)
 	{
 		var columns = new List<PipeColumnInfo> { new("Id", typeof(int), false) };
-		var reader = new BatchReader(8, pool, failAfter);
+		IStreamReader reader = rowWriter ? new RowOnlyReader(8) : new BatchReader(8, pool, failAfter);
 		await reader.OpenAsync();
 
 		var pipeline = transform ? new List<IDataTransformer> { new Offset(1000) } : [];
@@ -151,16 +248,50 @@ public class CheckpointRoundTripTests : IDisposable
 		var segments = DtPipe.Core.Pipelines.PipelineSegmenter.GetSegments(pipeline);
 		foreach (var s in segments) { s.InputSchema = columns; s.OutputSchema = schema; }
 
-		var writer = new CollectingColumnarWriter();
+		var columnarWriter = new CollectingColumnarWriter();
+		var rowSink = new CollectingRowWriter();
+		IDataWriter writer = rowWriter ? rowSink : columnarWriter;
+
 		Func<IAsyncEnumerable<RecordBatch>, IAsyncEnumerable<RecordBatch>>? materialise =
 			checkpointKey is null ? null : src => CheckpointTee.TeeAsync(src, _store, checkpointKey);
 
 		using var cts = new CancellationTokenSource();
 		await Executor.ExecuteSegmentedPipelineAsync(
-			reader, writer, segments, schema, new PipelineOptions { BatchSize = 3 },
+			reader, writer, segments, schema,
+			new PipelineOptions { BatchSize = 3, SamplingRate = samplingRate, SamplingSeed = samplingSeed },
 			Mock.Of<IExportProgress>(), cts, cts.Token, null, materialise);
 
-		return writer.Ids;
+		return rowWriter ? rowSink.Ids : columnarWriter.Ids;
+	}
+
+	/// <summary>A source with no Arrow side at all — the CSV-to-CSV shape.</summary>
+	private sealed class RowOnlyReader : IStreamReader
+	{
+		private readonly int _n;
+		public RowOnlyReader(int n) => _n = n;
+		public IReadOnlyList<PipeColumnInfo>? Columns => new List<PipeColumnInfo> { new("Id", typeof(int), false) };
+		public Task OpenAsync(CancellationToken ct = default) => Task.CompletedTask;
+		public async IAsyncEnumerable<ReadOnlyMemory<object?[]>> ReadBatchesAsync(int batchSize, [EnumeratorCancellation] CancellationToken ct = default)
+		{
+			var rows = Enumerable.Range(0, _n).Select(i => new object?[] { i }).ToArray();
+			yield return rows.AsMemory();
+			await Task.CompletedTask;
+		}
+		public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+	}
+
+	private sealed class CollectingRowWriter : IRowDataWriter
+	{
+		public List<int> Ids { get; } = new();
+		public ValueTask InitializeAsync(IReadOnlyList<PipeColumnInfo> c, CancellationToken ct = default) => ValueTask.CompletedTask;
+		public ValueTask WriteBatchAsync(IReadOnlyList<object?[]> rows, CancellationToken ct = default)
+		{
+			foreach (var r in rows) Ids.Add(Convert.ToInt32(r[0]));
+			return ValueTask.CompletedTask;
+		}
+		public ValueTask CompleteAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
+		public ValueTask ExecuteCommandAsync(string command, CancellationToken ct = default) => ValueTask.CompletedTask;
+		public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 	}
 
 	private sealed class Offset : BaseColumnarTransformer

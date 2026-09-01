@@ -269,6 +269,14 @@ measured at ~3.5–4 GB/s (~24 ms per 100 MB).
 key is a hex string, and letting it into the `{component}[+{variant}]:` grammar is how a key would
 one day be read as a prefix.
 
+**A row-mode pipeline gets a bridge, not a refusal.** When materialising and the last segment is
+not columnar, `ExecuteSegmentedPipelineAsync` appends an *empty* columnar segment — the device the
+engine already uses for a row reader feeding a columnar writer — so the chain reaches Arrow at the
+writer boundary, tees, and bridges back. Refusing CSV→CSV was not defensible: it is the commonest
+shape there is, and refusing did not avoid the Arrow round-trip, since resuming reads Arrow
+anyway. The segment is added **only** when `materialise is not null`, so an ordinary run does not
+see one extra branch.
+
 > **Enforced by** `CheckpointCipherTests`, `CheckpointKeyTests`, `CheckpointRoundTripTests` (CI)
 > and `tests/scripts/validate_checkpoint.sh` (local, real binary).
 
