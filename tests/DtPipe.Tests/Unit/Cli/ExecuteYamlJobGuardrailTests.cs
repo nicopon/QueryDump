@@ -46,9 +46,11 @@ public class ExecuteYamlJobGuardrailTests
          // outcome, this call did not consent to a write.
          Assert.Contains("\"applied\": false", json);
 
-         // Honest is not the same as usable. A response reporting success with a full trace
-         // reads as "the job is done" unless it says what is left to do — a real agent mission
-         // stopped exactly here and never wrote its target. The remedy has to be IN the payload.
+         // Honest is not the same as usable. A response reporting the run without saying what
+         // is left to do reads as "the job is done" — a real agent mission stopped exactly here
+         // and never wrote its target. So the remedy is in the payload on EVERY apply=false
+         // path, including the ones where the run itself failed: a model told only that
+         // something went wrong cannot tell whether writing is still pending.
          Assert.Contains("apply=true", json);
          Assert.Contains("NOTHING WAS WRITTEN", json);
             }

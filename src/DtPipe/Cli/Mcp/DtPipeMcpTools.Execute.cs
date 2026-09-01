@@ -224,13 +224,22 @@ public partial class DtPipeMcpTools
            }
          catch (Exception ex)
            {
+             bool consented = AgentOptions?.Apply ?? apply;
              return JsonSerializer.Serialize(new
                {
                  success = false,
                  stage = "execution",
                  // Fail-closed stays legible even on the error path: whatever went wrong, this
                  // call did not consent to a write.
-                 applied = AgentOptions?.Apply ?? apply,
+                 applied = consented,
+                 // And so does the remedy. A model that is only told the run failed cannot tell
+                 // whether writing is still pending — every apply=false answer says the same two
+                 // things, on the paths that worked and the ones that did not.
+                 nextStep = consented
+                     ? null
+                     : "NOTHING WAS WRITTEN. This call ran with apply=false, so the target was never going "
+                       + "to be modified. Fix the errors above, then call execute-yaml-job again with "
+                       + "apply=true to perform the real write.",
                  errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
                }, new JsonSerializerOptions { WriteIndented = true });
            }
