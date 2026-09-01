@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 # Common agentic ReAct loop test runner for dtpipe MCP with Trajectory Tracing
 
+# One definition, called from both the completed and the abandoned path — the second is the
+# one that used to be missing.
+record_benchmark_row() {
+    local MODEL="$1" MISSION_NAME="$2" SUCCESS_FLAG="$3" ITER="$4" TOOLS="$5"
+    local STATS_FILE="tests/agentic/artifacts/benchmark_results.jsonl"
+    mkdir -p "$(dirname "$STATS_FILE")"
+
+    local TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "0")
+
+    jq -nc \
+        --arg ts "$TS" \
+        --arg model "$MODEL" \
+        --arg mission "$MISSION_NAME" \
+        --argjson success "$SUCCESS_FLAG" \
+        --argjson iter "$ITER" \
+        --argjson tools "$TOOLS" \
+        '{timestamp: $ts, model: $model, mission: $mission, success: $success, iterations: $iter, tool_calls: $tools}' \
+        >> "$STATS_FILE"
+}
+
 run_mission() {
     local MISSION_NAME="$1"
     local PROMPT="$2"
@@ -10,6 +30,9 @@ run_mission() {
     
     # Configure model (priority: argument to script, then OLLAMA_MODEL env, then default)
     local MODEL="${MODEL_ARG:-${OLLAMA_MODEL:-gemma4:12b-mlx}}"
+    # Generous, but bounded: a local 12B answers a ReAct turn in seconds, so minutes of silence
+    # means something is wrong rather than slow.
+    local OLLAMA_TIMEOUT="${OLLAMA_TIMEOUT:-300}"
     local OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434/api/chat}"
 
     echo "=================================================="
@@ -120,7 +143,12 @@ Before calling any tool or giving a final answer, state in text:
     while [ $ITERATION -le $MAX_ITERATIONS ]; do
         echo "--- Iteration $ITERATION ---"
         
-        local OLLAMA_RESPONSE=$(curl -s "$OLLAMA_URL" -d "{
+        # A timeout, and a transport failure that is visible. Without -m a stalled request
+        # hangs the mission for as long as the harness is willing to wait; without checking the
+        # exit code, a refused connection reaches jq as an empty string.
+        local CURL_RC=0
+        local OLLAMA_RESPONSE
+        OLLAMA_RESPONSE=$(curl -s -m "$OLLAMA_TIMEOUT" "$OLLAMA_URL" -d "{
           \"model\": \"$MODEL\",
           \"messages\": $MESSAGES_JSON,
           \"tools\": $TOOLS_JSON,
@@ -128,13 +156,33 @@ Before calling any tool or giving a final answer, state in text:
             \"num_ctx\": 16384
           },
           \"stream\": false
-        }")
+        }") || CURL_RC=$?
 
-        local ERR_MSG=$(echo "$OLLAMA_RESPONSE" | jq -r '.error // empty')
-        if [ ! -z "$ERR_MSG" ]; then
-            echo "❌ Ollama Error: $ERR_MSG"
-            echo "### Iteration $ITERATION (Ollama Error)" >> "$TRACE_FILE"
-            echo "Error: \`$ERR_MSG\`" >> "$TRACE_FILE"
+        # Every way this can go wrong ends up in one place, because they all used to end up in
+        # the same place too: `jq: invalid JSON text passed to --argjson`, followed by set -e
+        # killing the mission mid-flight — no validation, no verdict, no benchmark row. A model
+        # that hiccups must cost a mission, not erase it.
+        local ABORT_REASON=""
+        if [ "$CURL_RC" -ne 0 ]; then
+            ABORT_REASON="the request to Ollama failed (curl exit $CURL_RC); is it reachable at $OLLAMA_URL, and is another job holding the model?"
+        elif [ -z "$OLLAMA_RESPONSE" ]; then
+            ABORT_REASON="Ollama returned an empty response"
+        elif ! echo "$OLLAMA_RESPONSE" | jq -e . >/dev/null 2>&1; then
+            ABORT_REASON="Ollama returned something that is not JSON"
+        else
+            local ERR_MSG=$(echo "$OLLAMA_RESPONSE" | jq -r '.error // empty')
+            if [ -n "$ERR_MSG" ]; then
+                ABORT_REASON="Ollama reported: $ERR_MSG"
+            elif ! echo "$OLLAMA_RESPONSE" | jq -e 'has("message") and (.message | type == "object")' >/dev/null 2>&1; then
+                ABORT_REASON="the response carried no usable .message object"
+            fi
+        fi
+
+        if [ -n "$ABORT_REASON" ]; then
+            echo "❌ Aborting mission at iteration $ITERATION: $ABORT_REASON"
+            echo "   raw response (first 400 chars): ${OLLAMA_RESPONSE:0:400}"
+            echo "### Iteration $ITERATION (aborted)" >> "$TRACE_FILE"
+            echo "Reason: \`$ABORT_REASON\`" >> "$TRACE_FILE"
             echo >> "$TRACE_FILE"
             break
         fi
@@ -143,7 +191,20 @@ Before calling any tool or giving a final answer, state in text:
         local CONTENT_TEXT=$(echo "$MESSAGE_OUT" | jq -r '.content // empty')
         local TOOL_CALLS=$(echo "$MESSAGE_OUT" | jq '.tool_calls')
 
-        MESSAGES_JSON=$(echo "$MESSAGES_JSON" | jq --argjson msg "$MESSAGE_OUT" '. + [$msg]')
+        # Guarded so a jq failure can never leave MESSAGES_JSON empty: the next request would
+        # then send `"messages": ` and every following iteration would fail for a reason with
+        # nothing to do with the one that started it.
+        local NEXT_MESSAGES
+        if NEXT_MESSAGES=$(echo "$MESSAGES_JSON" | jq --argjson msg "$MESSAGE_OUT" '. + [$msg]' 2>/dev/null) \
+           && [ -n "$NEXT_MESSAGES" ]; then
+            MESSAGES_JSON="$NEXT_MESSAGES"
+        else
+            echo "❌ Aborting mission at iteration $ITERATION: could not append the assistant turn to the conversation"
+            echo "### Iteration $ITERATION (aborted)" >> "$TRACE_FILE"
+            echo "Reason: \`conversation update failed\`" >> "$TRACE_FILE"
+            echo >> "$TRACE_FILE"
+            break
+        fi
 
         echo "### Iteration $ITERATION" >> "$TRACE_FILE"
         if [ ! -z "$CONTENT_TEXT" ]; then
@@ -210,6 +271,10 @@ Before calling any tool or giving a final answer, state in text:
         echo "❌ FAILURE: The ReAct loop did not complete successfully."
         echo "## Final Status" >> "$TRACE_FILE"
         echo "❌ **ReAct Loop Failed** (did not finish or exceeded max iterations)" >> "$TRACE_FILE"
+        # Recorded before exiting, so a mission that gave up is still counted. A row written
+        # only on the paths that reach validation makes an abandoned mission vanish from the
+        # benchmark table entirely, which reads as "it was never run" rather than "it failed".
+        record_benchmark_row "$MODEL" "$MISSION_NAME" "false" "$ITERATION" "$TOOL_COUNTS_JSON"
         exit 1
     fi
 
@@ -231,22 +296,7 @@ Before calling any tool or giving a final answer, state in text:
     echo "- **Tool Calls**: \`$(echo "$TOOL_COUNTS_JSON" | jq -c '.')\`" >> "$TRACE_FILE"
     echo >> "$TRACE_FILE"
 
-    # Persist benchmark stats
-    local STATS_FILE="tests/agentic/artifacts/benchmark_results.jsonl"
-    mkdir -p "$(dirname "$STATS_FILE")"
-
-    local TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "0")
-
-    local ENTRY_JSON=$(jq -n \
-        --arg ts "$TS" \
-        --arg model "$MODEL" \
-        --arg mission "$MISSION_NAME" \
-        --argjson success "$VALIDATION_SUCCESS" \
-        --argjson iter "$ITERATION" \
-        --argjson tools "$TOOL_COUNTS_JSON" \
-        '{timestamp: $ts, model: $model, mission: $mission, success: $success, iterations: $iter, tool_calls: $tools}')
-
-    echo "$ENTRY_JSON" >> "$STATS_FILE"
+    record_benchmark_row "$MODEL" "$MISSION_NAME" "$VALIDATION_SUCCESS" "$ITERATION" "$TOOL_COUNTS_JSON"
 
      # (F3) Determinism variance is deliberately NOT recorded here.
      #
