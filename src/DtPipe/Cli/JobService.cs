@@ -65,6 +65,7 @@ public class JobService
 			new ProvidersCommand(_serviceProvider),
 			new CompletionCommand(),
 			new SecretCommand(_console, _serviceProvider.GetRequiredService<DtPipe.Cli.Security.ISecretsManager>()),
+			new SessionCommand(_console),
 			new McpCommand(_serviceProvider),
 			new AgentCommand(_serviceProvider),
 		};
