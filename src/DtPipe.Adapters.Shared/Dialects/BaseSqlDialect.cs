@@ -42,6 +42,9 @@ public abstract partial class BaseSqlDialect : ISqlDialect
 	/// <inheritdoc />
 	public virtual string? TableDiscoveryQuery => null;
 
+	/// <summary>No statement by default: a dialect must opt in to what it can actually enforce.</summary>
+	public virtual string? ReadOnlySessionSql => null;
+
 	// ── F9 staged-merge generation ──────────────────────────────────────────
 
 	/// <inheritdoc />

@@ -24,7 +24,8 @@ public static class SampleReportBuilder
         IKeyValidator? keyValidator,
         TargetSchemaInfo? inspectedTarget,
         string? inspectionError,
-        IReadOnlyDictionary<string, string>? performanceHints = null)
+        IReadOnlyDictionary<string, string>? performanceHints = null,
+        DtPipe.Sessions.ReadOnlyEnforcement enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly)
     {
         var finalSchema = run.FinalSchema();
         var finalRows = run.FinalRows();
@@ -52,6 +53,7 @@ public static class SampleReportBuilder
             dialect,
             keyValidation,
             constraintValidation,
-            performanceHints);
+            performanceHints,
+            enforcement);
     }
 }

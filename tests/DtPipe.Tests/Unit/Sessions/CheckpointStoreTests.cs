@@ -9,6 +9,7 @@ using Xunit;
 
 namespace DtPipe.Tests.Unit.Sessions;
 
+[Collection(SessionStateCollection.Name)]
 public class CheckpointStoreTests : IDisposable
 {
 	private readonly string _tmp;

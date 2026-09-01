@@ -131,7 +131,8 @@ internal sealed partial class ExportRunState
             Writer as IKeyValidator,
             InspectedTarget,
             TargetInspectionError,
-            SampleTap?.TypeHints);
+            SampleTap?.TypeHints,
+            SafetyVerdict?.Enforcement ?? DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly);
 
         var executionPlan = ExportService.BuildExecutionPlan(ProviderName, Reader, WriterFactory.ComponentName, Writer, Pipeline, Segments);
 

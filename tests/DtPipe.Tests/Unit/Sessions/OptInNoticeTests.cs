@@ -3,6 +3,7 @@ using DtPipe.Core.Models;
 using DtPipe.Core.Pipelines;
 using DtPipe.Sessions;
 using AwesomeAssertions;
+using DtPipe.Tests.Helpers;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Sessions;
@@ -12,6 +13,7 @@ namespace DtPipe.Tests.Unit.Sessions;
 /// repeated every run stops being read — and one that has stopped being read is worse than
 /// none: it becomes noise while leaving the impression the user was told.
 /// </summary>
+[Collection(SessionStateCollection.Name)]
 public class OptInNoticeTests : IDisposable
 {
 	private readonly string _tmp;

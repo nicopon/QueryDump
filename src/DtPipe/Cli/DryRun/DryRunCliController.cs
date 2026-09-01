@@ -131,9 +131,22 @@ public class DryRunCliController
             _console.MarkupLine("[grey]Non-interactive mode: rendering first sample trace only.[/]");
             _console.Write(renderer.BuildTraceTable(0, result.Samples.Count, result.Samples[0], result.StepNames, columnWidths, result.SchemaInspectionError, targetInfo, stageTotals));
             _console.WriteLine();
-            _console.MarkupLine("[green]Dry-run complete. No data exported.[/]");
+            RenderSafetyFooter(result);
         }
 	}
+
+    /// <summary>
+    /// Says what the run can support, and no more. "No data written" is true of the writer;
+    /// whether the SOURCE could have been modified is a different question, and answering the
+    /// second with the first is how a reassuring message becomes a false one.
+    /// </summary>
+    private void RenderSafetyFooter(SampleReport result)
+    {
+        _console.MarkupLine("[green]Sample run complete. The writer was neutralised — no data was written to the target.[/]");
+        _console.MarkupLine(result.Enforcement == DtPipe.Sessions.ReadOnlyEnforcement.ServerEnforced
+            ? "[grey]Source protection: the database session was read-only — the server itself refused writes.[/]"
+            : "[grey]Source protection: a conservative verb scan only. This engine has no read-only session, so source-side effects are not proven absent.[/]");
+    }
 
     private void WaitIfInteractive(string message)
     {

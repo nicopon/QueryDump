@@ -51,7 +51,7 @@ public class DryRunNavigator
 			// Single sample: exit immediately without navigation
 			if (samples.Count == 1)
 			{
-				_console.MarkupLine("[green]Dry-run complete. No data exported.[/]");
+				_console.MarkupLine("[green]Sample run complete. The writer was neutralised — no data was written to the target.[/]");
 				return 0;
 			}
 
@@ -82,7 +82,7 @@ public class DryRunNavigator
 					var finalTable = _renderer.BuildTraceTable(currentIndex, samples.Count, samples[currentIndex], stepNames, columnWidths, schemaWarning, targetSchema, stageTotals);
 					_console.Write(finalTable);
 					_console.WriteLine();
-					_console.MarkupLine("[green]Dry-run complete. No data exported.[/]");
+					_console.MarkupLine("[green]Sample run complete. The writer was neutralised — no data was written to the target.[/]");
 					return currentIndex;
 			}
 		}

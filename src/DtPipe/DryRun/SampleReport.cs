@@ -17,7 +17,14 @@ public sealed record SampleReport(
 	ISqlDialect? Dialect = null,
 	KeyValidationResult? KeyValidation = null,
 	ConstraintValidationResult? ConstraintValidation = null,
-	IReadOnlyDictionary<string, string>? PerformanceHints = null);
+	IReadOnlyDictionary<string, string>? PerformanceHints = null,
+	/// <summary>
+	/// What the run could actually guarantee about not writing. "No data written" is a claim
+	/// about the writer; the source is a separate question, and a report must not answer one
+	/// with the other. A verb scan does not prove a query is read-only — SELECT my_function()
+	/// passes it — so the promise stops where the proof does.
+	/// </summary>
+	DtPipe.Sessions.ReadOnlyEnforcement Enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly);
 
 public static class SampleRunExtensions
 {

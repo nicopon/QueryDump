@@ -2,6 +2,9 @@ namespace DtPipe.Core.Dialects;
 
 public class OracleDialect : BaseSqlDialect
 {
+	/// <summary>Oracle enforces this for the whole transaction.</summary>
+	public override string? ReadOnlySessionSql => "SET TRANSACTION READ ONLY";
+
 	public static readonly OracleDialect Instance = new();
 	private static readonly HashSet<string> ReservedKeywords = new(StringComparer.OrdinalIgnoreCase)
 	{

@@ -1,5 +1,6 @@
 using DtPipe.Sessions;
 using AwesomeAssertions;
+using DtPipe.Tests.Helpers;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Sessions;
@@ -9,6 +10,7 @@ namespace DtPipe.Tests.Unit.Sessions;
 /// repeat, an environment variable that does not survive a new shell, an ancestor that does not
 /// exist yet, a directory that cannot be written to. The order is the design.
 /// </summary>
+[Collection(SessionStateCollection.Name)]
 public class SessionIdentityTests : IDisposable
 {
 	private readonly string _tmp;

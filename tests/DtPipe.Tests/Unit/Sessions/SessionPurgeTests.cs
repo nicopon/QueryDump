@@ -1,5 +1,6 @@
 using DtPipe.Sessions;
 using AwesomeAssertions;
+using DtPipe.Tests.Helpers;
 using Xunit;
 
 namespace DtPipe.Tests.Unit.Sessions;
@@ -10,6 +11,7 @@ namespace DtPipe.Tests.Unit.Sessions;
 /// to destroy the key before the files — that ordering is what makes a half-failed deletion
 /// leave inert bytes instead of readable data.
 /// </summary>
+[Collection(SessionStateCollection.Name)]
 public class SessionPurgeTests : IDisposable
 {
 	private readonly string _tmp;

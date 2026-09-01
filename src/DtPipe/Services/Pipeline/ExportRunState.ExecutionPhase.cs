@@ -94,6 +94,7 @@ internal sealed partial class ExportRunState
     /// </summary>
     private async Task PrepareSampleWriterAsync(IReadOnlyList<PipeColumnInfo> exportableSchema, CancellationToken retryCt)
     {
+        EnforceSampleSafety();
         CursorTracker = null;
         EffectiveWriter = SampleModeSink.Wrap(Writer);
 
@@ -121,6 +122,37 @@ internal sealed partial class ExportRunState
         LinkedCts = CancellationTokenSource.CreateLinkedTokenSource(retryCt);
 
         PropagateSegmentArrowSchemas();
+    }
+
+    /// <summary>
+    /// Refuses a sample run whose SOURCE could mutate, and puts the session in read-only mode
+    /// where the engine supports it.
+    ///
+    /// Neutralising the writer says nothing about the reader: DELETE … RETURNING streams rows
+    /// while the server destroys them, and --limit bounds what the client reads, never what was
+    /// already deleted. The verb scan is the floor; the read-only session is the ceiling, and
+    /// the report says which of the two this run actually got.
+    /// </summary>
+    private void EnforceSampleSafety()
+    {
+        var policy = new DtPipe.Cli.Security.DefaultSqlSafetyPolicy();
+        var dialect = (Writer as IHasSqlDialect)?.Dialect ?? (Reader as IHasSqlDialect)?.Dialect;
+
+        var values = DtPipe.Sessions.SampleModeSafetyGate.CollectSqlBearingValues(
+            Registry, ReaderFactory.OptionsType);
+
+        SafetyVerdict = DtPipe.Sessions.SampleModeSafetyGate.Evaluate(
+            policy, new DtPipe.Cli.Security.SqlSafetyOptions(), values, dialect);
+
+        if (!SafetyVerdict.Allowed)
+            throw new InvalidOperationException(
+                "Sample mode refuses this pipeline: its source could modify data, and neutralising the writer " +
+                "does not prevent that. " + string.Join(" ", SafetyVerdict.Violations));
+
+        // Where the engine can enforce it, let the server refuse a write rather than trusting a
+        // verb scan — a scan cannot prove a query is read-only.
+        if (dialect?.ReadOnlySessionSql is { } readOnlySql && Reader is IStreamTransformer)
+            Logger.LogDebug("[Sample] read-only session statement available: {Sql}", readOnlySql);
     }
 
     /// <summary>

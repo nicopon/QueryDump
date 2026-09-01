@@ -62,6 +62,9 @@ internal sealed partial class ExportRunState
     /// <summary>The content-addressed key this run materialises under, when --checkpoint is set.</summary>
     internal string? CheckpointKey;
 
+    /// <summary>How far this sample run could guarantee it would not write. Reported, never assumed.</summary>
+    internal DtPipe.Sessions.SampleSafetyVerdict? SafetyVerdict;
+
     /// <summary>True when this run reports rather than writes.</summary>
     internal bool IsSampleMode => Options.DryRunCount > 0;
 

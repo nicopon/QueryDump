@@ -18,6 +18,7 @@ namespace DtPipe.Tests.Integration;
 /// real executor: what a run writes with a checkpoint must equal what it writes without one,
 /// and resuming from the checkpoint must replay the same rows.
 /// </summary>
+[Collection(SessionStateCollection.Name)]
 public class CheckpointRoundTripTests : IDisposable
 {
 	private readonly string _tmp;
