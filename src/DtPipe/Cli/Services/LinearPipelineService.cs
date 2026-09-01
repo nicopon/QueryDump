@@ -124,9 +124,15 @@ public class LinearPipelineService
 
         // 1. Resolve Reader. A typed input endpoint bypasses connection-string resolution
         // entirely: the factory is picked by capability and the channel alias handed over.
-        (IStreamReaderFactory? readerFactory, string cleanedInput, string? inputVariant) = inputEndpoint != null
-            ? (PickChannelReader(inputEndpoint.Kind), inputEndpoint.Alias, (string?)null)
-            : ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
+        // --from-checkpoint resolves like a typed endpoint, by capability: a checkpoint key is
+        // not a connection string and must not enter the ComponentSelector grammar, where a
+        // hex key could be read as a component prefix.
+        (IStreamReaderFactory? readerFactory, string cleanedInput, string? inputVariant) =
+            !string.IsNullOrEmpty(job.FromCheckpoint)
+                ? (new DtPipe.Sessions.CheckpointReaderFactory(job.FromCheckpoint, job.Session), job.FromCheckpoint, (string?)null)
+            : inputEndpoint != null
+                ? (PickChannelReader(inputEndpoint.Kind), inputEndpoint.Alias, (string?)null)
+                : ResolveFactory<IStreamReaderFactory>(job.Input ?? "", _readerFactories);
 
         // 2. Resolve Stream Transformer (SQL / Merge / …): CLI args when present, else the YAML JobDefinition.
         //    Each factory owns both surfaces (Create for CLI tokens, CreateFromJob for provider-options);
@@ -194,7 +200,10 @@ public class LinearPipelineService
             NoStats      = job.NoStats,
             DryRunInteractiveBranch = dryRunInteractiveBranch,
             Cursor       = job.Cursor,
-            State        = job.State
+            State        = job.State,
+            Checkpoint   = job.Checkpoint,
+            FromCheckpoint = job.FromCheckpoint,
+            Session      = job.Session
         };
         _optionsRegistry.Register(pipelineOptions);
 

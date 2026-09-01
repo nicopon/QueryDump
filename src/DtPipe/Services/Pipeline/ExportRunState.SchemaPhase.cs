@@ -91,6 +91,30 @@ internal sealed partial class ExportRunState
     }
 
     /// <summary>
+    /// The content-addressed name for this branch's prefix — the definition that produces the
+    /// rows, not the alias that labels them (see CheckpointKey).
+    /// </summary>
+    internal string ComputeCheckpointKey()
+    {
+        var route = Registry.TryGetByType(typeof(DtPipe.Cli.Infrastructure.ConnectionRoute), out var routeObj)
+            ? routeObj as DtPipe.Cli.Infrastructure.ConnectionRoute
+            : null;
+
+        var query = (Registry.Get(ReaderFactory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions)?.Query;
+
+        return DtPipe.Sessions.CheckpointKey.Compute(
+            route?.Input ?? ProviderName,
+            query,
+            Pipeline.Select(t => t.GetType().FullName ?? t.GetType().Name),
+            Options.SamplingRate,
+            Options.SamplingSeed,
+            Options.Limit,
+            Options.BatchSize,
+            Options.MaxBatchBytes,
+            segmentIndex: Segments.Count);
+    }
+
+    /// <summary>
     /// Assembles what the run observed into a report and hands it to the observer to render.
     /// Everything here is derived from the execution that already happened — the target
     /// inspection captured during writer preparation, the tap's capture, and the validators.

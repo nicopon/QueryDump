@@ -59,6 +59,9 @@ internal sealed partial class ExportRunState
     internal DtPipe.Core.Models.TargetSchemaInfo? InspectedTarget;
     internal string? TargetInspectionError;
 
+    /// <summary>The content-addressed key this run materialises under, when --checkpoint is set.</summary>
+    internal string? CheckpointKey;
+
     /// <summary>True when this run reports rather than writes.</summary>
     internal bool IsSampleMode => Options.DryRunCount > 0;
 

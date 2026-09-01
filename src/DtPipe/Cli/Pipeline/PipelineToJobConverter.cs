@@ -124,6 +124,7 @@ public static class PipelineToJobConverter
             if (!string.IsNullOrEmpty(prefixOverride))  job = job with { Prefix = prefixOverride };
             if (!string.IsNullOrEmpty(cursorOverride))  job = job with { Cursor = cursorOverride };
             if (!string.IsNullOrEmpty(stateOverride))   job = job with { State = stateOverride };
+            if (!string.IsNullOrEmpty(parsed.Globals.Session)) job = job with { Session = parsed.Globals.Session };
             if (samplingRateOverride is > 0)    job = job with { SamplingRate = samplingRateOverride.Value };
             if (samplingSeedOverride.HasValue)  job = job with { SamplingSeed = samplingSeedOverride.Value };
             jobs[alias] = job;
@@ -147,7 +148,8 @@ public static class PipelineToJobConverter
                 SamplingRate: kv.Value.SamplingRate, SamplingSeed: kv.Value.SamplingSeed,
                 DryRunCount: kv.Value.DryRunCount, NoStats: kv.Value.NoStats,
                 MetricsPath: kv.Value.MetricsPath, LogPath: kv.Value.LogPath,
-                Prefix: kv.Value.Prefix, Cursor: kv.Value.Cursor, State: kv.Value.State)
+                Prefix: kv.Value.Prefix, Cursor: kv.Value.Cursor, State: kv.Value.State,
+                Checkpoint: kv.Value.Checkpoint, FromCheckpoint: kv.Value.FromCheckpoint)
         }).ToList();
 
         return (jobs, new JobDagDefinition { Branches = branches }, new Dictionary<string, CliJobContext>(StringComparer.OrdinalIgnoreCase));
@@ -162,6 +164,10 @@ public static class PipelineToJobConverter
         {
             Input  = branch.Input,
             Output = branch.Output,
+
+            // Global, but carried on every branch: each one resolves its own store, and they
+            // must all land in the same session.
+            Session = globals.Session,
 
             From     = string.Join(",", branch.From),
             Ref      = branch.Ref.ToArray(),
@@ -197,6 +203,10 @@ public static class PipelineToJobConverter
                       ?? GetString(globals.AllFlags, "--cursor");
         string? state = GetString(branchFlags, "--state")
                      ?? GetString(globals.AllFlags, "--state");
+        string? checkpoint = GetString(branchFlags, "--checkpoint")
+                          ?? GetString(globals.AllFlags, "--checkpoint");
+        string? fromCheckpoint = GetString(branchFlags, "--from-checkpoint")
+                              ?? GetString(globals.AllFlags, "--from-checkpoint");
 
         return new BranchEngineSettings(
             Limit: limit,
@@ -210,7 +220,9 @@ public static class PipelineToJobConverter
             LogPath: logPath,
             Prefix: prefix,
             Cursor: cursor,
-            State: state);
+            State: state,
+            Checkpoint: checkpoint,
+            FromCheckpoint: fromCheckpoint);
     }
 
 

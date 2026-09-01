@@ -18,6 +18,15 @@ public record JobDefinition
 	public int Limit { get; init; } = 0;
 	public bool NoStats { get; init; } = false;
 	public int DryRunCount { get; init; } = 0;
+
+	/// <summary>Materialise this branch's output in the session store (--checkpoint).</summary>
+	public string? Checkpoint { get; init; }
+
+	/// <summary>Resume this branch from a stored checkpoint instead of its input (--from-checkpoint).</summary>
+	public string? FromCheckpoint { get; init; }
+
+	/// <summary>Session the checkpoints belong to (--session); null lets the precedence chain decide.</summary>
+	public string? Session { get; init; }
 	public string? MetricsPath { get; init; }
 	public string? LogPath { get; init; }
 

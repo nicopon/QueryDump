@@ -119,7 +119,8 @@ public sealed class PipelineExecutor
         IExportProgress progress,
         CancellationTokenSource linkedCts,
         CancellationToken ct,
-        ISampleTap? tap = null)
+        ISampleTap? tap = null,
+        Func<IAsyncEnumerable<RecordBatch>, IAsyncEnumerable<RecordBatch>>? materialise = null)
     {
         // Determine whether any segment is columnar. When there are columnar segments, the pipeline
         // must enter Arrow mode at some point regardless of the writer type — columnar transformers
@@ -138,6 +139,7 @@ public sealed class PipelineExecutor
                     source = ApplySamplingAsync(source, options.SamplingRate, sampler, ct);
                 }
                 source = TapBatchesAsync(source, tap, ReaderStage, ct);
+                if (materialise is not null) source = materialise(source);
                 await DirectColumnarTransferAsync(source, cw, options.Limit, progress, ct);
             }
             else if (reader is IColumnarStreamReader crForRows && writer is IRowDataWriter rw)
@@ -146,13 +148,21 @@ public sealed class PipelineExecutor
                 // Do NOT call ReadBatchesAsync — route through ReadRecordBatchesAsync + bridge.
                 var bridgeFac = _columnarToRowBridgeFactories.FirstOrDefault()
                     ?? throw new InvalidOperationException("No ColumnarToRowBridgeFactory");
+                var batchSource = crForRows.ReadRecordBatchesAsync(ct);
+                if (materialise is not null) batchSource = materialise(batchSource);
                 var rowSource = TapRowsAsync(
-                    BridgeColumnarToRowsAsync(crForRows.ReadRecordBatchesAsync(ct), bridgeFac, ct), tap, ReaderStage, ct);
+                    BridgeColumnarToRowsAsync(batchSource, bridgeFac, ct), tap, ReaderStage, ct);
                 await DirectRowTransferFromRowsAsync(rowSource, rw, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct);
             }
             else if (writer is IRowDataWriter rw2)
             {
-                // Row-only reader → row-mode writer: existing direct path.
+                // Row-only reader → row-mode writer: existing direct path. No RecordBatch exists
+                // anywhere in it, so there is nothing to materialise without inventing one — and
+                // a checkpoint of an invented batch would not be the run.
+                if (materialise is not null)
+                    throw new InvalidOperationException(
+                        "--checkpoint needs a columnar stream; this pipeline is row-mode from end to end. " +
+                        "Use a columnar reader or writer, or add a columnar transformer before the checkpoint.");
                 await DirectRowTransferAsync(reader, rw2, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, tap, ct);
             }
             else
@@ -237,14 +247,30 @@ public sealed class PipelineExecutor
                     var richSchema = schemaUnchanged ? readerSchema : null;
                     currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, columns, options.BatchSize, options.MaxBatchBytes, ct, richSchema);
                 }
+                // The materialisation point sits at the end of the chain, so a checkpoint holds
+                // exactly what the writer would have received — which is what makes resuming
+                // from it replay the same rows rather than an earlier approximation of them.
+                if (materialise is not null)
+                    currentColumnarSource = materialise(currentColumnarSource);
                 await ConsumeColumnarStreamAsync(currentColumnarSource, columnarWriter, options.Limit, progress, ct);
             }
             else if (writer is IRowDataWriter rowWriter)
             {
                 if (isCurrentColumnar)
                 {
+                    if (materialise is not null)
+                        currentColumnarSource = materialise(currentColumnarSource);
                     var bridgeFac = _columnarToRowBridgeFactories.FirstOrDefault() ?? throw new InvalidOperationException("No ColumnarToRowBridgeFactory");
                     currentRowSource = BridgeColumnarToRowsAsync(currentColumnarSource, bridgeFac, ct);
+                }
+                else if (materialise is not null)
+                {
+                    // A row-mode tail has no RecordBatch to tee. Bridging back to Arrow purely to
+                    // materialise would change the pipeline the checkpoint claims to represent, so
+                    // the caller is told plainly instead of being given a silently different run.
+                    throw new InvalidOperationException(
+                        "--checkpoint needs a columnar stream at the writer boundary; this pipeline ends in row mode. " +
+                        "Materialise before the row-mode transformers, or target a columnar writer.");
                 }
                 await ConsumeRowStreamAsync(currentRowSource, rowWriter, options.BatchSize, progress, ct);
             }

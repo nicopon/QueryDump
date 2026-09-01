@@ -239,6 +239,21 @@ public class PipelineLexerTests
         Assert.Contains("--session", ex.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Neither materialisation flag opens a branch. Only -i, --from and --job do, and giving a
+    /// fourth flag that meaning would make the grammar unlearnable.
+    /// </summary>
+    [Fact]
+    public void Parse_CheckpointFlags_DoNotSplitTheBranch()
+    {
+        var pipeline = _lexer.Parse(new[]
+        {
+            "-i", "in.csv", "--checkpoint", "stage1", "--from-checkpoint", "abc123", "-o", "out.csv"
+        });
+
+        Assert.Single(pipeline.Branches);
+    }
+
     [Fact]
     public void Parse_RepeatedFromWithEmptyBranch_Throws()
     {

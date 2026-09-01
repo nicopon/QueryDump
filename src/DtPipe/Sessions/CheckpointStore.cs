@@ -44,50 +44,31 @@ public sealed class CheckpointStore
     }
 
     /// <summary>
+    /// Opens an incremental writer. Use this when batches arrive one at a time — a tee on a live
+    /// stream cannot hand over an IAsyncEnumerable without consuming it.
+    /// </summary>
+    public CheckpointWriter BeginWrite(string checkpointKey)
+    {
+        _session.EnsureCreated();
+        var key = SessionKeyStore.GetOrCreateKey(_session.Identity.Name);
+        Directory.CreateDirectory(_session.CheckpointPath(checkpointKey));
+        return new CheckpointWriter(PathFor(checkpointKey), key);
+    }
+
+    /// <summary>
     /// Materialises <paramref name="batches"/> under <paramref name="checkpointKey"/>.
     /// Terminal consumer: every batch is disposed here.
     /// </summary>
     /// <returns>Rows written.</returns>
     public async Task<long> WriteAsync(string checkpointKey, IAsyncEnumerable<RecordBatch> batches, CancellationToken ct = default)
     {
-        _session.EnsureCreated();
-        var key = SessionKeyStore.GetOrCreateKey(_session.Identity.Name);
-
-        var dir = _session.CheckpointPath(checkpointKey);
-        Directory.CreateDirectory(dir);
-
-        // Written beside the target then moved into place: a run interrupted mid-write must not
-        // leave a half file that reads as a complete checkpoint.
-        var finalPath = PathFor(checkpointKey);
-        var tempPath = finalPath + ".partial";
-
-        long rows = 0;
-        var header = CheckpointCipher.CreateHeader();
-
-        await using (var file = File.Create(tempPath))
+        await using var writer = BeginWrite(checkpointKey);
+        await foreach (var batch in batches.WithCancellation(ct))
         {
-            await file.WriteAsync(header, ct);
-
-            long counter = 0;
-            await foreach (var batch in batches.WithCancellation(ct))
-            {
-                using (batch)
-                {
-                    using var buffer = new MemoryStream();
-                    using (var writer = new ArrowStreamWriter(buffer, batch.Schema, leaveOpen: true))
-                    {
-                        await writer.WriteRecordBatchAsync(batch, ct);
-                        await writer.WriteEndAsync(ct);
-                    }
-
-                    CheckpointCipher.WriteFrame(file, key, header, counter++, buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
-                    rows += batch.Length;
-                }
-            }
+            using (batch) await writer.WriteAsync(batch, ct);
         }
-
-        File.Move(tempPath, finalPath, overwrite: true);
-        return rows;
+        await writer.CommitAsync(ct);
+        return writer.RowsWritten;
     }
 
     /// <summary>
@@ -131,5 +112,70 @@ public sealed class CheckpointStore
             using (batch) return batch.Schema;
         }
         return null;
+    }
+}
+
+/// <summary>
+/// Writes one checkpoint file incrementally.
+///
+/// The file is built beside its target and moved into place only on <see cref="CommitAsync"/>:
+/// a run interrupted mid-write must not leave something that reads as a complete checkpoint.
+/// Disposing without committing therefore discards the partial file, which is the correct
+/// outcome of a failed run.
+///
+/// It does NOT take ownership of the batches it is shown — a tee still owes its consumer the
+/// batch it is teeing (CLAUDE.md › "RecordBatch ownership").
+/// </summary>
+public sealed class CheckpointWriter : IAsyncDisposable
+{
+    private readonly string _finalPath;
+    private readonly string _tempPath;
+    private readonly byte[] _key;
+    private readonly byte[] _header;
+    private readonly FileStream _file;
+    private long _counter;
+    private bool _committed;
+
+    internal CheckpointWriter(string finalPath, byte[] key)
+    {
+        _finalPath = finalPath;
+        _tempPath = finalPath + ".partial";
+        _key = key;
+        _header = CheckpointCipher.CreateHeader();
+        _file = File.Create(_tempPath);
+        _file.Write(_header);
+    }
+
+    public long RowsWritten { get; private set; }
+
+    /// <summary>Appends one batch. The caller keeps ownership of it.</summary>
+    public async ValueTask WriteAsync(RecordBatch batch, CancellationToken ct = default)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new ArrowStreamWriter(buffer, batch.Schema, leaveOpen: true))
+        {
+            await writer.WriteRecordBatchAsync(batch, ct);
+            await writer.WriteEndAsync(ct);
+        }
+
+        CheckpointCipher.WriteFrame(_file, _key, _header, _counter++, buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+        RowsWritten += batch.Length;
+    }
+
+    /// <summary>Publishes the checkpoint. Until this returns, nothing is readable.</summary>
+    public async ValueTask CommitAsync(CancellationToken ct = default)
+    {
+        if (_committed) return;
+        await _file.FlushAsync(ct);
+        await _file.DisposeAsync();
+        File.Move(_tempPath, _finalPath, overwrite: true);
+        _committed = true;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_committed) return;
+        await _file.DisposeAsync();
+        try { if (File.Exists(_tempPath)) File.Delete(_tempPath); } catch { /* best effort */ }
     }
 }

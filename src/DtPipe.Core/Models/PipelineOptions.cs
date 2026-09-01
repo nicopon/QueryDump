@@ -46,4 +46,9 @@ public sealed record PipelineOptions : IOptionSet
 	// Incremental loading — set from JobDefinition by LinearPipelineService
 	public string? Cursor { get; init; }
 	public string? State { get; init; }
+
+	// Materialisation — set from JobDefinition by LinearPipelineService
+	public string? Checkpoint { get; init; }
+	public string? FromCheckpoint { get; init; }
+	public string? Session { get; init; }
 }

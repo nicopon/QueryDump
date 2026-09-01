@@ -20,7 +20,11 @@ public sealed record BranchEngineSettings(
     string? LogPath,
     string? Prefix,
     string? Cursor,
-    string? State)
+    string? State,
+    // Checkpoint: materialise this branch's output in the session store (--checkpoint).
+    // FromCheckpoint: read its source from the store instead of the input (--from-checkpoint).
+    string? Checkpoint = null,
+    string? FromCheckpoint = null)
 {
     public static BranchEngineSettings Default { get; }
         = new(Limit: 0, BatchSize: PipelineOptions.DefaultBatchSize, MaxBatchBytes: 0, SamplingRate: 1.0, SamplingSeed: null,
@@ -42,6 +46,8 @@ public sealed record BranchEngineSettings(
         Prefix = Prefix ?? job.Prefix,
         Cursor = Cursor ?? job.Cursor,
         State = State ?? job.State,
+        Checkpoint = Checkpoint ?? job.Checkpoint,
+        FromCheckpoint = FromCheckpoint ?? job.FromCheckpoint,
     };
 }
 

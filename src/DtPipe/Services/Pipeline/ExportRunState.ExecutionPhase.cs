@@ -195,8 +195,25 @@ internal sealed partial class ExportRunState
         {
             Logger.LogDebug("[Execution] running segmented pipeline");
             var effectiveOptions = IsSampleMode ? Options with { Limit = EffectiveLimit } : Options;
+
+            Func<IAsyncEnumerable<Apache.Arrow.RecordBatch>, IAsyncEnumerable<Apache.Arrow.RecordBatch>>? materialise = null;
+            DtPipe.Sessions.CheckpointStore? checkpointStore = null;
+            if (!string.IsNullOrEmpty(Options.Checkpoint))
+            {
+                var session = DtPipe.Sessions.SessionStore.Resolve(Options.Session);
+                // The TTL purge runs here and nowhere else: the store is being touched, so this
+                // is the first moment housekeeping is owed. An ordinary run never reaches it.
+                DtPipe.Sessions.SessionPurge.PurgeExpired(session.RootPath);
+                checkpointStore = new DtPipe.Sessions.CheckpointStore(session);
+                CheckpointKey = ComputeCheckpointKey();
+                var storeRef = checkpointStore;
+                var keyRef = CheckpointKey;
+                materialise = src => DtPipe.Sessions.CheckpointTee.TeeAsync(src, storeRef, keyRef, effectiveCt);
+                DtPipe.Sessions.OptInNotice.ShowOnce(session, Observer, SilenceInternal);
+            }
+
             await _svc._pipelineExecutor.ExecuteSegmentedPipelineAsync(
-                Reader, EffectiveWriter, Segments, exportableSchema, effectiveOptions, Progress, LinkedCts, effectiveCt, SampleTap);
+                Reader, EffectiveWriter, Segments, exportableSchema, effectiveOptions, Progress, LinkedCts, effectiveCt, SampleTap, materialise);
 
             if (IsSampleMode)
             {

@@ -39,5 +39,9 @@ public static class CoreFlagRegistry
         // other value flag: repetition means "open a branch" in this grammar, and only for
         // -i / --from / --job.
         registry.Register(new FlagDef("--session",     new string[] { }, FlagArity.Scalar, FlagScope.Global,    "Name the session materialised artefacts belong to",    FlagStage.All));
+
+        // Materialisation. Per-branch, and neither splits a branch: only -i, --from and --job do.
+        registry.Register(new FlagDef("--checkpoint",      new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Materialise this branch's output in the session store", FlagStage.All));
+        registry.Register(new FlagDef("--from-checkpoint", new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Resume this branch from a stored checkpoint",           FlagStage.All));
     }
 }
