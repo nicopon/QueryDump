@@ -148,7 +148,9 @@ public partial class DtPipeMcpTools
                 return JsonSerializer.Serialize(new { success = false, stage = "validation", errors = parsed.Errors },
                     new JsonSerializerOptions { WriteIndented = true });
 
-            var report = await RunSampleAsync(parsed, Math.Clamp(rows, 1, 1000), ct);
+            var report = await RunSampleAsync(parsed, Math.Clamp(rows, 1, 1000), ct,
+                nextStep: "This was a preview: no data was written to the target. To run the pipeline for real, "
+                        + "call execute-yaml-job with apply=true.");
             return JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
         }
         catch (Exception ex)
@@ -173,7 +175,7 @@ public partial class DtPipeMcpTools
     /// dry-run tool opened the reader and listed columns; it never ran a transformer at all,
     /// so it could not have told a model that its --window step produced nothing.
     /// </summary>
-    private async Task<object> RunSampleAsync(YamlParseResult parsed, int rows, CancellationToken ct)
+    private async Task<object> RunSampleAsync(YamlParseResult parsed, int rows, CancellationToken ct, string? nextStep = null)
     {
         var collector = _serviceProvider.GetRequiredService<DtPipe.DryRun.SampleReportCollector>();
         var jobService = _serviceProvider.GetRequiredService<DtPipe.Cli.JobService>();
@@ -215,6 +217,12 @@ public partial class DtPipeMcpTools
             mode = "sample",
             rowsRequested = rows,
             error = failure,
+            // A response can be honest and still unusable. This one reports success with a full
+            // trace, which a model reads as "the job is done" unless the response says what is
+            // left to do — a real mission run stopped here and never wrote its target. `applied:
+            // false` states the fact; nextStep states the consequence, and the model acts on the
+            // second.
+            nextStep,
             branches = collector.Reports.Select(kv => Shape(kv.Key, kv.Value)).ToList()
         };
     }

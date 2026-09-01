@@ -45,6 +45,12 @@ public class ExecuteYamlJobGuardrailTests
          // executing nothing. Fail-closed is unchanged and still legible: whatever the run's
          // outcome, this call did not consent to a write.
          Assert.Contains("\"applied\": false", json);
+
+         // Honest is not the same as usable. A response reporting success with a full trace
+         // reads as "the job is done" unless it says what is left to do — a real agent mission
+         // stopped exactly here and never wrote its target. The remedy has to be IN the payload.
+         Assert.Contains("apply=true", json);
+         Assert.Contains("NOTHING WAS WRITTEN", json);
             }
 
         [Fact]
