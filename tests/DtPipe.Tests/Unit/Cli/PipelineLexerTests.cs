@@ -218,6 +218,28 @@ public class PipelineLexerTests
     }
 
     [Fact]
+    public void Parse_Session_IsGlobalAndDoesNotSplitTheBranch()
+    {
+        var pipeline = _lexer.Parse(new[] { "-i", "in.csv", "--session", "mission-7", "-o", "out.csv" });
+
+        Assert.Single(pipeline.Branches);
+        Assert.Equal("mission-7", pipeline.Globals.Session);
+    }
+
+    /// <summary>
+    /// --session is scalar like every other value flag. Only -i, --from and --job give repetition
+    /// a meaning, and that meaning is "open a branch".
+    /// </summary>
+    [Fact]
+    public void Parse_RepeatedSession_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => _lexer.Parse(new[] { "-i", "in.csv", "--session", "a", "--session", "b", "-o", "out.csv" }));
+
+        Assert.Contains("--session", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Parse_RepeatedFromWithEmptyBranch_Throws()
     {
         var args = new[] {

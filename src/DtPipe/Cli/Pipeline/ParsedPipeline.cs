@@ -15,6 +15,9 @@ public record GlobalOptions
     public bool IgnoreNulls { get; init; }
     public string? DryRunInteractiveBranch { get; set; }
 
+    /// <summary>--session &lt;name&gt;. Head of the session precedence chain (see SessionResolver).</summary>
+    public string? Session { get; init; }
+
     /// <summary>F17: when true, binding failures (unrecognized flags, unparsable values) exit non-zero instead of being skipped.</summary>
     public bool StrictBindings { get; init; }
 

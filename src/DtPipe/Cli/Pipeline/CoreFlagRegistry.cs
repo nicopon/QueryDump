@@ -34,5 +34,10 @@ public static class CoreFlagRegistry
         registry.Register(new FlagDef("--cursor",      new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "Cursor column for incremental loading (writer-side)", FlagStage.All));
         registry.Register(new FlagDef("--state",       new string[] { }, FlagArity.Scalar, FlagScope.PerBranch, "State file path for cursor persistence (writer-side)", FlagStage.All));
         registry.Register(new FlagDef("--cursor-from", new string[] { }, FlagArity.Scalar, FlagScope.Global,    "Override cursor value for this run",                   FlagStage.All));
+
+        // Session — names the store that materialised artefacts belong to. Scalar like every
+        // other value flag: repetition means "open a branch" in this grammar, and only for
+        // -i / --from / --job.
+        registry.Register(new FlagDef("--session",     new string[] { }, FlagArity.Scalar, FlagScope.Global,    "Name the session materialised artefacts belong to",    FlagStage.All));
     }
 }

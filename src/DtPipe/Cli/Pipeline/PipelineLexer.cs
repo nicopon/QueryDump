@@ -224,6 +224,7 @@ public class PipelineLexer
             JobFile       = dict.TryGetValue("--job", out var jobVal) ? jobVal?.ToString()
                           : dict.TryGetValue("-j", out var jVal) ? jVal?.ToString() : null,
             ExportJobFile = dict.TryGetValue("--export-job", out var ejVal) ? ejVal?.ToString() : null,
+            Session       = dict.TryGetValue("--session", out var sessVal) ? sessVal?.ToString() : null,
             IgnoreNulls   = dict.ContainsKey("--ignore-nulls"),
             AllFlags      = dict
         };
