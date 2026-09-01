@@ -33,6 +33,26 @@ run_mission() {
     # Generous, but bounded: a local 12B answers a ReAct turn in seconds, so minutes of silence
     # means something is wrong rather than slow.
     local OLLAMA_TIMEOUT="${OLLAMA_TIMEOUT:-300}"
+
+    # F3 states the determinism rule as "temperature 0 + seed", and this harness — the one that
+    # feeds the CI gate — was running at Ollama's default temperature with no seed. A gate that
+    # is fail-closed on a non-deterministic input produces random red rather than a signal: the
+    # same commit took 7 iterations on one run and hit the 25-iteration ceiling on the next.
+    # That is the argument the cycle plan already makes about running a 15% perf gate on a
+    # shared runner, applied to the input instead of the machine.
+    #
+    # Honest limit: this reduces variance, it does not abolish it. Batching and floating-point
+    # non-associativity on a GPU can still make two runs differ at temperature 0, and a model
+    # is free to ignore the seed. A red run remains worth reading before it is believed.
+    local OLLAMA_TEMPERATURE="${OLLAMA_TEMPERATURE:-0}"
+    local OLLAMA_SEED="${OLLAMA_SEED:-42}"
+
+    # A ReAct turn is a few sentences of reasoning and one tool call. Nothing capped it, so a
+    # model that started rambling generated until num_ctx: 16384 tokens at ~43 tok/s is around
+    # six minutes for a single turn, past the timeout above, and the mission died of a stall
+    # rather than of an error. Twice, both times right after a tool returned a long help
+    # listing — the kind of output a small model likes to echo back.
+    local OLLAMA_NUM_PREDICT="${OLLAMA_NUM_PREDICT:-2048}"
     local OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434/api/chat}"
 
     echo "=================================================="
@@ -153,7 +173,10 @@ Before calling any tool or giving a final answer, state in text:
           \"messages\": $MESSAGES_JSON,
           \"tools\": $TOOLS_JSON,
           \"options\": {
-            \"num_ctx\": 16384
+            \"num_ctx\": 16384,
+            \"temperature\": $OLLAMA_TEMPERATURE,
+            \"seed\": $OLLAMA_SEED,
+            \"num_predict\": $OLLAMA_NUM_PREDICT
           },
           \"stream\": false
         }") || CURL_RC=$?
