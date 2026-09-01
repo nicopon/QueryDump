@@ -27,6 +27,8 @@ using System.CommandLine.Parsing;
 using System.Linq;
 
 [assembly: InternalsVisibleTo("DtPipe.Tests")]
+// The micro perf gate measures the engine kernel, which is internal.
+[assembly: InternalsVisibleTo("DtPipe.Benchmarks")]
 namespace DtPipe;
 
 class Program

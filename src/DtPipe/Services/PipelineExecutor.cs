@@ -29,6 +29,44 @@ public sealed class PipelineExecutor
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    /// <summary>Stage 0 for <see cref="ISampleTap"/>: the reader's own output.</summary>
+    private const int ReaderStage = 0;
+
+    /// <summary>
+    /// Offers each batch to the tap on its way past. Not owned here: the batch is yielded on
+    /// to whoever owns it, and the tap is contractually forbidden from disposing or keeping it.
+    /// Returns the source unchanged when there is no tap, so an ordinary run pays nothing.
+    /// </summary>
+    private static IAsyncEnumerable<RecordBatch> TapBatchesAsync(
+        IAsyncEnumerable<RecordBatch> source, ISampleTap? tap, int stageIndex, CancellationToken ct)
+        => tap is null ? source : TapBatchesCoreAsync(source, tap, stageIndex, ct);
+
+    private static async IAsyncEnumerable<RecordBatch> TapBatchesCoreAsync(
+        IAsyncEnumerable<RecordBatch> source, ISampleTap tap, int stageIndex,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var batch in source.WithCancellation(ct))
+        {
+            if (tap.WantsMore) tap.OnBatch(stageIndex, batch);
+            yield return batch;
+        }
+    }
+
+    private static IAsyncEnumerable<IReadOnlyList<object?>> TapRowsAsync(
+        IAsyncEnumerable<IReadOnlyList<object?>> source, ISampleTap? tap, int stageIndex, CancellationToken ct)
+        => tap is null ? source : TapRowsCoreAsync(source, tap, stageIndex, ct);
+
+    private static async IAsyncEnumerable<IReadOnlyList<object?>> TapRowsCoreAsync(
+        IAsyncEnumerable<IReadOnlyList<object?>> source, ISampleTap tap, int stageIndex,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var row in source.WithCancellation(ct))
+        {
+            if (tap.WantsMore) tap.OnRow(stageIndex, row);
+            yield return row;
+        }
+    }
+
     internal async Task DrainColumnarSourceAsync(
         IAsyncEnumerable<RecordBatch> source,
         IColumnarDataWriter writer,
@@ -80,7 +118,8 @@ public sealed class PipelineExecutor
         PipelineOptions options,
         IExportProgress progress,
         CancellationTokenSource linkedCts,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISampleTap? tap = null)
     {
         // Determine whether any segment is columnar. When there are columnar segments, the pipeline
         // must enter Arrow mode at some point regardless of the writer type — columnar transformers
@@ -98,6 +137,7 @@ public sealed class PipelineExecutor
                     var sampler = options.SamplingSeed.HasValue ? new Random(options.SamplingSeed.Value) : Random.Shared;
                     source = ApplySamplingAsync(source, options.SamplingRate, sampler, ct);
                 }
+                source = TapBatchesAsync(source, tap, ReaderStage, ct);
                 await DirectColumnarTransferAsync(source, cw, options.Limit, progress, ct);
             }
             else if (reader is IColumnarStreamReader crForRows && writer is IRowDataWriter rw)
@@ -106,13 +146,14 @@ public sealed class PipelineExecutor
                 // Do NOT call ReadBatchesAsync — route through ReadRecordBatchesAsync + bridge.
                 var bridgeFac = _columnarToRowBridgeFactories.FirstOrDefault()
                     ?? throw new InvalidOperationException("No ColumnarToRowBridgeFactory");
-                var rowSource = BridgeColumnarToRowsAsync(crForRows.ReadRecordBatchesAsync(ct), bridgeFac, ct);
+                var rowSource = TapRowsAsync(
+                    BridgeColumnarToRowsAsync(crForRows.ReadRecordBatchesAsync(ct), bridgeFac, ct), tap, ReaderStage, ct);
                 await DirectRowTransferFromRowsAsync(rowSource, rw, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct);
             }
             else if (writer is IRowDataWriter rw2)
             {
                 // Row-only reader → row-mode writer: existing direct path.
-                await DirectRowTransferAsync(reader, rw2, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct);
+                await DirectRowTransferAsync(reader, rw2, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, tap, ct);
             }
             else
             {
@@ -142,15 +183,21 @@ public sealed class PipelineExecutor
                     currentColumnarSource = ApplySamplingAsync(currentColumnarSource, options.SamplingRate, sampler, ct);
                 }
                 currentColumnarSource = ReportColumnarReadAsync(currentColumnarSource, progress, ct);
+                currentColumnarSource = TapBatchesAsync(currentColumnarSource, tap, ReaderStage, ct);
                 isCurrentColumnar = true;
             }
             else
             {
                 // Row-mode sink (or row-only reader): start in row mode — zero bridges needed
-                currentRowSource = ProduceRowStreamAsync(reader, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct);
+                currentRowSource = TapRowsAsync(
+                    ProduceRowStreamAsync(reader, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct),
+                    tap, ReaderStage, ct);
                 isCurrentColumnar = false;
             }
 
+            // Stage numbering for the tap: 0 is the reader, then the transformers in pipeline
+            // order. Each segment consumes as many stage numbers as it holds transformers.
+            int stageBase = ReaderStage;
             foreach (var segment in segments)
             {
                 if (segment.IsColumnar)
@@ -161,7 +208,7 @@ public sealed class PipelineExecutor
                         currentColumnarSource = BridgeRowsToColumnarAsync(currentRowSource, bridgeFac, segment.InputSchema, options.BatchSize, options.MaxBatchBytes, ct, segment.InputSchemaArrow);
                         isCurrentColumnar = true;
                     }
-                    currentColumnarSource = ApplyColumnarSegmentAsync(currentColumnarSource, segment.Transformers, progress, ct);
+                    currentColumnarSource = ApplyColumnarSegmentAsync(currentColumnarSource, segment.Transformers, progress, ct, tap, stageBase);
                 }
                 else
                 {
@@ -171,8 +218,9 @@ public sealed class PipelineExecutor
                         currentRowSource = BridgeColumnarToRowsAsync(currentColumnarSource, bridgeFac, ct);
                         isCurrentColumnar = false;
                     }
-                    currentRowSource = ApplyRowSegmentAsync(currentRowSource, segment.Transformers, progress, ct);
+                    currentRowSource = ApplyRowSegmentAsync(currentRowSource, segment.Transformers, progress, ct, tap, stageBase);
                 }
+                stageBase += segment.Transformers.Count;
             }
 
             if (writer is IColumnarDataWriter columnarWriter)
@@ -304,7 +352,9 @@ public sealed class PipelineExecutor
         IAsyncEnumerable<RecordBatch> source,
         List<IDataTransformer> transformers,
         IExportProgress progress,
-        [EnumeratorCancellation] CancellationToken ct)
+        [EnumeratorCancellation] CancellationToken ct,
+        ISampleTap? tap = null,
+        int stageBase = 0)
     {
         // Ownership (see CLAUDE.md › "RecordBatch ownership"): this method owns every batch it
         // pulls from `source`. It disposes each input once the transformer chain has consumed it —
@@ -315,8 +365,9 @@ public sealed class PipelineExecutor
         {
             RecordBatch? currentBatch = batch;
 
-            foreach (var t in transformers)
+            for (int i = 0; i < transformers.Count; i++)
             {
+                var t = transformers[i];
                 var transCol = (IColumnarTransformer)t;
                 var res = await transCol.TransformBatchAsync(currentBatch!, ct);
                 if (!ReferenceEquals(res, currentBatch))
@@ -324,6 +375,7 @@ public sealed class PipelineExecutor
                 currentBatch = res;
                 if (currentBatch == null) break;
                 progress.ReportTransform(t.GetType().Name.Replace("DataTransformer", ""), currentBatch.Length);
+                if (tap?.WantsMore == true) tap.OnBatch(stageBase + i + 1, currentBatch);
             }
             if (currentBatch != null)
             {
@@ -341,6 +393,8 @@ public sealed class PipelineExecutor
                 if (flushedBatch == null) continue;
                 RecordBatch? current = flushedBatch;
 
+                if (tap?.WantsMore == true) tap.OnBatch(stageBase + i + 1, current);
+
                 for (int j = i + 1; j < transformers.Count && current != null; j++)
                 {
                     var nextT = (IColumnarTransformer)transformers[j];
@@ -349,7 +403,10 @@ public sealed class PipelineExecutor
                         current.Dispose();
                     current = res;
                     if (current != null)
+                    {
                         progress.ReportTransform(nextT.GetType().Name, current.Length);
+                        if (tap?.WantsMore == true) tap.OnBatch(stageBase + j + 1, current);
+                    }
                 }
 
                 if (current != null) yield return current;
@@ -361,11 +418,13 @@ public sealed class PipelineExecutor
         IAsyncEnumerable<IReadOnlyList<object?>> source,
         List<IDataTransformer> transformers,
         IExportProgress progress,
-        [EnumeratorCancellation] CancellationToken ct)
+        [EnumeratorCancellation] CancellationToken ct,
+        ISampleTap? tap = null,
+        int stageBase = 0)
     {
         await foreach (var row in source.WithCancellation(ct))
         {
-            var results = ProcessRowThroughTransformers(row, transformers, progress, ct);
+            var results = ProcessRowThroughTransformers(row, transformers, progress, ct, tap, stageBase);
             foreach (var r in results) yield return r;
         }
 
@@ -379,7 +438,8 @@ public sealed class PipelineExecutor
                 var remainingTransformers = transformers.Skip(i + 1).ToList();
                 foreach (var fr in flushedRows)
                 {
-                    var results = ProcessRowThroughTransformers(fr, remainingTransformers, progress, ct);
+                    if (tap?.WantsMore == true) tap.OnRow(stageBase + i + 1, fr);
+                    var results = ProcessRowThroughTransformers(fr, remainingTransformers, progress, ct, tap, stageBase + i + 1);
                     foreach (var r in results) yield return r;
                 }
             }
@@ -390,11 +450,14 @@ public sealed class PipelineExecutor
         IReadOnlyList<object?> row,
         List<IDataTransformer> p,
         IExportProgress progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISampleTap? tap = null,
+        int stageBase = 0)
     {
         var currentRows = new List<IReadOnlyList<object?>> { row };
-        foreach (var transformer in p)
+        for (int i = 0; i < p.Count; i++)
         {
+            var transformer = p[i];
             var nextRows = new List<IReadOnlyList<object?>>();
             foreach (var r in currentRows)
             {
@@ -412,6 +475,11 @@ public sealed class PipelineExecutor
                 }
             }
             currentRows = nextRows;
+            if (tap?.WantsMore == true)
+            {
+                var stage = stageBase + i + 1;
+                foreach (var r in currentRows) tap.OnRow(stage, r);
+            }
             if (currentRows.Count == 0) break;
         }
         return currentRows;
@@ -482,6 +550,7 @@ public sealed class PipelineExecutor
         double samplingRate,
         int? samplingSeed,
         IExportProgress progress,
+        ISampleTap? tap,
         CancellationToken ct)
     {
         async IAsyncEnumerable<object?[]> FlattenBatches([EnumeratorCancellation] CancellationToken innerCt = default)
@@ -496,7 +565,16 @@ public sealed class PipelineExecutor
             }
         }
 
-        await DrainRowSourceAsync(FlattenBatches(ct), writer, batchSize, limit, samplingRate, samplingSeed, progress, ct);
+        async IAsyncEnumerable<object?[]> Tapped([EnumeratorCancellation] CancellationToken innerCt = default)
+        {
+            await foreach (var row in FlattenBatches(innerCt))
+            {
+                if (tap?.WantsMore == true) tap.OnRow(ReaderStage, row);
+                yield return row;
+            }
+        }
+
+        await DrainRowSourceAsync(tap is null ? FlattenBatches(ct) : Tapped(ct), writer, batchSize, limit, samplingRate, samplingSeed, progress, ct);
     }
 
     private async Task DirectRowTransferFromRowsAsync(

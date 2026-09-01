@@ -25,6 +25,7 @@
   
   <ItemGroup>
     <InternalsVisibleTo Include="DtPipe.Tests" />
+    <InternalsVisibleTo Include="DtPipe.Benchmarks" />
   </ItemGroup>
 
   <!-- Include README for NuGet package -->
