@@ -20,8 +20,10 @@ public interface IExportObserver
 	// Progress
 	IExportProgress CreateProgressReporter(bool isInteractive, IReadOnlyList<(string Name, bool IsColumnar)> transformerModes, bool suppressLiveTui = false, string? branchName = null, bool suppressCompletionOutput = false);
 
-	// Dry Run
-	Task RunDryRunAsync(IStreamReader reader, IReadOnlyList<IDataTransformer> pipeline, int count, IDataWriter? inspectionWriter, IReadOnlyDictionary<IDataTransformer, (IReadOnlyList<PipeColumnInfo> In, IReadOnlyList<PipeColumnInfo> Out)>? precomputedSchemas = null, PipelineExecutionPlan? executionPlan = null, bool isInteractive = true, CancellationToken ct = default);
+	// Sample mode — rendering only. The run already happened, on the real execution path;
+	// the observer is handed what it produced. The old name said "run", which is precisely
+	// the confusion that let a second engine live behind this interface.
+	Task RenderSampleReportAsync(object report, PipelineExecutionPlan? executionPlan, bool isInteractive, CancellationToken ct = default);
 
 	// Column type inference suggestion (shown during --dry-run or --auto-column-types for text sources like CSV)
 	void ShowColumnTypeInferenceSuggestion(IReadOnlyDictionary<string, string> suggestions, int sampleCount, bool applied = false);

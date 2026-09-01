@@ -51,7 +51,6 @@ public class DryRunConstraintValidationTests
 	public async Task Validate_NotNullViolation_ReturnsError()
 	{
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 
 		// Source has NULL in 'name'
@@ -73,7 +72,7 @@ public class DryRunConstraintValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
 
 		// Assert
 		Assert.NotNull(result.ConstraintValidation);
@@ -87,7 +86,6 @@ public class DryRunConstraintValidationTests
 	public async Task Validate_UniqueViolation_ReturnsWarning()
 	{
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 
 		// Source has duplicate 'email'
@@ -110,7 +108,7 @@ public class DryRunConstraintValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
 
 		// Assert
 		Assert.NotNull(result.ConstraintValidation);
@@ -124,7 +122,6 @@ public class DryRunConstraintValidationTests
 	public async Task Validate_ConstraintSuccess_ReturnsValid()
 	{
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 
 		var sourceCols = new List<PipeColumnInfo> { new("id", typeof(int), false), new("email", typeof(string), true) };
@@ -146,7 +143,7 @@ public class DryRunConstraintValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
 
 		// Assert
 		Assert.NotNull(result.ConstraintValidation);
@@ -159,7 +156,6 @@ public class DryRunConstraintValidationTests
 	public async Task Validate_NullableColumn_AllowsNulls()
 	{
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 
 		var sourceCols = new List<PipeColumnInfo> { new("id", typeof(int), false), new("description", typeof(string), true) };
@@ -180,7 +176,7 @@ public class DryRunConstraintValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, inspector);
 
 		// Assert
 		Assert.NotNull(result.ConstraintValidation);

@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using DtPipe.Core.Abstractions;
 using DtPipe.Core.Models;
+using DtPipe.DryRun;
 using DtPipe.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -13,13 +14,10 @@ namespace DtPipe.Tests.Unit.DryRun;
 ///
 ///     what a sample run REPORTS is what a real run WRITES.
 ///
-/// Two implementations of "run a sample" exist while the unification is in flight, so the
-/// property is expressed once and the two harness helpers below adapt to whichever one is
-/// wired. <b>The assertion never changes</b> — that is what makes "the dry-run goes through
-/// the real execution path" verifiable rather than promised: a plan that routed around the
-/// old analyser instead of deleting it would leave this test red.
-///
-/// See .notes/voie3_materialisation_plan.md, étape 1 (red) and étape 4 (green).
+/// It was written red, against the second engine that used to answer for the dry-run, and
+/// turned green by deleting that engine rather than by touching the assertion. Routing around
+/// the old analyser instead of removing it would have left it red — which is what makes "the
+/// dry-run goes through the real execution path" a verified fact and not a promise.
 ///
 /// The transformers here are minimal doubles rather than Expand/Window themselves: the
 /// property under test is the ENGINE's row semantics (1:N, N:1, end-of-stream flush), not
@@ -44,7 +42,6 @@ public class SampleModeEquivalenceTests
 
 	[Theory]
 	[MemberData(nameof(Pipelines))]
-	[Trait("Status", "RedUntilStep4")]
 	public async Task SampleTrace_FinalStage_Equals_RealRun_Output(string pipeline)
 	{
 		var written = await RunRealPipelineAsync(Build(pipeline), SampleSize);
@@ -58,7 +55,6 @@ public class SampleModeEquivalenceTests
 	/// must report. Split out from the theory because it names one contract — IDataTransformer.Flush.
 	/// </summary>
 	[Fact]
-	[Trait("Status", "RedUntilStep4")]
 	public async Task Flushed_Rows_Are_Reported_By_Sample_Mode()
 	{
 		var reported = await RunSampleModeAsync(Build("window"), SampleSize);
@@ -70,8 +66,8 @@ public class SampleModeEquivalenceTests
 	// ─────────────────────────────────────────────────────────────────────────
 
 	private static readonly PipelineExecutor Executor = new(
-		Enumerable.Empty<IRowToColumnarBridgeFactory>(),
-		Enumerable.Empty<IColumnarToRowBridgeFactory>(),
+		[new DtPipe.Adapters.Infrastructure.Arrow.ArrowRowToColumnarBridgeFactory(NullLogger<DtPipe.Core.Infrastructure.Arrow.ArrowRowToColumnarBridge>.Instance)],
+		[new DtPipe.Adapters.Infrastructure.Arrow.ArrowColumnarToRowBridgeFactory()],
 		NullLogger<PipelineExecutor>.Instance);
 
 	/// <summary>The real path: what the writer actually receives, bounded to N input rows.</summary>
@@ -101,23 +97,15 @@ public class SampleModeEquivalenceTests
 	}
 
 	/// <summary>
-	/// The sample path. Adapts to whichever implementation is wired — see the class remarks.
-	/// ÉTAPE 4: replace the body with the unified path's SampleRun.Stages[^1].Rows.
-	/// The caller's assertion must not change when this body does.
+	/// The sample path — the unified one: the real engine, the real sink, the capture the tap
+	/// made on the way past. The caller's assertion did not change when this body did, which is
+	/// what the property is for.
 	/// </summary>
 	private static async Task<List<object?[]>> RunSampleModeAsync(List<IDataTransformer> pipeline, int sampleCount)
 	{
 		await using var reader = new SequenceReader(sampleCount * 4);
-		await reader.OpenAsync(CancellationToken.None);
-
-		var analyzer = new DtPipe.DryRun.DryRunAnalyzer();
-		var result = await analyzer.AnalyzeAsync(reader, pipeline, sampleCount);
-
-		return result.Samples
-			.Select(s => s.Stages[^1].Values)
-			.Where(v => v is not null)
-			.Select(v => v!)
-			.ToList();
+		var report = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader, pipeline, sampleCount);
+		return report.Run.FinalRows().ToList();
 	}
 
 	private static string Render(List<object?[]> rows)

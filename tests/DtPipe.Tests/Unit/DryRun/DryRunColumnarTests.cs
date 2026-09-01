@@ -32,10 +32,9 @@ public class DryRunColumnarTests
     }
 
     [Fact]
-    public async Task AnalyzeAsync_WithColumnarOnlyTransformer_ShouldSucceed()
+    public async Task Sample_Mode_Runs_A_Columnar_Only_Transformer_Through_The_Real_Path()
     {
         // Arrange
-        var analyzer = new DryRunAnalyzer();
         var readerMock = new Mock<IStreamReader>();
         
         var columns = new List<PipeColumnInfo> { new("id", typeof(int), false) };
@@ -48,9 +47,9 @@ public class DryRunColumnarTests
         var pipeline = new List<IDataTransformer> { new ColumnarOnlyTransformer() };
 
         // Act
-        var result = await analyzer.AnalyzeAsync(readerMock.Object, pipeline, 1);
+        var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(readerMock.Object, pipeline, 1);
 
-        // Assert
+        // Assert — the transformer ran through TransformBatchAsync, not a row-mode fallback.
         Assert.Single(result.Samples);
         var stages = result.Samples[0].Stages;
         Assert.Equal(2, stages.Count); // Input + Transformer

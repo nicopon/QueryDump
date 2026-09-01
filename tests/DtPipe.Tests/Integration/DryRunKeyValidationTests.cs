@@ -69,7 +69,6 @@ public class DryRunKeyValidationTests
 	public async Task Validate_ValidKey_ReturnsSuccess()
 	{
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -87,7 +86,7 @@ public class DryRunKeyValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(
 			reader.Object,
 			new List<IDataTransformer>(),
 			10,
@@ -105,7 +104,6 @@ public class DryRunKeyValidationTests
 	{
 		// ... (previous test implementation remains same but careful with TargetPKs default which is null so no check)
 		// Arrange
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -122,7 +120,7 @@ public class DryRunKeyValidationTests
 		};
 
 		// Act
-		var result = await analyzer.AnalyzeAsync(
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(
 			reader.Object,
 			new List<IDataTransformer>(),
 			10,
@@ -139,7 +137,6 @@ public class DryRunKeyValidationTests
 	[Fact]
 	public async Task Validate_CaseMismatch_ResolvesCorrectly()
 	{
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -152,7 +149,7 @@ public class DryRunKeyValidationTests
 		};
 		writer.TargetColumns = new List<PipeColumnInfo> { new("id", typeof(int), false) };
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.True(result.KeyValidation.IsValid);
@@ -162,7 +159,6 @@ public class DryRunKeyValidationTests
 	[Fact]
 	public async Task Validate_NotRequired_ReturnsValid()
 	{
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -174,7 +170,7 @@ public class DryRunKeyValidationTests
 		};
 		writer.TargetColumns = new List<PipeColumnInfo> { new("id", typeof(int), false) };
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.False(result.KeyValidation.IsRequired);
@@ -184,7 +180,6 @@ public class DryRunKeyValidationTests
 	[Fact]
 	public async Task Validate_MissingRequiredKey_ReturnsError()
 	{
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -196,7 +191,7 @@ public class DryRunKeyValidationTests
 		};
 		writer.TargetColumns = new List<PipeColumnInfo> { new("id", typeof(int), false) };
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.True(result.KeyValidation.IsRequired);
@@ -209,7 +204,6 @@ public class DryRunKeyValidationTests
 	[Fact]
 	public async Task Validate_CompositeKeySuccess_MatchesTarget()
 	{
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -226,7 +220,7 @@ public class DryRunKeyValidationTests
 			new("tenant_id", typeof(int), false)
 		};
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.True(result.KeyValidation.IsValid);
@@ -237,7 +231,6 @@ public class DryRunKeyValidationTests
 	public async Task Validate_TargetPKMismatch_MissingKey_ReturnsError()
 	{
 		// User provides (id), Target requires (id, tenant_id)
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -254,7 +247,7 @@ public class DryRunKeyValidationTests
 			new("tenant_id", typeof(int), false)
 		};
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.False(result.KeyValidation.IsValid);
@@ -265,7 +258,6 @@ public class DryRunKeyValidationTests
 	public async Task Validate_TargetPKMismatch_ExtraUserKey_ReturnsWarning()
 	{
 		// User provides (id, tenant_id), Target requires (id)
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -282,7 +274,7 @@ public class DryRunKeyValidationTests
 			new("tenant_id", typeof(int), false)
 		};
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.True(result.KeyValidation.IsValid); // Still valid!
@@ -295,7 +287,6 @@ public class DryRunKeyValidationTests
 	public async Task Validate_TargetHasNoPK_ReturnsWarning()
 	{
 		// User provides (id), Target exists but has NO PK
-		var analyzer = new DryRunAnalyzer();
 		var reader = new Mock<IStreamReader>();
 		SetupReader(reader);
 
@@ -311,7 +302,7 @@ public class DryRunKeyValidationTests
 			new("id", typeof(int), false)
 		};
 
-		var result = await analyzer.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
+		var result = await DtPipe.Tests.Helpers.SampleRunHarness.AnalyzeAsync(reader.Object, new List<IDataTransformer>(), 10, writer);
 
 		Assert.NotNull(result.KeyValidation);
 		Assert.True(result.KeyValidation.IsValid);

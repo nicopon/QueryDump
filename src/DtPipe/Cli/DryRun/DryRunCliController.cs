@@ -10,12 +10,11 @@ using Spectre.Console;
 namespace DtPipe.Cli.DryRun;
 
 /// <summary>
-/// CLI Controller for Dry Run execution.
-/// Orchestrates the analysis and visualization logic.
+/// Renders a sample run's report: execution plan, target compatibility, key and constraint
+/// findings, then the navigable per-row trace.
 /// </summary>
 public class DryRunCliController
 {
-	private const int SoftLimit = 100;
 	private readonly IAnsiConsole _console;
 
 	public DryRunCliController(IAnsiConsole console)
@@ -24,56 +23,19 @@ public class DryRunCliController
 	}
 
 	/// <summary>
-	/// Executes the dry run workflow: Analyzes data and displays interactive results.
+	/// Renders what a sample run observed. It does not produce the analysis: the run already
+	/// happened, on the real execution path, and this is handed its result. The controller
+	/// having once owned an analyser of its own is what let a second engine live here.
 	/// </summary>
-	public async Task RunAsync(
-		IStreamReader reader,
-		List<IDataTransformer> pipeline,
-		int sampleCount,
-		IDataWriter? writer = null,
-		IReadOnlyDictionary<IDataTransformer, (IReadOnlyList<PipeColumnInfo> In, IReadOnlyList<PipeColumnInfo> Out)>? precomputedSchemas = null,
+	public async Task RenderAsync(
+		SampleReport result,
 		PipelineExecutionPlan? executionPlan = null,
 		bool isInteractive = true,
 		CancellationToken ct = default)
 	{
-		if (!isInteractive)
-		{
-			// Silent execution to feed downstream branches
-			var analyzer = new DryRunAnalyzer();
-			try { await analyzer.AnalyzeAsync(reader, pipeline, sampleCount, writer as ISchemaInspector, precomputedSchemas, ct); } catch { }
-			return;
-		}
+		await Task.CompletedTask;
 
-		// 1. User Feedback for Analysis
-		if (sampleCount > SoftLimit)
-		{
-			_console.MarkupLine($"[yellow]⚠ Warning: Collecting {sampleCount} samples (>{SoftLimit}) may use significant memory.[/]");
-		}
-
-		_console.WriteLine();
-		_console.MarkupLine($"[grey]Fetching {sampleCount} sample row(s) for trace analysis...[/]");
-
-		// 2. Run Core Analysis
-		var interactiveAnalyzer = new DryRunAnalyzer();
-		ISchemaInspector? inspector = writer as ISchemaInspector;
-
-		// Notify user about inspection
-		if (inspector != null)
-		{
-			_console.WriteLine();
-			_console.MarkupLine("[grey]Inspecting target schema...[/]");
-		}
-
-		DryRunResult result;
-		try
-		{
-			result = await interactiveAnalyzer.AnalyzeAsync(reader, pipeline, sampleCount, inspector, precomputedSchemas, ct);
-		}
-		catch (Exception ex)
-		{
-			_console.MarkupLine($"[red]Analysis failed: {Markup.Escape(ex.Message)}[/]");
-			return;
-		}
+		if (!isInteractive) return;
 
 		if (result.Samples.Count == 0)
 		{
@@ -81,11 +43,10 @@ public class DryRunCliController
 			return;
 		}
 
-		_console.MarkupLine($"[grey]Collected {result.Samples.Count} sample(s).[/]");
+		var renderer = new DryRunRenderer();
+		var stageTotals = result.Run.Stages.Select(s => s.TotalSeen).ToList();
 
 		// 3. Render Execution Plan
-		var renderer = new DryRunRenderer();
-
 		if (executionPlan != null)
 		{
 			renderer.RenderExecutionPlan(executionPlan, _console);
@@ -163,12 +124,12 @@ public class DryRunCliController
         if (_console.Profile.Capabilities.Interactive && !Console.IsInputRedirected && !Console.IsOutputRedirected)
         {
             var navigator = new DryRunNavigator(renderer, _console);
-            navigator.Navigate(result.Samples, result.StepNames, columnWidths, result.SchemaInspectionError, targetInfo, initialIndex, errorIndices);
+            navigator.Navigate(result.Samples, result.StepNames, columnWidths, result.SchemaInspectionError, targetInfo, initialIndex, errorIndices, stageTotals);
         }
         else
         {
             _console.MarkupLine("[grey]Non-interactive mode: rendering first sample trace only.[/]");
-            _console.Write(renderer.BuildTraceTable(0, result.Samples.Count, result.Samples[0], result.StepNames, columnWidths, result.SchemaInspectionError, targetInfo));
+            _console.Write(renderer.BuildTraceTable(0, result.Samples.Count, result.Samples[0], result.StepNames, columnWidths, result.SchemaInspectionError, targetInfo, stageTotals));
             _console.WriteLine();
             _console.MarkupLine("[green]Dry-run complete. No data exported.[/]");
         }

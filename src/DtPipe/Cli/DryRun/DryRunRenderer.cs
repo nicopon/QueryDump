@@ -89,6 +89,21 @@ public class DryRunRenderer
 		return maxWidths;
 	}
 
+	/// <summary>
+	/// Notes a step where the row count changed. A trace is laid out row-major — trace j is
+	/// row j of every stage — which only lines up while the pipeline is 1:1. An expansion or a
+	/// window makes a step's row count differ from its neighbour's, and there is then no single
+	/// row running through the whole chain. Saying so is the honest alternative to a blank cell
+	/// that reads as "dropped".
+	/// </summary>
+	internal static string CardinalityNote(IReadOnlyList<long>? stageTotals, int stepIndex)
+	{
+		if (stageTotals is null || stepIndex + 1 >= stageTotals.Count) return "";
+		var before = stageTotals[stepIndex];
+		var after = stageTotals[stepIndex + 1];
+		return before == after ? "" : $"\n[{ColorDim}]{before} → {after} rows[/]";
+	}
+
 	public Table BuildTraceTable(
 		int sampleIndex,
 		int totalSamples,
@@ -96,7 +111,8 @@ public class DryRunRenderer
 		List<string> stepNames,
 		int[]? columnWidths = null,
 		string? schemaWarning = null,
-		TargetSchemaInfo? targetSchema = null)
+		TargetSchemaInfo? targetSchema = null,
+		IReadOnlyList<long>? stageTotals = null)
 	{
 		var table = new Table().Border(TableBorder.Rounded);
 		table.Title = new TableTitle(totalSamples > 1
@@ -115,7 +131,7 @@ public class DryRunRenderer
 
 		for (int s = 0; s < stepNames.Count; s++)
 		{
-			var stepColumn = new TableColumn($"[{ColorStep}]{stepNames[s]} (Step {s + 1})[/]");
+			var stepColumn = new TableColumn($"[{ColorStep}]{stepNames[s]} (Step {s + 1})[/]{CardinalityNote(stageTotals, s)}");
 			if (columnWidths != null) stepColumn.Width = columnWidths[colIdx++];
 			table.AddColumn(stepColumn);
 		}

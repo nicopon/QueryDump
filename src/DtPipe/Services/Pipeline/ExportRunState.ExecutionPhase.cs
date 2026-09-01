@@ -113,7 +113,8 @@ internal sealed partial class ExportRunState
 
         await EffectiveWriter.InitializeAsync(exportableSchema, retryCt);
 
-        SampleTap = new DtPipe.DryRun.SampleTapRecorder(Options.DryRunCount);
+        // The ceiling guards memory; --dry-run N bounds the source through EffectiveLimit.
+        SampleTap = new DtPipe.DryRun.SampleTapRecorder();
         DeclareSampleStages();
 
         Progress = CreateProgress();

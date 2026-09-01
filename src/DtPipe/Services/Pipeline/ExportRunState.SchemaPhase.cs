@@ -9,6 +9,7 @@ using DtPipe.Core.Abstractions.Dag;
 using DtPipe.Core.Infrastructure.Arrow;
 using DtPipe.Core.Pipelines;
 using DtPipe.Configuration;
+using DtPipe.DryRun;
 
 namespace DtPipe.Services.Pipeline;
 
@@ -89,34 +90,30 @@ internal sealed partial class ExportRunState
         catch { /* inference is best-effort, never fail the dry-run */ }
     }
 
-    internal async Task RunDryRunAsync(CancellationToken retryCt)
+    /// <summary>
+    /// Assembles what the run observed into a report and hands it to the observer to render.
+    /// Everything here is derived from the execution that already happened — the target
+    /// inspection captured during writer preparation, the tap's capture, and the validators.
+    /// Nothing re-reads the source.
+    /// </summary>
+    internal async Task RenderSampleReportAsync(CancellationToken retryCt)
     {
-        IDataWriter? writerForInspection = null;
-        if (!string.IsNullOrEmpty(OutputPath))
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(Alias) && _svc._channelRegistry != null && _svc._channelRegistry.ContainsChannel(Alias))
-                {
-                    if (CurrentSchema != null)
-                        _svc._channelRegistry.UpdateChannelColumns(Alias, CurrentSchema);
+        if (SampleResult is null) return;
 
-                    if (Reader is IColumnarStreamReader cr && cr.Schema != null)
-                        _svc._channelRegistry.UpdateArrowChannelSchema(Alias, cr.Schema);
-                }
-                writerForInspection = WriterFactory.Create(Registry);
-            }
-            catch (Exception ex)
-            {
-                Observer.LogWarning($"Could not create writer for schema inspection during dry-run: {ex.Message}. Target schema compatibility will not be checked.");
-            }
-        }
+        var report = SampleReportBuilder.Build(
+            SampleResult,
+            Pipeline.Select(t => t.GetType().Name.Replace("DataTransformer", "")).ToList(),
+            (Writer as IHasSqlDialect)?.Dialect,
+            Writer as IKeyValidator,
+            InspectedTarget,
+            TargetInspectionError,
+            SampleTap?.TypeHints);
 
-        var executionPlan = ExportService.BuildExecutionPlan(ProviderName, Reader, WriterFactory.ComponentName, writerForInspection, Pipeline, Segments);
-        bool isInteractive = string.IsNullOrEmpty(Options.DryRunInteractiveBranch) || string.Equals(Alias, Options.DryRunInteractiveBranch, StringComparison.OrdinalIgnoreCase);
-        await Observer.RunDryRunAsync(Reader, Pipeline, Options.DryRunCount, writerForInspection, TransformerSchemas, executionPlan, isInteractive, retryCt);
+        var executionPlan = ExportService.BuildExecutionPlan(ProviderName, Reader, WriterFactory.ComponentName, Writer, Pipeline, Segments);
 
-        if (writerForInspection != null)
-            await writerForInspection.DisposeAsync();
+        bool isInteractive = string.IsNullOrEmpty(Options.DryRunInteractiveBranch)
+            || string.Equals(Alias, Options.DryRunInteractiveBranch, StringComparison.OrdinalIgnoreCase);
+
+        await Observer.RenderSampleReportAsync(report, executionPlan, isInteractive && !SilenceInternal, retryCt);
     }
 }

@@ -11,8 +11,11 @@ namespace DtPipe.DryRun;
 public sealed class SampleTapRecorder : ISampleTap
 {
     /// <summary>
-    /// Ceiling on the per-stage quota, whatever --dry-run asks for: the capture is held in
-    /// memory for the length of the run.
+    /// Per-stage ceiling on what is kept in memory. It is a safety limit, not the meaning of
+    /// --dry-run N: N bounds the SOURCE, through the reader's limit, and every stage then shows
+    /// everything those N rows produced. Capping downstream stages at N instead would truncate
+    /// a 1:N expansion back to N rows — reporting ten where the run writes thirty, which is the
+    /// very class of lie this path exists to remove.
     /// </summary>
     public const int MaxQuota = 1000;
 
@@ -31,7 +34,9 @@ public sealed class SampleTapRecorder : ISampleTap
     private readonly DynamicTypeObserver _typeObserver = new();
     private bool _wantsMore = true;
 
-    public SampleTapRecorder(int quota)
+    /// <param name="quota">Per-stage ceiling. Defaults to <see cref="MaxQuota"/>; the source is
+    /// bounded by the pipeline's limit, not here.</param>
+    public SampleTapRecorder(int quota = MaxQuota)
         => _quota = Math.Clamp(quota, 1, MaxQuota);
 
     public bool WantsMore => _wantsMore;

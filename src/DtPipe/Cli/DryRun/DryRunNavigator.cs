@@ -32,7 +32,8 @@ public class DryRunNavigator
 		string? schemaWarning = null,
 		Core.Models.TargetSchemaInfo? targetSchema = null,
 		int startIndex = 0,
-		List<int>? errorIndices = null)
+		List<int>? errorIndices = null,
+		IReadOnlyList<long>? stageTotals = null)
 	{
 		if (samples.Count == 0) return 0;
 
@@ -43,7 +44,7 @@ public class DryRunNavigator
 		{
 			Console.Clear();
 
-			var table = _renderer.BuildTraceTable(currentIndex, samples.Count, samples[currentIndex], stepNames, columnWidths, schemaWarning, targetSchema);
+			var table = _renderer.BuildTraceTable(currentIndex, samples.Count, samples[currentIndex], stepNames, columnWidths, schemaWarning, targetSchema, stageTotals);
 			_console.Write(table);
 			_console.WriteLine();
 
@@ -78,7 +79,7 @@ public class DryRunNavigator
 				case ConsoleKey.Escape:
 					// Re-render final table without navigation hint
 					Console.Clear();
-					var finalTable = _renderer.BuildTraceTable(currentIndex, samples.Count, samples[currentIndex], stepNames, columnWidths, schemaWarning, targetSchema);
+					var finalTable = _renderer.BuildTraceTable(currentIndex, samples.Count, samples[currentIndex], stepNames, columnWidths, schemaWarning, targetSchema, stageTotals);
 					_console.Write(finalTable);
 					_console.WriteLine();
 					_console.MarkupLine("[green]Dry-run complete. No data exported.[/]");

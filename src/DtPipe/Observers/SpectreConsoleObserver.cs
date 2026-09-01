@@ -94,10 +94,11 @@ public class SpectreConsoleObserver : IExportObserver
 		return reporter;
 	}
 
-	public async Task RunDryRunAsync(IStreamReader reader, IReadOnlyList<IDataTransformer> pipeline, int count, IDataWriter? inspectionWriter, IReadOnlyDictionary<IDataTransformer, (IReadOnlyList<PipeColumnInfo> In, IReadOnlyList<PipeColumnInfo> Out)>? precomputedSchemas = null, PipelineExecutionPlan? executionPlan = null, bool isInteractive = true, CancellationToken ct = default)
+	public async Task RenderSampleReportAsync(object report, PipelineExecutionPlan? executionPlan, bool isInteractive, CancellationToken ct = default)
 	{
+		if (report is not DtPipe.DryRun.SampleReport sampleReport) return;
 		var controller = new DtPipe.Cli.DryRun.DryRunCliController(_console);
-		await controller.RunAsync(reader, pipeline.ToList(), count, inspectionWriter, precomputedSchemas, executionPlan, isInteractive, ct);
+		await controller.RenderAsync(sampleReport, executionPlan, isInteractive, ct);
 	}
 
 	public void ShowColumnTypeInferenceSuggestion(IReadOnlyDictionary<string, string> suggestions, int sampleCount, bool applied = false)

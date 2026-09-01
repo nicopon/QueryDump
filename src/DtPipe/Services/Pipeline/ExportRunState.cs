@@ -149,17 +149,14 @@ internal sealed partial class ExportRunState
         PublishBranchSchema();
         await InferAdvisoryAsync(retryCt);
 
-        // ── Dry-run short-circuit ──────────────────────────────────────────
-        if (Options.DryRunCount > 0)
-        {
-            Logger.LogDebug("[DryRun] inspecting plan for {Count} rows", Options.DryRunCount);
-            await RunDryRunAsync(retryCt);
-            return;
-        }
-
         // ── Execution ──────────────────────────────────────────────────────
+        // Sample mode is not a branch here. It is the same execution with the writer
+        // neutralised and the reader bounded — which is the whole point: a preview that took
+        // a different path could disagree with the run it previews, and used to.
         Logger.LogDebug("[Execution] target '{Writer}', {Columns} columns", WriterFactory.ComponentName, CurrentSchema.Count);
         await PrepareWriterAsync(retryCt);
         await ExecutePipelineAsync(retryCt);
+
+        if (IsSampleMode) await RenderSampleReportAsync(retryCt);
     }
 }
