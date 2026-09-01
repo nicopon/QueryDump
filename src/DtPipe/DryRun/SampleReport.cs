@@ -24,7 +24,11 @@ public sealed record SampleReport(
 	/// with the other. A verb scan does not prove a query is read-only — SELECT my_function()
 	/// passes it — so the promise stops where the proof does.
 	/// </summary>
-	DtPipe.Sessions.ReadOnlyEnforcement Enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly);
+	DtPipe.Sessions.ReadOnlyEnforcement Enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly,
+	/// <summary>Which branch this report is about. A DAG produces one per branch.</summary>
+	string? BranchAlias = null,
+	/// <summary>The content-addressed checkpoint this run materialised, when --checkpoint was set.</summary>
+	string? CheckpointKey = null);
 
 public static class SampleRunExtensions
 {

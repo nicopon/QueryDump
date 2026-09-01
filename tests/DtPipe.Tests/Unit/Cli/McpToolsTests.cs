@@ -208,8 +208,12 @@ main:
   output: ""csv:output.csv""
 ";
         var result = await _tools.DryRun(yaml);
-        Assert.Contains("success\": true", result);
-        Assert.Contains("No provider found", result);
+
+        // The tool now runs the pipeline instead of describing it, so an unresolvable provider
+        // is a failure rather than a success carrying a note — which is the more honest answer.
+        // What must survive either way is the fail-closed marker.
+        Assert.Contains("success\": false", result);
+        Assert.Contains("\"applied\": false", result);
     }
 
     [Fact]

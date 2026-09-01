@@ -353,6 +353,7 @@ class Program
 		}
 
 		services.AddSingleton<IJsEngineProvider, JsEngineProvider>();
+		services.AddSingleton<DtPipe.DryRun.SampleReportCollector>();
 		services.AddSingleton<IExportObserver, SpectreConsoleObserver>();
 		services.AddSingleton<DtPipe.Services.HookExecutor>();
 		services.AddSingleton<DtPipe.Services.MetricsService>();

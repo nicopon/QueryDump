@@ -179,25 +179,15 @@ public partial class DtPipeMcpTools
                             }
                        }
 
-                   // apply=false => dry-run by default: the pipeline is validated above but never
-                    // executed, so no data is written. This keeps execute-yaml-job fail-closed.
+                   // apply=false => a real sample run, not an absence of one. The safety no longer
+                    // comes from abstaining: the sample-mode sink cannot reach a user target
+                    // (SampleModeSinkTests), and SampleModeSafetyGate refuses a source that could
+                    // mutate. Fail-closed is preserved and the model finally learns what the
+                    // pipeline would actually do — which is the loop this cycle exists to close.
                 if (!consentedApply)
                         {
-                       return JsonSerializer.Serialize(new
-                            {
-                           success = true,
-                           stage = "dry-run",
-                           applied = false,
-                           mode = "dry-run",
-                           safety = "ok",
-                           branches = parsed.Dag.Branches.Select(b => new
-                                {
-                             b.Alias,
-                             Input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Input),
-                             Output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(b.Output)
-                                }).ToList(),
-                           message = "Dry-run only: apply=false. No data written. Pass apply=true (and approve) to execute."
-                             }, new JsonSerializerOptions { WriteIndented = true });
+                       var sample = await RunSampleAsync(parsed, rows: 10, ct);
+                       return JsonSerializer.Serialize(sample, new JsonSerializerOptions { WriteIndented = true });
                            }
 
             var contexts = parsed.Jobs.ToDictionary(
@@ -234,6 +224,9 @@ public partial class DtPipeMcpTools
                {
                  success = false,
                  stage = "execution",
+                 // Fail-closed stays legible even on the error path: whatever went wrong, this
+                 // call did not consent to a write.
+                 applied = AgentOptions?.Apply ?? apply,
                  errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
                }, new JsonSerializerOptions { WriteIndented = true });
            }

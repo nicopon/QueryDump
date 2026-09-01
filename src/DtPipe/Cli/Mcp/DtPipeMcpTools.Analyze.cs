@@ -122,9 +122,10 @@ public partial class DtPipeMcpTools
 
 
     [McpServerTool(Name = "dry-run")]
-    [System.ComponentModel.Description("Dry-run a pipeline YAML configuration: validates, opens the reader, reports schema and estimated row count without writing any data.")]
+    [System.ComponentModel.Description("Run a pipeline over a small sample of its source, through the real execution path, with the writer neutralised so nothing is written to the target. Returns the rows as they leave each stage, the target compatibility report, and what could actually be guaranteed about the source not being modified.")]
     public async Task<string> DryRun(
         [System.ComponentModel.Description("The complete YAML configuration string representing the pipeline")] string yamlContent,
+        [System.ComponentModel.Description("Source rows to run through the pipeline (default 10, max 1000)")] int rows = 10,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(yamlContent))
@@ -133,95 +134,12 @@ public partial class DtPipeMcpTools
         try
         {
             var parsed = ParseAndValidateYaml(yamlContent);
-
             if (parsed.Errors.Count > 0)
-            {
-                return JsonSerializer.Serialize(new
-                {
-                    success = false,
-                    stage = "validation",
-                    errors = parsed.Errors
-                }, new JsonSerializerOptions { WriteIndented = true });
-            }
+                return JsonSerializer.Serialize(new { success = false, stage = "validation", errors = parsed.Errors },
+                    new JsonSerializerOptions { WriteIndented = true });
 
-            var registry = _serviceProvider.GetRequiredService<OptionsRegistry>();
-            var readerFactories = _serviceProvider.GetRequiredService<IEnumerable<IStreamReaderFactory>>().ToList();
-            var branchesInfo = new List<object>();
-
-            foreach (var (alias, job) in parsed.Jobs)
-            {
-                if (string.IsNullOrWhiteSpace(job.Input))
-                {
-                    branchesInfo.Add(new
-                    {
-                        branch = alias,
-                        message = "Intermediate or non-source branch (no direct input connection string)."
-                    });
-                    continue;
-                }
-
-                string? query = null;
-                if (job.ProviderOptions != null)
-                {
-                    foreach (var f in readerFactories)
-                    {
-                        if (ComponentSelector.Matches(job.Input, f.ComponentName) || f.CanHandle(job.Input))
-                        {
-                            query = TryGetQueryFromJob(job, f.ComponentName);
-                            break;
-                        }
-                    }
-                }
-
-                var resolved = TryResolveReader(registry, readerFactories, job.Input, query);
-                if (resolved == null)
-                {
-                    branchesInfo.Add(new
-                    {
-                        branch = alias,
-                        input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(job.Input),
-                        error = "No provider found for the given input."
-                    });
-                    continue;
-                }
-
-                try
-                {
-                    await using var reader = resolved.Factory.Create(registry);
-                    await reader.OpenAsync(ct);
-
-                    var columns = reader.Columns?.Select(c => (object)new
-                    {
-                        c.Name,
-                        Type = c.ClrType?.Name ?? "unknown",
-                        c.IsNullable
-                    }).ToList() ?? new List<object>();
-
-                    branchesInfo.Add(new
-                    {
-                        branch = alias,
-                        input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(job.Input),
-                        output = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(job.Output),
-                        columns = columns
-                    });
-                }
-                catch (Exception ex)
-                {
-                    branchesInfo.Add(new
-                    {
-                        branch = alias,
-                        input = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(job.Input),
-                        error = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message)
-                    });
-                }
-            }
-
-            return JsonSerializer.Serialize(new
-            {
-                success = true,
-                message = "Dry-run completed successfully.",
-                branches = branchesInfo
-            }, new JsonSerializerOptions { WriteIndented = true });
+            var report = await RunSampleAsync(parsed, Math.Clamp(rows, 1, 1000), ct);
+            return JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
         }
         catch (Exception ex)
         {
@@ -229,10 +147,111 @@ public partial class DtPipeMcpTools
             {
                 success = false,
                 stage = "dry-run",
+                applied = false,
+                mode = "sample",
                 errors = new[] { DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message) }
             }, new JsonSerializerOptions { WriteIndented = true });
         }
     }
+
+    /// <summary>
+    /// Runs the pipeline in sample mode and shapes what it observed into JSON.
+    ///
+    /// It goes through JobService like any other run — the same reader, transformers,
+    /// segmentation and bridges — because a tool that answered from its own walk over the data
+    /// would be a second engine, and this cycle just removed the last one. Before this, the
+    /// dry-run tool opened the reader and listed columns; it never ran a transformer at all,
+    /// so it could not have told a model that its --window step produced nothing.
+    /// </summary>
+    private async Task<object> RunSampleAsync(YamlParseResult parsed, int rows, CancellationToken ct)
+    {
+        var collector = _serviceProvider.GetRequiredService<DtPipe.DryRun.SampleReportCollector>();
+        var jobService = _serviceProvider.GetRequiredService<DtPipe.Cli.JobService>();
+
+        var jobs = parsed.Jobs.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value with { DryRunCount = rows },
+            StringComparer.OrdinalIgnoreCase);
+
+        var contexts = jobs.ToDictionary(kv => kv.Key, kv => new CliJobContext(null, null, null, System.Array.Empty<string>()));
+
+        collector.Clear();
+        collector.Enabled = true;
+        int exitCode;
+        string? failure = null;
+        try
+        {
+            exitCode = await jobService.ExecutePipelineAsync(jobs, parsed.Dag, contexts, new GlobalOptions { NoStats = true }, ct);
+        }
+        catch (Exception ex)
+        {
+            // A failed sample is still a sample that wrote nothing. Reporting it as a bare
+            // error would drop `applied: false`, and a model could no longer tell "nothing was
+            // written" from "something was written and then it failed" — which is exactly the
+            // distinction F2 exists to keep visible.
+            exitCode = 1;
+            failure = DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(ex.Message);
+        }
+        finally
+        {
+            collector.Enabled = false;
+        }
+
+        return new
+        {
+            success = exitCode == 0,
+            exitCode,
+            applied = false,
+            mode = "sample",
+            rowsRequested = rows,
+            error = failure,
+            branches = collector.Reports.Select(kv => Shape(kv.Key, kv.Value)).ToList()
+        };
+    }
+
+    /// <summary>Shapes one branch's report. Values become strings: a model reads them, it does not compute on them.</summary>
+    private static object Shape(string alias, DtPipe.DryRun.SampleReport report) => new
+    {
+        branch = alias,
+        checkpoint = report.CheckpointKey,
+        rowsRead = report.Run.RowsRead,
+        rowsDelivered = report.Run.RowsWritten,
+        // What the run can actually support. "Nothing was written" is true of the writer; the
+        // source is a separate question, and answering one with the other is how a reassuring
+        // message becomes a false one.
+        writerNeutralised = true,
+        sourceProtection = report.Enforcement.ToString(),
+        stages = report.Run.Stages.Select(s => new
+        {
+            index = s.Index,
+            name = s.Name,
+            columnar = s.IsColumnar,
+            rowsSeen = s.TotalSeen,
+            columns = s.Schema.Select(c => new { c.Name, type = c.ClrType?.Name ?? "unknown", c.IsNullable }).ToList(),
+            sample = s.Rows.Take(10).Select(r => r.Select(v => v?.ToString()).ToList()).ToList()
+        }).ToList(),
+        schemaCompatibility = report.CompatibilityReport is null ? null : new
+        {
+            errors = report.CompatibilityReport.Errors,
+            warnings = report.CompatibilityReport.Warnings
+        },
+        schemaInspectionError = report.SchemaInspectionError is null
+            ? null
+            : DtPipe.Core.Security.ConnectionStringSanitizer.Sanitize(report.SchemaInspectionError),
+        keyValidation = report.KeyValidation is null ? null : new
+        {
+            required = report.KeyValidation.IsRequired,
+            valid = report.KeyValidation.IsValid,
+            errors = report.KeyValidation.Errors,
+            warnings = report.KeyValidation.Warnings
+        },
+        constraintValidation = report.ConstraintValidation is null ? null : new
+        {
+            errors = report.ConstraintValidation.Errors,
+            warnings = report.ConstraintValidation.Warnings
+        },
+        performanceHints = report.PerformanceHints
+    };
 
 
     [McpServerTool(Name = "list-cursors")]

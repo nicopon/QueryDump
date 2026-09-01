@@ -25,7 +25,9 @@ public static class SampleReportBuilder
         TargetSchemaInfo? inspectedTarget,
         string? inspectionError,
         IReadOnlyDictionary<string, string>? performanceHints = null,
-        DtPipe.Sessions.ReadOnlyEnforcement enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly)
+        DtPipe.Sessions.ReadOnlyEnforcement enforcement = DtPipe.Sessions.ReadOnlyEnforcement.VerbScanOnly,
+        string? branchAlias = null,
+        string? checkpointKey = null)
     {
         var finalSchema = run.FinalSchema();
         var finalRows = run.FinalRows();
@@ -54,6 +56,8 @@ public static class SampleReportBuilder
             keyValidation,
             constraintValidation,
             performanceHints,
-            enforcement);
+            enforcement,
+            branchAlias,
+            checkpointKey);
     }
 }

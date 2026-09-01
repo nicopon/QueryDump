@@ -13,9 +13,12 @@ public class SpectreConsoleObserver : IExportObserver
 	private readonly IAnsiConsole _console;
 	private readonly ConcurrentDictionary<string, ProgressReporter> _activeReporters = new();
 
-	public SpectreConsoleObserver(IAnsiConsole console)
+	private readonly DtPipe.DryRun.SampleReportCollector? _sampleReports;
+
+	public SpectreConsoleObserver(IAnsiConsole console, DtPipe.DryRun.SampleReportCollector? sampleReports = null)
 	{
 		_console = console;
+		_sampleReports = sampleReports;
 	}
 
 	public void ShowIntro(string provider, string output)
@@ -97,6 +100,12 @@ public class SpectreConsoleObserver : IExportObserver
 	public async Task RenderSampleReportAsync(object report, PipelineExecutionPlan? executionPlan, bool isInteractive, CancellationToken ct = default)
 	{
 		if (report is not DtPipe.DryRun.SampleReport sampleReport) return;
+
+		// One run, two presentations: a table for a person, and the same report handed to a
+		// caller that wants structure. Producing the second from a separate execution is the
+		// duplication this path exists to remove.
+		_sampleReports?.Publish(sampleReport.BranchAlias, sampleReport);
+
 		var controller = new DtPipe.Cli.DryRun.DryRunCliController(_console);
 		await controller.RenderAsync(sampleReport, executionPlan, isInteractive, ct);
 	}

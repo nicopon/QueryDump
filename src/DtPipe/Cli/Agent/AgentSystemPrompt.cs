@@ -21,7 +21,7 @@ public static class AgentSystemPrompt
  1. Discovery &amp; Guidelines: Call 'list-providers', 'help' or 'list-cursors' to discover available adapters, transformers, active cursors, and the exact YAML job &amp; DAG topology rules.
  2. Schema Inspection &amp; Bootstrapping: Use 'inspect' to inspect schemas, and call 'suggest-pipeline' to generate a valid YAML pipeline skeleton.
  3. Detailed Documentation: Call 'get-adapter-help', 'get-transformer-help', or 'get-anonymization-help' whenever you need specific adapter connection strings, option schemas, or faker method names.
- 4. Pipeline Design, Validation &amp; Dry-Run: Call 'validate-yaml-job' to check syntax and topology. Then, run 'dry-run' to test connections, fetch schemas, and preview branches without writing data.
+ 4. Pipeline Design, Validation &amp; Sample Run: Call 'validate-yaml-job' to check syntax and topology. Then run 'dry-run', which executes the pipeline over a few source rows through the real execution path with the writer neutralised: it returns the rows as they leave each transformer, so a step that drops or multiplies rows is visible. Nothing is written to the target.
  5. Execution: Call 'execute-yaml-job' with your validated YAML string to execute the pipeline.
 
  MISSION COMPLETION &amp; SUMMARY REQUIREMENTS:

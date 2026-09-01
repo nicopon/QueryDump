@@ -40,9 +40,11 @@ public class ExecuteYamlJobGuardrailTests
          var yaml = "main:\n  input: \"csv:in.csv\"\n  output: \"csv:out.csv\"\n";
 
          var json = await tools.ExecuteYamlJob(yaml);
+
+         // apply=false now runs a real sample with the writer neutralised, instead of
+         // executing nothing. Fail-closed is unchanged and still legible: whatever the run's
+         // outcome, this call did not consent to a write.
          Assert.Contains("\"applied\": false", json);
-         Assert.Contains("'dry-run'", ReplaceDoubleWithSingle(json));
-         Assert.Contains("Dry-run only", json);
             }
 
         [Fact]
