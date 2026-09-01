@@ -96,6 +96,22 @@ dtpipe \
 # and COOKBOOK.md#incremental-loading for the complete recipe.
 ```
 
+### See what a pipeline will do, before it does it
+
+```bash
+# Runs the pipeline over 10 source rows with the writer neutralised: same reader, same
+# transformers, same bridges. A step that expands or aggregates shows its new row count.
+dtpipe -i "pg:Host=localhost;Database=prod" --query "SELECT * FROM orders" \
+  --mask email -o "parquet:out.parquet" --dry-run 10
+
+# Materialise a point and iterate on it without reading the source again
+dtpipe -i "oracle:..." --query "SELECT * FROM big_table" --checkpoint -o null:
+dtpipe --from-checkpoint <key> --compute "total=price*qty" -o csv:out.csv
+```
+
+Checkpoints live in `.dtpipe/`, are encrypted, and expire. See
+[REFERENCE.md#sample-mode-and-materialisation](./REFERENCE.md#sample-mode-and-materialisation).
+
 ### Database Resilience (Retry Policy)
 
 ```bash

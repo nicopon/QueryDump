@@ -74,7 +74,10 @@ FAILED=0
 for doc in "${DOC_FILES[@]}"; do
     [ -f "$doc" ] || continue
      echo "  Checking $(basename "$doc")..."
-    FLAGS=$(grep -oE '\-\-[a-z0-9\-]+' "$doc" | grep -vE "^(--|---)$" | sort -u)
+    # Markdown link targets carry "--" too: a heading like "A & B" yields the anchor
+    # "#a--b", which is not a flag. Strip (...) link targets before extracting, or the check
+    # reports a documentation cross-reference as an undocumented flag.
+    FLAGS=$(sed -E 's/\]\([^)]*\)/]/g' "$doc" | grep -oE '\-\-[a-z0-9\-]+' | grep -vE "^(--|---)$" | sort -u)
     for flag in $FLAGS; do
         [[ $ALLOW_LIST =~ (^|[[:space:]])$flag([[:space:]]|$) ]] && continue
         if ! grep -qF -- "$flag" "$UNIVERSE"; then

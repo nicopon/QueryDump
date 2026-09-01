@@ -154,11 +154,15 @@ public sealed class PipelineExecutor
                     BridgeColumnarToRowsAsync(batchSource, bridgeFac, ct), tap, ReaderStage, ct);
                 await DirectRowTransferFromRowsAsync(rowSource, rw, options.BatchSize, options.Limit, options.SamplingRate, options.SamplingSeed, progress, ct);
             }
-            else if (writer is IRowDataWriter rw2)
+            else if (writer is IRowDataWriter rw2 && !(materialise is not null && writer is IColumnarDataWriter))
             {
                 // Row-only reader → row-mode writer: existing direct path. No RecordBatch exists
                 // anywhere in it, so there is nothing to materialise without inventing one — and
                 // a checkpoint of an invented batch would not be the run.
+                //
+                // The exception above is a writer that can take BOTH shapes: then the columnar
+                // route below is available and equally faithful, so materialising picks it
+                // rather than refusing. Only a pipeline with no columnar side at all is refused.
                 if (materialise is not null)
                     throw new InvalidOperationException(
                         "--checkpoint needs a columnar stream; this pipeline is row-mode from end to end. " +

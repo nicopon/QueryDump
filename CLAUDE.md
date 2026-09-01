@@ -199,6 +199,79 @@ Branches communicate via `IMemoryChannelRegistry` (`Channel<IReadOnlyList<object
 - `IStreamTransformerFactory` — multi-input processors; `Create(branchArgs, ctx, serviceProvider)` receives `BranchChannelContext` for alias resolution
 - `ICliContributor` / `OptionsRegistry` — CLI contribution + scoped option store
 
+### Sample mode — there is no second engine
+
+`--dry-run N` is **the real execution over N source rows with the writer neutralised**. Same
+reader, same transformers, same segmentation, same row↔columnar bridges. There is no analyser
+beside `PipelineExecutor`, and adding one back is the mistake this section exists to prevent.
+
+There was one, and the two disagreed: `DryRunAnalyzer` walked rows through
+`IDataTransformer.Transform`, so a `--window` pipeline reported every row as dropped
+(`WindowDataTransformer.Transform` returns `null`) while the run wrote aggregates via
+`TransformMany` + `Flush`, and `--expand` reported one row of every N.
+
+Three pieces, and only the first touches the engine:
+
+- **`ISampleTap`** — an observation point offered each stage's output where `ReportTransform` is
+  already called. Read-only, and forbidden from disposing or retaining a `RecordBatch`. Stage 0 is
+  the reader, 1..n the transformers in pipeline order.
+- **`SampleModeSink`** — two decorators selected by the real writer's **capability**, the shape
+  `CursorTracking{Row,Columnar}Decorator` already uses. Mirroring matters: the engine reads
+  row-vs-columnar mode off `writer is IColumnarDataWriter`, so a sink of the wrong kind changes
+  the segmentation and the bridge count — substituting `null:` (row-only) is exactly that mistake.
+- **`SampleRun`** — the capture, read by both the renderer and the checkpoint store. One run, one
+  report, two presentations.
+
+Sample mode also suppresses `ValidateAndMigrateAsync` (it can CREATE/ALTER the target), **all four
+hooks** (they are SQL on the target connection), the cursor and the metrics file.
+
+> **Enforced by** `SampleModeEquivalenceTests` (CI) — what a sample reports must equal what a real
+> run writes, over pipelines that expand, aggregate and pass through — plus
+> `tests/scripts/validate_single_engine.sh`, which is a grep and says so in its own header: it
+> catches a second execution loop written in plain sight or a renderer fetching its own rows, not
+> a call made by reflection. **Not covered:** a transformer whose semantics the parameterised
+> cases do not exercise.
+
+### Sample-mode safety is a read-side problem
+
+Neutralising the writer is a claim about the **writer**. A reader can mutate: `DELETE … RETURNING`,
+`… OUTPUT`, `--duck-init`, an `ATTACH` inside `--sql` — and `--limit` bounds what the client reads,
+never what the server already destroyed. `SampleModeSafetyGate` classifies the **resolved**
+pipeline's source SQL (so a `@file` query is covered, unlike the YAML text scan) and
+`ISqlDialect.ReadOnlySessionSql` lets the server refuse instead of a regex guessing.
+
+Writer hooks are deliberately **not** classified: they are already suppressed, so refusing a
+pipeline for carrying one adds no safety and teaches people to pass `--allow-destructive` by
+reflex — which would then unlock the source side too.
+
+SQL Server returns `null` for `ReadOnlySessionSql` — `ApplicationIntent=ReadOnly` routes to a
+replica, it does not make a session read-only. The report says which guarantee the run had. **A
+guarantee that is sometimes absent must never be reported as though it were always there.**
+
+> **Enforced by** `SampleModeSafetyGateTests` (CI) and `tests/scripts/validate_sample_safety.sh`.
+> **Not covered:** a query that writes through a function — `SELECT my_function()` passes a verb
+> scan, which is why the server-enforced form exists and why the weaker one is reported as weaker.
+
+### Checkpoints are addressed by content, and always encrypted
+
+`--checkpoint` tees the columnar stream into the session store; `--from-checkpoint` reads it back.
+The key is a hash of the branch prefix's **definition** (sanitised connection, query, transformers,
+sampling parameters) — never the alias — so two pipelines in one directory cannot collide and an
+unchanged prefix is reused.
+
+Encryption has **no opt-out**, and the reason is structural rather than cautious: what AES-GCM buys
+is not confidentiality at rest (the key is on the same disk) but two properties of the **store as a
+whole** — an inert copy, and a purge made reliable by destroying the key. Both are properties of the
+store, so one cleartext session would void them for every other session in it, retroactively. Cost
+measured at ~3.5–4 GB/s (~24 ms per 100 MB).
+
+`--from-checkpoint` resolves by capability and **never** through `ComponentSelector`: a checkpoint
+key is a hex string, and letting it into the `{component}[+{variant}]:` grammar is how a key would
+one day be read as a prefix.
+
+> **Enforced by** `CheckpointCipherTests`, `CheckpointKeyTests`, `CheckpointRoundTripTests` (CI)
+> and `tests/scripts/validate_checkpoint.sh` (local, real binary).
+
 ## Debug Mode
 
 ```bash

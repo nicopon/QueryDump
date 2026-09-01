@@ -838,3 +838,68 @@ See `REFERENCE.md` → *Agent Guardrails* for the full policy.
 
 
 
+
+---
+
+## Iterating on a transformer without re-reading the source
+
+The slow part of tuning a pipeline is usually the read. Materialise once, then iterate against
+the checkpoint.
+
+```bash
+# 1. Read Oracle once, mask, and keep the result
+dtpipe -i oracle:"User Id=app;Password=…;Data Source=//db:1521/ORCL" \
+       --query "SELECT * FROM customers" \
+       --mask email --checkpoint -o null:
+# → dtpipe names the checkpoint by content and prints the store location once
+
+# 2. See what you have
+dtpipe session list
+dtpipe session show default
+
+# 3. Iterate — no Oracle round-trip
+dtpipe --from-checkpoint <key> --compute "domain=email.split('@')[1]" -o csv:out.csv
+dtpipe --from-checkpoint <key> --compute "domain=email.split('@').pop()" -o csv:out.csv
+```
+
+The key is a hash of the *definition* — connection, query, transformers, sampling — so re-running
+step 1 unchanged reuses the same checkpoint instead of re-reading. Change the query or a
+transformer and you get a different key, because it is a different prefix.
+
+Artefacts are encrypted and expire (7 days by default). To get rows out deliberately, use a real
+destination: `dtpipe --from-checkpoint <key> -o parquet:extract.parquet`.
+
+## Seeing what a pipeline will actually do
+
+`--dry-run N` runs the pipeline over N source rows with the writer neutralised. Because it is the
+real execution path, a step that changes the row count shows it:
+
+```bash
+dtpipe -i csv:orders.csv \
+       --window-key customer_id \
+       --window-script "return [{customer_id: rows[0].customer_id, total: rows.reduce((a,r)=>a+Number(r.amount),0)}]" \
+       -o pg:"Host=db;Database=app" --table order_totals --dry-run 10
+```
+
+The trace marks the window step `10 → 3 rows` and shows the aggregated values — the same rows a
+real run would write. The target is inspected for schema compatibility but never created or
+migrated, and no hook runs.
+
+Against PostgreSQL, Oracle, MySQL or SQLite the session is also set read-only, so the server
+itself refuses a write. Against SQL Server there is no such mechanism, and the run says so rather
+than implying a guarantee it does not have.
+
+## Giving an agent a fast, safe loop
+
+```bash
+export DTPIPE_SESSION=mission-7      # one mission, one session
+dtpipe agent --mode plan
+```
+
+In plan mode the model can call `dry-run` freely: every call executes the real pipeline over a
+few rows, writes nothing to any target, and returns the rows leaving each stage. `list-checkpoints`
+and `read-checkpoint` let it look at what it materialised. When the mission ends:
+
+```bash
+dtpipe session purge mission-7
+```

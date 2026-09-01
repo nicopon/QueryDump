@@ -47,7 +47,7 @@ public static class HelpRenderer
         WriteFlag(console, "--alias <name>",          "Alias for the current DAG branch");
         WriteFlag(console, "--ref <alias>",           "Secondary source alias for SQL JOINs (preloaded)");
         WriteFlag(console, "--job, -j <file>",        "YAML job file path");
-        WriteFlag(console, "--dry-run [N]",           "Dry-run mode (N rows, default: 1)");
+        WriteFlag(console, "--dry-run [N]",           "Run over N source rows with the writer neutralised (default: 1)");
         WriteFlag(console, "--no-stats",              "Disable progress bars and statistics");
         WriteFlag(console, "--log <path>",            "Log file path");
         WriteFlag(console, "--export-job <file>",     "Export current CLI as YAML job file");
@@ -55,6 +55,9 @@ public static class HelpRenderer
         WriteFlag(console, "--cursor <column>",       "Cursor column for incremental loading (writer-side)");
         WriteFlag(console, "--state <path>",          "State file path for cursor persistence (writer-side)");
         WriteFlag(console, "--cursor-from <value>",   "Override starting cursor value for this run");
+        WriteFlag(console, "--session <name>",        "Session that materialised artefacts belong to");
+        WriteFlag(console, "--checkpoint [<name>]",   "Materialise this branch's output in the session store");
+        WriteFlag(console, "--from-checkpoint <key>", "Resume this branch from a stored checkpoint");
         WriteFlag(console, "--version",                "Print version and exit");
         console.WriteLine();
 

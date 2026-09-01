@@ -18,6 +18,7 @@
 - [YAML Job File Schema](#yaml-job-file-schema)
 - [Provider-Specific Options](#provider-specific-options)
 - [Incremental Loading](#incremental-loading)
+- [Sample Mode and Materialisation](#sample-mode-and-materialisation)
 - [Shell Completion](#shell-completion)
 - [Model Context Protocol (MCP) Server](#model-context-protocol-mcp-server)
 - [AI Agent Subcommand](#ai-agent-subcommand-dtpipe-agent)
@@ -383,6 +384,10 @@ DuckDB extensions (`excel`, `httpfs`, `azure`, `ducklake`…) are reached throug
 | `--metrics-path` | `metrics.json` | Write structured execution results to a JSON file |
 | `--log` | `pipeline.log` | Write log output to a file |
 | `--strict-bindings` | | Fail with a non-zero exit code on unrecognized flags or failed option bindings instead of skipping them silently (default: warn/skip) |
+| `--dry-run` | `10` | Run the pipeline over N source rows with the writer neutralised — see [Sample Mode](#sample-mode--materialisation) |
+| `--session` | `mission-7` | Name the session materialised artefacts belong to |
+| `--checkpoint` | `stage1` | Materialise this branch's output in the session store |
+| `--from-checkpoint` | `<key>` | Resume this branch from a stored checkpoint instead of its input |
 
 ---
 
@@ -706,6 +711,124 @@ The state file is stored as a simple, human-readable JSON file:
 ### DAG Validation
 
 To prevent concurrent writes or corrupted cursor states, DtPipe enforces that **no two writers may share the same state file**. If the DAG validator detects duplicate state files across branches, pipeline execution will fail immediately.
+
+---
+
+## Sample Mode and Materialisation
+
+### `--dry-run N` runs the pipeline
+
+A dry-run is **the real execution over N source rows with the writer neutralised** — the same
+reader, the same transformers, the same segmentation and row/columnar bridges. It is not a
+separate analyser, and it cannot disagree with the run it previews.
+
+```bash
+dtpipe -i pg:"Host=db;Database=app" --query "SELECT * FROM orders" \
+       --window-key customer_id --window-script "…" \
+       -o parquet:out.parquet --dry-run 10
+```
+
+`N` bounds the **source**, not the display: every stage shows what those N rows produced. A step
+that expands or aggregates therefore shows a different row count from its neighbour, and the
+trace says so (`10 → 3 rows`) rather than leaving a blank cell that would read as "dropped".
+
+**What a sample run guarantees, precisely:**
+
+| | |
+|:---|:---|
+| The writer | Neutralised. `InitializeAsync`, the write methods and `CompleteAsync` are never called on it — so a file target is not created and a table is not migrated. The target is *inspected* for the compatibility report, never mutated. |
+| Hooks | None of the four (`--pre-exec`, `--post-exec`, `--on-error-exec`, `--finally-exec`) runs. They are SQL on the target connection. |
+| Cursor, metrics | Not advanced, not written. |
+| The **source** | Classified before the run: a query carrying `DELETE`, `UPDATE`, `DROP`, `TRUNCATE`, `ALTER`, `INSERT` or `ATTACH` is refused. Where the engine supports it, the session is also set read-only so the **server** refuses a write: PostgreSQL, Oracle, MySQL (`SET TRANSACTION READ ONLY`) and SQLite (`PRAGMA query_only`). **SQL Server has no equivalent** — `ApplicationIntent=ReadOnly` routes to a replica and does not make a session read-only — so there the guarantee is the verb scan alone, and the run says so. |
+
+> A verb scan cannot *prove* a query is read-only: `SELECT my_function()` passes it. The report
+> states which of the two guarantees the run actually had, because a guarantee that is sometimes
+> absent must never be presented as though it were always there.
+
+### Materialising a point in the pipeline
+
+`--checkpoint` writes a branch's output to a local store on its way to the writer; `--from-checkpoint`
+replaces the reader with it. Together they let you run up to a point, look, change a transformer,
+and pick up again without reading the source a second time.
+
+```bash
+dtpipe -i oracle:"…" --query "SELECT * FROM big_table" --mask email --checkpoint -o null:
+dtpipe --from-checkpoint <key> --compute "total=price*qty" -o csv:out.csv
+```
+
+The materialisation point sits at the **end** of the transformer chain, so a checkpoint holds
+what the writer would have received. `--checkpoint` needs a columnar stream at that point; a
+pipeline that is row-mode from end to end is told so rather than given a silently different run.
+
+**Checkpoints are addressed by content.** The key is a hash of what produces the rows — connection
+(credentials stripped), query, the transformers up to the point, and the sampling parameters — not
+of the alias. Two different pipelines run in the same directory therefore cannot collide, and an
+unchanged prefix is reused. Renaming an alias changes nothing.
+
+### Sessions
+
+Artefacts belong to a session, resolved by precedence:
+
+| | |
+|:---|:---|
+| `--session <name>` | Explicit: an agent mission, CI, deliberate isolation |
+| `DTPIPE_SESSION` | Shell scope, so the flag need not be repeated |
+| nearest ancestor `.dtpipe/` | Walking up from the working directory, as git does towards `.git` |
+| a new `.dtpipe/` | Created **only** when something is materialised — an ordinary run leaves no trace |
+| user state | When the working directory cannot be written to (CI, a read-only mount) |
+
+`.dtpipe/.gitignore` containing `*` is written when the store is created, so it ignores itself
+whatever the project's own `.gitignore` says.
+
+Sessions expire (7 days by default, `DTPIPE_SESSION_TTL_DAYS`) and are purged silently the next
+time the store is touched. `DTPIPE_STATE_HOME` overrides the user-state root on every platform.
+
+### Encryption
+
+Checkpoints are **always** encrypted with AES-GCM. There is no opt-out, and that is deliberate:
+what encryption buys here is not confidentiality at rest — the key is on the same disk — but two
+properties of the **store as a whole**:
+
+- **An inert copy.** The project directory can be rsynced, backed up, synced to a cloud folder or
+  `git add -A`-ed; the ciphertext travels without the key and says nothing.
+- **A reliable purge.** Deleting the key makes every artefact unreadable at once, even if removing
+  the files then fails halfway.
+
+Both are properties of the store, so a single cleartext session would void them for every other
+session in it, retroactively. A flag would not weaken the guarantee for the run that used it — it
+would destroy it for all of them.
+
+The key lives apart from the ciphertext, in user state (`DTPIPE_STATE_HOME`, else
+`$XDG_STATE_HOME/dtpipe` on Linux, `~/Library/Application Support/dtpipe` on macOS,
+`%LOCALAPPDATA%\dtpipe` on Windows), mode `0600`. The OS keyring is **not** used: it is for what
+you chose to keep (`dtpipe secret`), not for what the tool makes and destroys, and making a
+checkpoint read depend on an unlocked keyring would break CI. If the key directory cannot be
+written to, materialisation is refused rather than falling back to cleartext.
+
+Measured cost on the reference machine (5.9 MB payload, 13 frames): materialising unencrypted
+1.11 ms, encrypted 2.47 ms — about 3.5–4 GB/s, so roughly **24 ms per 100 MB**. Against a source
+delivering 100 MB/s, that is about 3 % of wall time.
+
+### Reproducibility — documented, not promised
+
+`--sampling-seed` makes a sample deterministic **at constant query and constant row order**. Row
+order is not guaranteed without an `ORDER BY`, so a checkpoint replayed against a re-run source
+may differ. This is a property of the database, not something dtpipe can promise, and it is
+written here rather than implied by the product.
+
+A checkpoint is a **snapshot, not a derivation**: nothing detects that its source has changed.
+The session TTL is the housekeeping mechanism.
+
+### `dtpipe session`
+
+```bash
+dtpipe session list              # sessions, checkpoint counts, size, time left
+dtpipe session show <name>       # the checkpoints in one session
+dtpipe session purge [<name>]    # remove one, or every expired one
+```
+
+Purging destroys the key **before** the files, so a deletion that fails halfway leaves inert
+bytes rather than readable data.
 
 ---
 
