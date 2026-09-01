@@ -113,9 +113,19 @@ public partial class DtPipeMcpTools
         ValidatePathSafety(effectiveConnectionString);
 
         registry.Register(new DtPipe.Cli.Infrastructure.ConnectionRoute(effectiveConnectionString, string.Empty, variant, null));
+
+        // OptionsRegistry.Get hands back a THROWAWAY instance when the type was never
+        // registered — which, over MCP, is every provider, since nothing binds CLI flags here.
+        // Mutating that instance and walking away drops the query silently: the factory then
+        // reads the registry, gets another fresh default, and the reader reports "a query is
+        // required" for a call that supplied one. The write-back is what makes it stick, the
+        // same way ExportService.InjectSchema does it.
         var readerOpts = registry.Get(factory.OptionsType) as DtPipe.Core.Options.IQueryAwareOptions;
         if (readerOpts != null && !string.IsNullOrWhiteSpace(query))
+        {
             readerOpts.Query = query;
+            registry.RegisterByType(factory.OptionsType, readerOpts);
+        }
 
         return new ReaderResolutionResult(factory, effectiveConnectionString);
     }
