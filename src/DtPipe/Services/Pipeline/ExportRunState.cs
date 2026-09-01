@@ -51,6 +51,25 @@ internal sealed partial class ExportRunState
     internal DtPipe.Core.Options.IHookAware? WriterHooks;
     internal CancellationTokenSource LinkedCts = null!;
 
+    // ── Sample mode ────────────────────────────────────────────────────────
+    // A sample run is the real run on N rows with the writer neutralised, so the state it
+    // needs lives here alongside everything else rather than in a parallel object.
+    internal DtPipe.DryRun.SampleTapRecorder? SampleTap;
+    internal DtPipe.DryRun.SampleRun? SampleResult;
+    internal DtPipe.Core.Models.TargetSchemaInfo? InspectedTarget;
+    internal string? TargetInspectionError;
+
+    /// <summary>True when this run reports rather than writes.</summary>
+    internal bool IsSampleMode => Options.DryRunCount > 0;
+
+    /// <summary>
+    /// Rows the reader is allowed to produce. A sample never reads more than it shows, which
+    /// is what keeps it cheap against a large source; an explicit --limit still wins if tighter.
+    /// </summary>
+    internal int EffectiveLimit => IsSampleMode
+        ? (Options.Limit > 0 ? Math.Min(Options.Limit, Options.DryRunCount) : Options.DryRunCount)
+        : Options.Limit;
+
     internal ExportRunState(
         ExportService svc,
         PipelineOptions options,

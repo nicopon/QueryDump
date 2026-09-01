@@ -20,7 +20,15 @@ internal sealed partial class ExportRunState
             Observer.ShowTarget(WriterFactory.ComponentName, OutputPath);
 
         var exportableSchema = CurrentSchema ?? throw new InvalidOperationException("Exportable schema is null.");
+        // Constructing a writer does not touch its target — DryRunSafeWriterTests holds that
+        // invariant for the catalogue — so a sample run can build the real writer and inspect it.
         Writer = WriterFactory.Create(Registry);
+
+        if (IsSampleMode)
+        {
+            await PrepareSampleWriterAsync(exportableSchema, retryCt);
+            return;
+        }
 
         // Cursor tracking: wrap the writer if --cursor is specified
         CursorTracker = null;
@@ -63,8 +71,92 @@ internal sealed partial class ExportRunState
 
         LinkedCts = CancellationTokenSource.CreateLinkedTokenSource(retryCt);
 
-        // Propagate InputSchemaArrow for each segment so the row→columnar bridge can preserve complex
-        // Arrow type metadata (Timestamp timezone, Decimal precision/scale, arrow.uuid annotations).
+        PropagateSegmentArrowSchemas();
+    }
+
+    /// <summary>
+    /// Writer preparation for a sample run. Same reader, same transformers, same segmentation —
+    /// only the writer boundary differs, and three side effects the ordinary path performs are
+    /// deliberately absent:
+    ///
+    /// <list type="bullet">
+    /// <item><b>No schema migration.</b> ValidateAndMigrateAsync can CREATE or ALTER the target
+    /// table. The target is inspected instead, which is what feeds the compatibility report.</item>
+    /// <item><b>No hooks.</b> Every hook is SQL run on the target connection
+    /// (HookExecutor → writer.ExecuteCommandAsync), so a pre-hook is typically
+    /// "TRUNCATE TABLE target". None of the four runs here — including on-error, which has no
+    /// exception: a rule with an exception is not a rule that can be tested.</item>
+    /// <item><b>No cursor decorator.</b> Nothing is written, so there is no watermark to advance.</item>
+    /// </list>
+    ///
+    /// InitializeAsync is called on the SINK, never on the real writer: for a file writer that
+    /// call is what creates the file.
+    /// </summary>
+    private async Task PrepareSampleWriterAsync(IReadOnlyList<PipeColumnInfo> exportableSchema, CancellationToken retryCt)
+    {
+        CursorTracker = null;
+        EffectiveWriter = SampleModeSink.Wrap(Writer);
+
+        if (Writer is ISchemaInspector inspector)
+        {
+            try
+            {
+                InspectedTarget = await inspector.InspectTargetAsync(retryCt);
+            }
+            catch (Exception ex)
+            {
+                // Inspection is advisory: an unreachable target must not fail the preview.
+                TargetInspectionError = ex.Message;
+                Logger.LogDebug(ex, "[Sample] target inspection failed");
+            }
+        }
+
+        await EffectiveWriter.InitializeAsync(exportableSchema, retryCt);
+
+        SampleTap = new DtPipe.DryRun.SampleTapRecorder(Options.DryRunCount);
+        DeclareSampleStages();
+
+        Progress = CreateProgress();
+        LinkedCts = CancellationTokenSource.CreateLinkedTokenSource(retryCt);
+
+        PropagateSegmentArrowSchemas();
+    }
+
+    /// <summary>
+    /// Names the stages the tap will be offered rows for: 0 is the reader, then the transformers
+    /// in pipeline order, each with the schema its InitializeAsync produced and the mode of the
+    /// segment it belongs to.
+    /// </summary>
+    private void DeclareSampleStages()
+    {
+        if (SampleTap is null) return;
+
+        SampleTap.OnStageSchema(0, ProviderName,
+            Reader.Columns ?? System.Array.Empty<PipeColumnInfo>(),
+            Reader is IColumnarStreamReader);
+
+        var columnarByTransformer = Segments
+            .SelectMany(seg => seg.Transformers.Select(t => (t, seg.IsColumnar)))
+            .ToDictionary(x => x.t, x => x.IsColumnar);
+
+        for (var i = 0; i < Pipeline.Count; i++)
+        {
+            var t = Pipeline[i];
+            var outSchema = TransformerSchemas.TryGetValue(t, out var s) ? s.Out : CurrentSchema;
+            SampleTap.OnStageSchema(
+                i + 1,
+                t.GetType().Name.Replace("DataTransformer", ""),
+                outSchema,
+                columnarByTransformer.TryGetValue(t, out var isCol) && isCol);
+        }
+    }
+
+    /// <summary>
+    /// Propagates InputSchemaArrow for each segment so the row→columnar bridge can preserve complex
+    /// Arrow type metadata (Timestamp timezone, Decimal precision/scale, arrow.uuid annotations).
+    /// </summary>
+    private void PropagateSegmentArrowSchemas()
+    {
         Schema? readerArrowSchema = (Reader as IStreamTransformer)?.Schema ?? (Reader as IColumnarStreamReader)?.Schema;
         foreach (var segment in Segments)
         {
@@ -101,7 +193,21 @@ internal sealed partial class ExportRunState
         try
         {
             Logger.LogDebug("[Execution] running segmented pipeline");
-            await _svc._pipelineExecutor.ExecuteSegmentedPipelineAsync(Reader, EffectiveWriter, Segments, exportableSchema, Options, Progress, LinkedCts, effectiveCt);
+            var effectiveOptions = IsSampleMode ? Options with { Limit = EffectiveLimit } : Options;
+            await _svc._pipelineExecutor.ExecuteSegmentedPipelineAsync(
+                Reader, EffectiveWriter, Segments, exportableSchema, effectiveOptions, Progress, LinkedCts, effectiveCt, SampleTap);
+
+            if (IsSampleMode)
+            {
+                // Nothing was written, so nothing is completed, hooked, tracked or measured.
+                // CompleteAsync on a real writer is what flushes a Parquet footer or commits a
+                // transaction — the sink's is a no-op and the real writer never sees one.
+                SampleResult = SampleTap!.Build(
+                    Progress.GetMetrics().ReadCount,
+                    (EffectiveWriter as ISampleModeSink)?.RowsWritten ?? 0);
+                Progress.Complete();
+                return;
+            }
 
             await Writer.CompleteAsync(retryCt);
             Logger.LogDebug("[Cursor] persisting state if tracked");
@@ -153,7 +259,8 @@ internal sealed partial class ExportRunState
 
             try
             {
-                await _svc._hookExecutor.ExecuteAsync(Writer, "On-Error Hook", WriterHooks?.OnErrorExec, CancellationToken.None, TimeSpan.FromSeconds(ExportService.HookTimeoutSeconds));
+                if (!IsSampleMode)
+                    await _svc._hookExecutor.ExecuteAsync(Writer, "On-Error Hook", WriterHooks?.OnErrorExec, CancellationToken.None, TimeSpan.FromSeconds(ExportService.HookTimeoutSeconds));
             }
             catch (Exception hookEx)
             {
@@ -167,7 +274,8 @@ internal sealed partial class ExportRunState
         {
             try
             {
-                await _svc._hookExecutor.ExecuteAsync(Writer, "Finally Hook", WriterHooks?.FinallyExec, CancellationToken.None, TimeSpan.FromSeconds(ExportService.HookTimeoutSeconds));
+                if (!IsSampleMode)
+                    await _svc._hookExecutor.ExecuteAsync(Writer, "Finally Hook", WriterHooks?.FinallyExec, CancellationToken.None, TimeSpan.FromSeconds(ExportService.HookTimeoutSeconds));
             }
             catch (Exception hookEx)
             {
