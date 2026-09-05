@@ -206,7 +206,13 @@ public class SerializationTests
         var result = await ArrowDeserializer.DeserializeAsync<IoTTelemetry>(recordBatch).ToListAsync();
 
         // Assert
+        // ComparingByMembers is required: IoTTelemetry overrides Equals, and BeEquivalentTo
+        // prefers a type's own Equals over structural comparison when one is present — which
+        // would compare Timestamp bit-for-bit and never reach the tolerant rule below. Silent
+        // here because both timestamps are hardcoded to whole seconds; a sub-second value
+        // reintroduces the exact bug ComparingByMembers exists to route around.
         result.Should().BeEquivalentTo(data, options => options
+             .ComparingByMembers<IoTTelemetry>()
              .Using<DateTime>(ctx => ctx.Subject.Should().BeCloseTo(ctx.Expectation, TimeSpan.FromMilliseconds(1)))
              .WhenTypeIs<DateTime>());
     }
@@ -237,7 +243,15 @@ public class SerializationTests
         var result = await ArrowDeserializer.DeserializeAsync<ECommerceOrder>(recordBatch).ToListAsync();
 
         // Assert
+        // ComparingByMembers is required: ECommerceOrder overrides Equals, and BeEquivalentTo
+        // prefers a type's own Equals over structural comparison when one is present -- which
+        // would compare OrderedAt bit-for-bit and never reach the tolerant rule below. Arrow
+        // stores DateTimeOffset at microsecond resolution; DateTimeOffset.UtcNow carries tick
+        // (100ns) resolution, so the round trip is lossy on any machine whose clock actually
+        // returns sub-microsecond ticks -- consistently on Linux, rarely on macOS, which is
+        // exactly why this sat green on the reference machine and red in CI.
         result.Should().BeEquivalentTo(data, options => options
+            .ComparingByMembers<ECommerceOrder>()
             .Using<DateTimeOffset>(ctx => ctx.Subject.Should().BeCloseTo(ctx.Expectation, TimeSpan.FromMilliseconds(1)))
             .WhenTypeIs<DateTimeOffset>());
     }
@@ -264,7 +278,10 @@ public class SerializationTests
         var result = await ArrowDeserializer.DeserializeAsync<UserAccount>(recordBatch).ToListAsync();
 
         // Assert
+        // ComparingByMembers is required: UserAccount overrides Equals (see ECommerceOrder's
+        // test above for why that defeats the tolerant DateTimeOffset rule below).
         result.Should().BeEquivalentTo(data, options => options
+            .ComparingByMembers<UserAccount>()
             .Using<DateTimeOffset>(ctx => ctx.Subject.Should().BeCloseTo(ctx.Expectation, TimeSpan.FromMilliseconds(1)))
             .WhenTypeIs<DateTimeOffset>());
         // TimeSpan must round-trip exactly (DurationType.Microsecond is precise enough for .NET TimeSpan resolution)

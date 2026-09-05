@@ -381,7 +381,7 @@ DtPipe.Core               ← ArrowTypeMapper is facade over ArrowTypeMap
 
 `ArrowTypeMap` (`Mapping/ArrowTypeMap.cs`) is the canonical CLR↔Arrow map; `ArrowTypeMapper` in Core is a facade. `FixedSizeBinaryArrayBuilder` lives only in `Apache.Arrow.Serialization/Reflection/FixedSizeBinaryArrayBuilder.cs` — Core consumes it via project reference (single definition). See `EXTENDING.md` for `ArrowSerializer`/`ArrowDeserializer` usage.
 
-> **Enforced by** `tests/scripts/validate_core_boundary.sh`, which fails on any `using DtPipe.` or project reference to DtPipe from either standalone Arrow library. **Note:** `tests/Apache.Arrow.Serialization.Tests` is **never run by `build.sh`**, which only executes `tests/DtPipe.Tests --filter ".Unit."` — two failures currently sit there unnoticed.
+> **Enforced by** `tests/scripts/validate_core_boundary.sh`, which fails on any `using DtPipe.` or project reference to DtPipe from either standalone Arrow library. **Note:** `tests/Apache.Arrow.Serialization.Tests` is **never run by `build.sh`**, which only executes `tests/DtPipe.Tests --filter ".Unit."` — `dotnet test DtPipe.sln` in CI is the only thing that runs it, so a regression here is invisible to a local `./build.sh` before push.
 
 ## Adding a New Adapter
 
