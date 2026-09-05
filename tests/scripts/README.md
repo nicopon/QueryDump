@@ -77,26 +77,29 @@ DtPipe uses a centralized Docker infrastructure for all integration tests.
 | **`bench.sh`** | Linear pipeline throughput (100k→CSV, CSV→Parquet, Parquet+transforms), DuckDB 1M rows. |
 | **`benchmark_dtpipe_columnar.sh`** | Zero-copy columnar path performance. |
 | **`generate_benchmark_datasets.sh`** | Generates large Parquet/CSV datasets for JOIN benchmarks. |
-| **`micro_perf_gate.sh`** | Micro performance gate — BenchmarkDotNet in-process on the hot conversion paths, compared against a versioned baseline. Runs in CI on every push. |
+| **`micro_perf_gate.sh`** | Micro performance gate — BenchmarkDotNet in-process on the hot conversion paths, compared against a versioned baseline. Local only, reference machine — not run in CI. |
 
 #### The three-tier performance gate
 
 | Tier | What | Where | Threshold |
 |:---|:---|:---|:---|
-| **Micro** | `micro_perf_gate.sh` — BenchmarkDotNet, no infrastructure | CI, every push | Wide (detects a ×2) |
+| **Micro** | `micro_perf_gate.sh` — BenchmarkDotNet, no infrastructure | Local only, reference machine | Wide (detects a ×2) |
 | **Macro complete** | 15 scenarios incl. Oracle and SQL Server | Local only, `dtpipe-sandbox` repo, tag ritual | 15 % |
 | **Macro light** | file↔file + PostgreSQL subset | Optional, nightly — only if micro proves insufficient | Wide |
 
-The complete macro tier stays out of CI for two independent reasons. The practical
-one: free runners cannot host Oracle and SQL Server containers. The methodological
-one, which holds even if that changed: a shared cloud runner has 20-50 % duration
-variance, so a 15 % gate there produces random red rather than signal.
+All three tiers stay out of CI. Macro complete never ran there — free runners cannot
+host Oracle and SQL Server containers. Micro did, once, on 2026-09-05: run against the
+reference-machine baseline via `--allow-foreign-host` on a GitHub-hosted runner, 30 of
+31 committed benchmarks came back flagged as regressions, +111 % to +201 %, from
+machine identity alone. GitHub gives no stability guarantee on shared-runner
+performance, so no fixed threshold survives that gap without also surviving a real
+regression unnoticed. Removed from `build.yml` the same day.
 
 **Baselines carry a machine fingerprint and the gate refuses to compare across two.**
 Comparing durations measured on different hardware does not give a weaker verdict, it
 gives a misleading one. `--allow-foreign-host` overrides the refusal and clamps the
-threshold to no tighter than 50 % — which is exactly what CI passes, since the
-committed baseline was recorded on the reference machine and every runner is foreign.
+threshold to no tighter than 50 % for a deliberate, informed check — it is not wired
+into any CI job.
 
 The baseline is `tests/DtPipe.Benchmarks/baselines/micro_perf.json` — it lives with the
 benchmark project, not in `tests/scripts/baselines/`, which holds golden *data* fixtures.

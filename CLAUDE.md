@@ -65,24 +65,28 @@ dotnet test tests/DtPipe.Tests/ --filter "FullyQualifiedName~PipelineLexerTests"
 
 ### Performance Gate
 
-Three tiers, deliberately unequal in where they run:
+Three tiers, all local — none run in CI:
 
 | Tier | What | Where | Threshold |
 |---|---|---|---|
-| Micro | `tests/scripts/micro_perf_gate.sh` — BenchmarkDotNet in-process on the hot conversion paths, no infra | CI, every push | Wide (detects a ×2) |
+| Micro | `tests/scripts/micro_perf_gate.sh` — BenchmarkDotNet in-process on the hot conversion paths, no infra | Local only, reference machine, before an engine change | Wide (detects a ×2) |
 | Macro complete | 15 scenarios incl. Oracle / SQL Server | Local only, `experiments/dtpipe-sandbox` | 15 % |
 | Macro light | file↔file + PostgreSQL subset | Optional, nightly, only if micro proves insufficient | Wide |
 
-The complete macro tier stays out of CI for two independent reasons: free runners
-cannot host Oracle and SQL Server, and — this one holds regardless — a shared cloud
-runner has 20-50 % duration variance, so a 15 % gate there produces random red, not
-signal. Same two-level structure the project already uses for tests (CI unit,
-`validate_vitals.sh` local).
+Micro ran in CI once, on 2026-09-05, comparing the reference-machine baseline against
+a GitHub-hosted runner via `--allow-foreign-host`: 30 of the 31 committed benchmarks
+came back flagged as regressions, all between +111 % and +201 %, purely from machine
+identity — the very first push exercising the job. GitHub gives no stability
+guarantee on shared runner performance, so the gap is not a one-off: a threshold wide
+enough to survive it stops being a gate at all, and a tighter one is guaranteed red
+on unrelated hardware, teaching contributors to ignore the job rather than trust it.
+Removed from `build.yml` the same day. Same reasoning macro complete already used to
+justify staying local — applied here only after being learned the expensive way once.
 
 **A baseline records the machine it was measured on, and the gate refuses to compare
 across two different ones** (exit 2, no verdict) rather than render a misleading one.
-`--allow-foreign-host` overrides the refusal and clamps the threshold to ≥ 50 %; that
-is what the CI job passes, since the committed baseline is from the reference machine.
+`--allow-foreign-host` still exists for a deliberate, informed cross-machine check —
+it is not wired into any CI job.
 
 Update the micro baseline with `./tests/scripts/micro_perf_gate.sh --update` on the
 reference machine, and only when a change is a deliberate, understood shift.

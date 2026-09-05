@@ -78,44 +78,6 @@ jobs:
             exit 1
           fi
 
-  micro-perf:
-    name: Micro Performance Gate
-    needs: test
-    runs-on: ubuntu-latest
-    # The micro stage of the three-tier gate (see tests/scripts/micro_perf_gate.sh):
-    # BenchmarkDotNet in-process on the hot conversion paths, no infrastructure.
-    #
-    # The threshold is deliberately wide. A shared cloud runner has 20-50 % duration
-    # variance, and the committed baseline was recorded on the reference machine, not
-    # here — so --allow-foreign-host is passed explicitly and the gate clamps the
-    # verdict to "detects a x2, not a +15 %". Without that flag the gate refuses to
-    # compare at all, which is the point: it never renders a verdict it cannot support.
-    #
-    # The complete macro stage (15 scenarios against Oracle and SQL Server) stays
-    # local, in the dtpipe-sandbox repo — free runners cannot host those containers.
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.300'
-
-      - name: Restore dependencies
-        run: dotnet restore
-
-      - name: Run micro performance gate
-        run: ./tests/scripts/micro_perf_gate.sh --allow-foreign-host --threshold 100
-
-      - name: Upload BenchmarkDotNet results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: micro-perf-results
-          path: tests/DtPipe.Benchmarks/BenchmarkDotNet.Artifacts/results/
-          if-no-files-found: warn
-
   build:
     name: Build ${{ matrix.platform }}
     needs: test

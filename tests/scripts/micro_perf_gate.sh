@@ -2,9 +2,17 @@
 # =============================================================================
 # micro_perf_gate.sh
 # The micro stage of the three-tier performance gate: BenchmarkDotNet in-process
-# on the hot conversion paths, no infrastructure, runs on every push.
+# on the hot conversion paths, no infrastructure. Local only, on the reference
+# machine, run deliberately before an engine change — not wired into any CI job.
 #
-# The two other stages live elsewhere on purpose:
+# It was, once: run in build.yml against the reference-machine baseline via
+# --allow-foreign-host on a GitHub-hosted runner (2026-09-05), 30 of 31 committed
+# benchmarks came back flagged as regressions, +111 % to +201 %, from machine
+# identity alone, on the very first push that exercised the job. GitHub gives no
+# stability guarantee on shared-runner performance, so no fixed threshold survives
+# that gap without also surviving a real regression unnoticed. Removed the same day.
+#
+# The two other stages live elsewhere for the same reason:
 #   - macro complete (15 scenarios, Oracle + SQL Server): local only, in the
 #     dtpipe-sandbox repo. Free CI runners cannot host those containers, and a
 #     shared runner's 20-50 % duration variance would turn a 15 % gate into
@@ -38,7 +46,8 @@
 #       Run and compare against that baseline. Strict: refuses a foreign host.
 #
 #   ./tests/scripts/micro_perf_gate.sh --allow-foreign-host --threshold 100
-#       What CI runs: wide threshold, cross-machine comparison acknowledged.
+#       A deliberate cross-machine check, wide threshold, run by hand. Not run
+#       anywhere automatically — see the note above on why.
 #
 #   ./tests/scripts/micro_perf_gate.sh --report-only
 #       Run and print the numbers, compare nothing, never fail.
