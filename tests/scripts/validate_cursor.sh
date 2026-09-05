@@ -153,8 +153,8 @@ grep -iq "nonexistent_col" "$ARTIFACTS_DIR/error.log" && pass "Scenario 4: error
 # -------------------------------------------------------------
 echo "--- Scenario 5: No data, state file unchanged ---"
 
-# Save modified time of state file
-mtime_before=$(stat -f "%m" "$STATE_FILE")
+# Save modified time of state file (BSD stat on macOS, GNU stat on Linux)
+mtime_before=$(stat -f "%m" "$STATE_FILE" 2>/dev/null) || mtime_before=$(stat -c "%Y" "$STATE_FILE")
 sleep 1.2 # wait to make sure mtime would change if written
 
 # Run query that matches 0 rows (WHERE updated_at > Heidi's time)
@@ -169,7 +169,7 @@ sleep 1.2 # wait to make sure mtime would change if written
   --state "$STATE_FILE" \
   --no-stats
 
-mtime_after=$(stat -f "%m" "$STATE_FILE")
+mtime_after=$(stat -f "%m" "$STATE_FILE" 2>/dev/null) || mtime_after=$(stat -c "%Y" "$STATE_FILE")
 [ "$mtime_before" -eq "$mtime_after" ] && pass "Scenario 5: state file was not modified when 0 rows processed" || fail "Scenario 5: state file was modified on empty run"
 
 # Cleanup
