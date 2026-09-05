@@ -15,10 +15,46 @@ export DTPIPE_NO_TUI=1
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "  ${GREEN}OK: $1${NC}"; }
-fail() { echo -e "  ${RED}FAIL: $1${NC}"; exit 1; }
+
+# Diagnostic dump for a failure seen so far only on GitHub-hosted ubuntu-latest
+# ("provider 'arrow' not registered"), reproducible on every real CI run but never
+# locally: not in a clean Docker clone built with the exact CI publish flags, x64
+# emulated or native arm64, 25 isolated runs, 25 sequential runs matching the
+# validator order, POSIX or UTF-8 locale. Fires on the way to fail() so a passing
+# run stays as quiet as before. Delete once the cause is found and fixed.
+dump_manifest_diagnostics() {
+    echo -e "  ${YELLOW}--- diagnostic dump (validate_manifest) ---${NC}"
+    echo "  uname: $(uname -a)"
+    echo "  locale:"; locale 2>&1 | sed 's/^/    /'
+    echo "  dotnet: $(dotnet --version 2>&1)"
+    echo "  binary: $(ls -la "$DTPIPE" 2>&1)"
+    echo "  relevant env:"; env | grep -E '^(TERM|COLUMNS|LINES|LANG|LC_|DTPIPE_|CI|GITHUB_)' | sort | sed 's/^/    /'
+    echo "  raw 'dtpipe providers' output:"
+    echo "$RAW_OUTPUT" | sed 's/^/    /'
+    echo "  parsed ACTUAL list: $(echo "$ACTUAL" | tr '\n' ',')"
+    echo "  three more invocations, checking whether 'arrow' flickers:"
+    local i retry actual_retry
+    for i in 1 2 3; do
+        retry=$("$DTPIPE" providers 2>&1)
+        actual_retry=$(echo "$retry" | awk '/│/ {gsub(/│/,""); gsub(/^ +| +$/,"",$1); if ($1!="" && $1!="Provider") print $1}' | sort -u)
+        if echo "$actual_retry" | grep -qx "arrow"; then
+            echo "    retry $i: arrow present"
+        else
+            echo "    retry $i: arrow MISSING"
+        fi
+    done
+    echo -e "  ${YELLOW}--- end diagnostic dump ---${NC}"
+}
+
+fail() {
+    dump_manifest_diagnostics
+    echo -e "  ${RED}FAIL: $1${NC}"
+    exit 1
+}
 
 echo "========================================"
 echo "    DtPipe Provider Manifest Validation"
@@ -32,7 +68,8 @@ fi
 EXPECTED="arrow arrow-memory checksum csv duck generate jsonl mem merge mssql mysql null ora parquet pg sql sqlite xml"
 
 # "Provider" is the table header, not a component.
-ACTUAL=$("$DTPIPE" providers 2>&1 | awk '/│/ {gsub(/│/,""); gsub(/^ +| +$/,"",$1); if ($1!="" && $1!="Provider") print $1}' | sort -u)
+RAW_OUTPUT=$("$DTPIPE" providers 2>&1)
+ACTUAL=$(echo "$RAW_OUTPUT" | awk '/│/ {gsub(/│/,""); gsub(/^ +| +$/,"",$1); if ($1!="" && $1!="Provider") print $1}' | sort -u)
 for p in $EXPECTED; do
     echo "$ACTUAL" | grep -qx "$p" || fail "provider '$p' not registered"
 done
